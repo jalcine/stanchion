@@ -32,6 +32,7 @@ required-features = ["remote"]
 [dependencies]
 mlua.workspace = true
 stanchion-core.workspace = true
+stanchion-dist = { workspace = true, optional = true }
 stanchion-registry = { workspace = true, optional = true }
 stanchion-remote = { workspace = true, optional = true }
 stanchion-rocks = { workspace = true, optional = true }
@@ -47,9 +48,16 @@ signatures = ["registry", "stanchion-registry/signatures"]
 sigstore-verify = ["signatures", "dep:stanchion-sigstore"]
 remote = ["registry", "dep:stanchion-remote"]
 
+# Packaging and installing plugins with a pinned lockfile. Adds tar and gzip, and no
+# network stack: an install from a directory of packages needs nothing more.
+distribution = ["signatures", "dep:stanchion-dist", "stanchion-dist/package"]
+# Fetching from an OCI registry and reading an index over HTTPS. Quarantined behind
+# its own feature because it is where the HTTP and TLS dependencies arrive.
+distribution-client = ["distribution", "stanchion-dist/client"]
+
 # Everything testable without the sigstore dependency graph. Integration tests are
 # gated per feature, so a run without this silently covers almost nothing.
-full = ["async", "send", "registry", "luarocks", "signatures", "remote"]
+full = ["async", "send", "registry", "luarocks", "signatures", "remote", "distribution"]
 lua54 = ["mlua/lua54", "stanchion-core/lua54"]
 lua53 = ["mlua/lua53", "stanchion-core/lua53"]
 luajit = ["mlua/luajit", "stanchion-core/luajit"]
@@ -62,6 +70,8 @@ serde_json.workspace = true
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 trybuild = "1"
 tempfile = "3"
+tar = "0.4"
+flate2 = "1"
 
 [package.metadata.docs.rs]
 features = ["lua54", "vendored", "async", "send", "registry", "luarocks", "signatures", "remote"]

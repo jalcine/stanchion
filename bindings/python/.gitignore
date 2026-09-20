@@ -1,0 +1,13 @@
+# Built by `maturin develop` into the source tree.
+*.so
+*.pyd
+*.dylib
+
+__pycache__/
+*.py[cod]
+
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/

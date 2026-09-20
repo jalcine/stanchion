@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jacky/stanchion"
+repository = "https://github.com/jalcine/stanchion"
 
 [workspace.dependencies]
 stanchion-core = { path = "crates/stanchion-core", version = "0.1.0" }

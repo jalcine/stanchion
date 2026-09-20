@@ -6,6 +6,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "plugin-host"
+path = "src/bin/plugin_host.rs"
+required-features = ["remote"]
+
 [dependencies]
 mlua.workspace = true
 stanchion-core.workspace = true
@@ -23,6 +28,10 @@ luarocks = ["registry", "dep:stanchion-rocks", "stanchion-registry/luarocks"]
 signatures = ["registry", "stanchion-registry/signatures"]
 sigstore-verify = ["signatures", "dep:stanchion-sigstore"]
 remote = ["registry", "dep:stanchion-remote"]
+
+# Everything testable without the sigstore dependency graph. Integration tests are
+# gated per feature, so a run without this silently covers almost nothing.
+full = ["async", "send", "registry", "luarocks", "signatures", "remote"]
 lua54 = ["mlua/lua54", "stanchion-core/lua54"]
 lua53 = ["mlua/lua53", "stanchion-core/lua53"]
 luajit = ["mlua/luajit", "stanchion-core/luajit"]

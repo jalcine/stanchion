@@ -10,7 +10,8 @@ survivable.
 instruction limit cannot rescue a state whose allocator already failed. The `remote`
 feature moves plugins into a child process, where those failures are survivable.
 
-```text
+```sh
+cargo install stanchion --features lua54,vendored,remote   # provides `plugin-host`
 plugin-host --config host.toml --plugins plugins/
 ```
 

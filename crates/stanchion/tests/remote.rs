@@ -4,30 +4,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use stanchion::remote::{CallbackCall, RemoteOptions, RemoteRegistry};
 use serde_json::{Value as Json, json};
+use stanchion::remote::{CallbackCall, RemoteOptions, RemoteRegistry};
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// The host binary sits next to the test executable.
+/// Cargo builds the host binary for this package's tests and hands over its path,
+/// so there is no pre-build step and no guessing where it landed.
 fn host_binary() -> Fallible<PathBuf> {
-    let mut dir = std::env::current_exe()?;
-    dir.pop(); // the test binary's own name
-    if dir.ends_with("deps") {
-        dir.pop();
-    }
-    let path = dir.join("plugin-host");
-    if !path.is_file() {
-        return Err(format!(
-            "`plugin-host` not found at {}; run \
-             `cargo build -p stanchion-remote --features lua54,vendored --bin plugin-host` first",
-            path.display()
-        )
-        .into());
-    }
-    Ok(path)
+    Ok(PathBuf::from(env!("CARGO_BIN_EXE_plugin-host")))
 }
 
 fn write_plugin(root: &Path, name: &str, manifest: &str, source: &str) -> TestResult {
@@ -239,7 +226,12 @@ fn dispatch_reports_one_outcome_per_plugin() -> TestResult {
     let outcomes = remote.dispatch("greet", [json!("world")])?;
     assert_eq!(outcomes.len(), 2);
 
-    let find = |name: &str| outcomes.iter().find(|outcome| outcome.plugin == name).cloned();
+    let find = |name: &str| {
+        outcomes
+            .iter()
+            .find(|outcome| outcome.plugin == name)
+            .cloned()
+    };
     let good = find("good").ok_or("expected an outcome for good")?;
     assert_eq!(good.value, Some(json!("hello, world")));
     assert!(good.error.is_none());
@@ -247,7 +239,9 @@ fn dispatch_reports_one_outcome_per_plugin() -> TestResult {
     let bad = find("bad").ok_or("expected an outcome for bad")?;
     assert!(bad.value.is_none());
     assert!(
-        bad.error.as_deref().is_some_and(|error| error.contains("bad refuses")),
+        bad.error
+            .as_deref()
+            .is_some_and(|error| error.contains("bad refuses")),
         "got: {:?}",
         bad.error
     );
@@ -260,17 +254,24 @@ fn dispatch_reports_one_outcome_per_plugin() -> TestResult {
 fn a_broken_plugin_is_reported_and_the_rest_load() -> TestResult {
     let root = tempfile::tempdir()?;
     write_plugin(root.path(), "echo", "name = \"echo\"\n", ECHO)?;
-    write_plugin(root.path(), "broken", "name = \"broken\"\n", "error('boom')\n")?;
-
-    let mut remote = RemoteRegistry::launch(
-        RemoteOptions::new(host_binary()?).inherit_stderr(false),
+    write_plugin(
+        root.path(),
+        "broken",
+        "name = \"broken\"\n",
+        "error('boom')\n",
     )?;
+
+    let mut remote =
+        RemoteRegistry::launch(RemoteOptions::new(host_binary()?).inherit_stderr(false))?;
 
     let outcome = remote.load(root.path())?;
     assert!(!outcome.is_clean());
     assert!(outcome.loaded.contains(&"echo".to_string()));
     assert!(
-        outcome.failures.iter().any(|failure| failure.plugin == "broken"),
+        outcome
+            .failures
+            .iter()
+            .any(|failure| failure.plugin == "broken"),
         "got: {:?}",
         outcome.failures
     );
@@ -311,9 +312,8 @@ fn audit_runs_in_the_child_without_executing_plugins() -> TestResult {
 
     // No --plugins: the host serves without loading anything, so a successful audit
     // proves the report came from manifests alone.
-    let mut remote = RemoteRegistry::launch(
-        RemoteOptions::new(host_binary()?).inherit_stderr(false),
-    )?;
+    let mut remote =
+        RemoteRegistry::launch(RemoteOptions::new(host_binary()?).inherit_stderr(false))?;
     let entries = remote.audit(root.path())?;
     assert_eq!(entries.len(), 1);
     let entry = entries.first().ok_or("expected one audit entry")?;
@@ -438,17 +438,15 @@ fn a_plugin_calls_back_into_the_application() -> TestResult {
         .config(&config)
         .plugins(root.path())
         .inherit_stderr(false);
-    let mut remote = RemoteRegistry::launch(options)?.on_callback(
-        |call: &CallbackCall| {
-            assert_eq!(call.capability, "kv");
-            assert_eq!(call.plugin, "caller");
-            match call.args.first().and_then(Json::as_str) {
-                Some("boom") => Err("no such key".to_string()),
-                Some(key) => Ok(json!(format!("value-of-{key}"))),
-                None => Err("kv takes one key".to_string()),
-            }
-        },
-    );
+    let mut remote = RemoteRegistry::launch(options)?.on_callback(|call: &CallbackCall| {
+        assert_eq!(call.capability, "kv");
+        assert_eq!(call.plugin, "caller");
+        match call.args.first().and_then(Json::as_str) {
+            Some("boom") => Err("no such key".to_string()),
+            Some(key) => Ok(json!(format!("value-of-{key}"))),
+            None => Err("kv takes one key".to_string()),
+        }
+    });
 
     let value: String = remote.call("caller", "lookup", [json!("alpha")])?;
     assert_eq!(value, "value-of-alpha");
@@ -476,7 +474,10 @@ fn an_application_error_surfaces_as_a_lua_error() -> TestResult {
     let Err(error) = remote.call::<Json>("caller", "failing", []) else {
         return Err("a refused callback must fail the plugin call".into());
     };
-    assert!(error.to_string().contains("the application refused"), "got: {error}");
+    assert!(
+        error.to_string().contains("the application refused"),
+        "got: {error}"
+    );
 
     // The host and the application both survive a refused callback.
     assert!(remote.is_alive());
@@ -499,7 +500,10 @@ fn an_unhandled_callback_fails_without_killing_anything() -> TestResult {
     let Err(error) = remote.call::<Json>("caller", "lookup", [json!("alpha")]) else {
         return Err("an unanswered callback must fail".into());
     };
-    assert!(error.to_string().contains("does not handle"), "got: {error}");
+    assert!(
+        error.to_string().contains("does not handle"),
+        "got: {error}"
+    );
     assert!(remote.is_alive());
     remote.shutdown()?;
     Ok(())
@@ -519,33 +523,32 @@ fn an_undeclared_capability_is_absent_even_when_the_host_offers_it() -> TestResu
         .on_callback(|_: &CallbackCall| Ok(json!("should never be reached")));
 
     let kind: String = remote.call("caller", "undeclared", [])?;
-    assert_eq!(kind, "nil", "capabilities stay declared-only across the process line");
+    assert_eq!(
+        kind, "nil",
+        "capabilities stay declared-only across the process line"
+    );
     remote.shutdown()?;
     Ok(())
 }
 
 #[test]
 fn the_approved_grant_travels_with_every_callback() -> TestResult {
-    let root = caller_root(
-        "name = \"caller\"\n\n[capabilities.kv]\nnamespace = \"tenant-7\"\n",
-    )?;
+    let root = caller_root("name = \"caller\"\n\n[capabilities.kv]\nnamespace = \"tenant-7\"\n")?;
     let config = root.path().join("host.toml");
 
     let options = RemoteOptions::new(host_binary()?)
         .config(&config)
         .plugins(root.path())
         .inherit_stderr(false);
-    let mut remote = RemoteRegistry::launch(options)?.on_callback(
-        |call: &CallbackCall| {
-            // The application re-checks rather than trusting the host's narrowing.
-            let namespace = call
-                .grant
-                .get("namespace")
-                .and_then(Json::as_str)
-                .unwrap_or("none");
-            Ok(json!(format!("{namespace}:ok")))
-        },
-    );
+    let mut remote = RemoteRegistry::launch(options)?.on_callback(|call: &CallbackCall| {
+        // The application re-checks rather than trusting the host's narrowing.
+        let namespace = call
+            .grant
+            .get("namespace")
+            .and_then(Json::as_str)
+            .unwrap_or("none");
+        Ok(json!(format!("{namespace}:ok")))
+    });
 
     let value: String = remote.call("caller", "lookup", [json!("k")])?;
     assert_eq!(value, "tenant-7:ok");

@@ -17,7 +17,7 @@ use std::process::ExitCode;
 
 use std::io::BufReader;
 
-use stanchion_remote::{HostChannel, build_registry, load_config, serve};
+use stanchion::remote::{HostChannel, build_registry, load_config, serve};
 
 fn main() -> ExitCode {
     match run() {
@@ -85,7 +85,11 @@ struct Options {
 
 impl Options {
     fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
-        let mut options = Options { config: None, plugins: None, help: false };
+        let mut options = Options {
+            config: None,
+            plugins: None,
+            help: false,
+        };
         let mut args = args.peekable();
 
         while let Some(arg) = args.next() {

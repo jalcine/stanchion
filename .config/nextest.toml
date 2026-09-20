@@ -1,0 +1,52 @@
+# cargo-nextest configuration.
+#
+# nextest runs each test in its own process, which suits this workspace: several
+# tests deliberately spawn child processes, shell out to `luarocks`, or drive Lua
+# states to their memory and instruction limits. One wedged test cannot take the
+# others with it.
+#
+# Note that nextest does not run doctests. Run those separately:
+#     cargo test --doc --workspace
+
+[profile.default]
+# See every failure rather than stopping at the first: these suites cover separate
+# features, so one broken area should not hide the state of the rest.
+fail-fast = false
+
+# Several tests exist to prove a runaway plugin gets stopped — an endless loop, an
+# allocation storm, a process that kills itself. If one of those guards regressed the
+# test would other­wise hang forever, so a slow test is reported and then killed.
+slow-timeout = { period = "20s", terminate-after = 3 }
+
+status-level = "fail"
+final-status-level = "slow"
+
+# Tests that shell out to `luarocks` touch a shared user cache, so they are kept to
+# one at a time. They are the slowest tests in the workspace either way.
+[test-groups.luarocks]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'binary(rocks)'
+test-group = "luarocks"
+
+[profile.ci]
+fail-fast = false
+# An external tool and a real child process are the two things here that can fail for
+# reasons unrelated to the code; retry only those, so a genuine bug still fails once.
+retries = 0
+failure-output = "immediate-final"
+status-level = "retry"
+
+[[profile.ci.overrides]]
+filter = 'binary(rocks) or binary(remote)'
+retries = 2
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# Fast feedback while iterating: skips the two suites that pay for an external tool
+# or a compiler round-trip.
+[profile.quick]
+default-filter = 'not (binary(rocks) or binary(ui))'
+fail-fast = false

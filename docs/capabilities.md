@@ -3,8 +3,6 @@
 Plugins declare what they need; the host declares what it offers; a policy
 decides what is actually granted.
 
-# Capabilities
-
 `with_setup` is where the host declares **everything** a plugin can reach. Capabilities
 are gated; ambient values are not, and both are reported by `audit`.
 

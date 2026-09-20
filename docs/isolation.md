@@ -3,8 +3,6 @@
 Whether plugins share one Lua state or get one each, and what a sandbox
 policy can bound.
 
-# Isolation
-
 Two modes, chosen at construction.
 
 ```rust
@@ -71,6 +69,13 @@ The instruction limit resets at every call boundary — each `dispatch` and each
 constructor gets the full allowance — so a plugin is bounded per call rather than
 slowly starving over its lifetime. It rides on Lua's debug hook, so under `luau`
 (which has no instruction counter) the limit counts interrupt callbacks instead.
+
+## Reaching an isolated plugin
+
+A freshly created state has nothing of yours in it. Host functions get there through
+[capabilities](capabilities.md), declared in `with_setup` and granted per plugin by
+policy — so what a plugin can reach stays a decision rather than a side effect of
+being loaded.
 
 ---
 

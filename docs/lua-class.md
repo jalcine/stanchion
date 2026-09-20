@@ -3,7 +3,7 @@
 How `#[lua_class]` turns a Rust trait into a Lua class binding: what it
 generates, the attributes it accepts, and what it validates.
 
-# What the macro generates
+## What the macro generates
 
 | Item | Role |
 | --- | --- |
@@ -21,7 +21,7 @@ let registry: Vec<Box<dyn Greeter>> = vec![Box::new(handle), Box::new(NativeGree
 ```
 
 
-# Method attributes
+## Method attributes
 
 | Attribute | Effect |
 | --- | --- |
@@ -40,7 +40,7 @@ Lookups go through `ObjectLike`, which honours `__index`, so methods inherited f
 base class resolve and validate correctly.
 
 
-# Validation
+## Validation
 
 `FromLua` checks that every required key resolves to a function before handing back a
 handle, so a malformed plugin fails at load with a typed error rather than

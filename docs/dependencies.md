@@ -3,8 +3,6 @@
 Plugins that use each other: published exports, semver requirements, and
 how a [reload](registry.md#reload) propagates through a chain.
 
-# Dependency chains
-
 `[dependencies]` is a material wiring, not just load order. A plugin publishes what it
 wants dependents to see by declaring `exports` — a table, or a method returning one:
 

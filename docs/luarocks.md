@@ -2,8 +2,6 @@
 
 Declaring external Lua libraries in a manifest and making them loadable.
 
-# LuaRocks
-
 With the `luarocks` feature, a plugin declares the external libraries it needs:
 
 ```toml

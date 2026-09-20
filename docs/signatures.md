@@ -3,8 +3,6 @@
 Binding an identity to the exact bytes that will run, and using that
 provenance to tier [capabilities](capabilities.md).
 
-# Signatures
-
 A signature binds **an identity** to **the exact bytes that will run**, checked against
 a trust root the host controls before any Lua executes.
 

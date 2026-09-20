@@ -6,8 +6,6 @@ See also [isolation](isolation.md), [capabilities](capabilities.md),
 [dependency chains](dependencies.md), [signatures](signatures.md),
 [LuaRocks](luarocks.md) and [out-of-process hosting](remote.md).
 
-# Plugin registry
-
 The `registry` feature adds `Registry<C>`, which loads a directory of plugins into
 either one shared Lua state or one state per plugin.
 
@@ -62,7 +60,7 @@ for outcome in registry.dispatch(|p| p.greet("world".to_string())) {
 ```
 
 
-# Reload
+## Reload
 
 `registry.reload("greeter")` re-reads the manifest and chunk and swaps in a fresh
 instance. A handle to the plugin's own instance taken before the reload keeps talking to
@@ -91,7 +89,7 @@ rather than the exports table. A reload that withdraws a previously published `e
 fails and leaves the old instance in place.
 
 
-# Failure isolation
+## Failure isolation
 
 Only an unreadable plugin root is fatal. Everything else lands in
 `LoadReport::failures` while the remaining plugins still load:
@@ -114,6 +112,7 @@ Only an unreadable plugin root is fatal. Everything else lands in
 | `SignatureInvalid` | a signature was present but did not verify |
 | `UntrustedSigner` | cryptographically sound, but the signer is not trusted |
 | `DigestMismatch` | a file changed between verification and loading |
+| `Revoked` | the build or its signer is on the host's [revocation list](signatures.md#revocation) |
 | `DependencyFailed` | a dependency failed, so this plugin was skipped |
 | `DependencyCycle` | this plugin is part of a cycle |
 
@@ -121,7 +120,7 @@ Dispatch is isolated the same way: `dispatch` returns one `Outcome` per plugin, 
 plugin that errors does not stop the others.
 
 
-# Async dispatch
+## Async dispatch
 
 With `async` + `registry`, `dispatch_async` awaits each plugin in turn. Calls are
 sequential by design: they all reach the same Lua state, so running them concurrently

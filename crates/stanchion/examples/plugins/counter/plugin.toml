@@ -1,0 +1,5 @@
+name = "counter"
+version = "1.0.0"
+
+[dependencies]
+formatter = "^1.0"

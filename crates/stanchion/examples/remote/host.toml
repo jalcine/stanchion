@@ -1,0 +1,8 @@
+[sandbox]
+libs = ["string", "table", "math", "coroutine", "package", "os"]
+deny = []
+memory_limit = 33554432
+instruction_limit = 5000000
+
+[capabilities]
+callbacks = ["http"]

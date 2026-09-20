@@ -11,6 +11,24 @@ name = "plugin-host"
 path = "src/bin/plugin_host.rs"
 required-features = ["remote"]
 
+# Examples declare what they need, so `cargo build --examples` skips the ones a
+# given feature set cannot build instead of failing.
+[[example]]
+name = "greeter"
+required-features = []
+
+[[example]]
+name = "event_bus"
+required-features = ["registry"]
+
+[[example]]
+name = "untrusted"
+required-features = ["registry"]
+
+[[example]]
+name = "remote_host"
+required-features = ["remote"]
+
 [dependencies]
 mlua.workspace = true
 stanchion-core.workspace = true

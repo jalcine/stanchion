@@ -8,13 +8,13 @@ capabilities and signatures on the other.
 
 | Crate | Contains |
 | --- | --- |
-| [`stanchion`](crates/stanchion) | facade; re-exports the rest behind features |
+| [`stanchion`](crates/stanchion) | facade; re-exports the rest behind features, and ships the `plugin-host` binary |
 | [`stanchion-core`](crates/stanchion-core) | `#[lua_class]` contract: `LuaClass`, `LuaObject`, `BoxFuture` |
 | [`stanchion-macros`](crates/stanchion-macros) | the attribute macro |
 | [`stanchion-registry`](crates/stanchion-registry) | manifests, sandboxing, capabilities, signatures, reload |
 | [`stanchion-rocks`](crates/stanchion-rocks) | LuaRocks tree queries and version constraints |
 | [`stanchion-sigstore`](crates/stanchion-sigstore) | sigstore verification — quarantines a large dependency graph |
-| [`stanchion-remote`](crates/stanchion-remote) | out-of-process hosting and the `plugin-host` binary |
+| [`stanchion-remote`](crates/stanchion-remote) | out-of-process hosting: JSON-RPC protocol, client, host |
 
 Depend on `stanchion` and pick features; generated code refers to `::stanchion`, so use
 the macro through the facade.
@@ -77,7 +77,32 @@ assert_eq!(greeter.greet("world".to_string())?, "hello, world");
 | [Signatures](docs/signatures.md) | directory digests, sigstore, provenance-tiered capabilities |
 | [Dependency chains](docs/dependencies.md) | published exports, semver requirements, reload propagation |
 | [LuaRocks](docs/luarocks.md) | declaring external Lua libraries, C-module hazards |
-| [Out-of-process hosting](docs/remote.md) | the `plugin-host` binary, RPC protocol, crash containment |
+| [Out-of-process hosting](docs/remote.md) | the `plugin-host` binary, JSON-RPC protocol, callbacks, crash containment |
+| [Testing](docs/testing.md) | running the suite under nextest, profiles, doctests, UI tests |
+
+## Examples
+
+Runnable, and built by `cargo build --examples`, so they cannot rot into
+documentation that no longer compiles:
+
+| Example | Shows |
+| --- | --- |
+| [`greeter`](crates/stanchion/examples/greeter.rs) | the typed contract alone — no registry; Lua and native implementations behind one `dyn` trait |
+| [`event_bus`](crates/stanchion/examples/event_bus.rs) | a plugin directory: dependency ordering, published `exports`, failure isolation at load and dispatch |
+| [`untrusted`](crates/stanchion/examples/untrusted.rs) | running code you did not write: sandbox, memory and instruction limits, a policy that narrows a capability, revocation, static audit |
+| [`remote_host`](crates/stanchion/examples/remote_host.rs) | plugins in a child process, calling back into the application — and surviving one that kills its host |
+
+```sh
+cargo run -p stanchion --features lua54,vendored,registry --example untrusted
+```
+
+```text
+greedy   os=nil io=nil kv=function -> sandboxed/greedy/some-key
+looper   stopped: runtime error: plugin exceeded its instruction limit of 200000
+```
+
+The plugin sources they load are beside them, under
+[`crates/stanchion/examples/`](crates/stanchion/examples).
 
 ## Features
 
@@ -113,6 +138,9 @@ them dyn-compatible.
   added keeps running until it is reloaded.
 - `SigstoreVerifier` reports the identity your policy enforced, because sigstore's
   verification API answers conformance rather than returning the certificate subject.
+- `sigstore-verify` depends on `sigstore`, which documents its own API as experimental;
+  that is why verification sits behind the `PluginVerifier` trait, so you can supply a
+  different implementation.
 
 ## Panic policy
 
@@ -136,56 +164,11 @@ rather than an unwrap location.
 
 ## Testing
 
-Tests run under [cargo-nextest](https://nexte.st). Each test gets its own process,
-which suits this workspace: several tests spawn child processes, shell out to
-`luarocks`, or drive Lua states into their memory and instruction limits, and one
-wedged test cannot take the others with it.
-
 ```sh
 cargo nextest run --workspace --features lua54,vendored,full
 ```
 
-The `full` feature matters. Integration tests are gated per feature, so a run without
-it compiles most of the suite away and still reports success — 22 tests instead of 103.
-
-Three profiles are configured in [`.config/nextest.toml`](.config/nextest.toml):
-
-| Profile | For |
-| --- | --- |
-| `default` | everything; slow tests are reported and then killed |
-| `quick` | iteration — skips the `rocks` and `ui` suites, which pay for an external tool and a compiler round-trip |
-| `ci` | retries the two suites that depend on an external tool or a real child process, and writes `junit.xml` |
-
-```sh
-cargo nextest run -P quick --workspace --features lua54,vendored,full
-```
-
-A `slow-timeout` is deliberate rather than decorative: several tests prove that a
-runaway plugin gets stopped — an endless loop, an allocation storm, a process that
-kills itself. If one of those guards regressed, the test would otherwise hang forever,
-so nextest reports it slow and then terminates it.
-
-**nextest does not run doctests.** Run those separately:
-
-```sh
-cargo test --doc --workspace --features lua54,vendored,full
-```
-
-The `luarocks` tests build a rock offline with `luarocks make` from a local rockspec,
-so they need no network, and they skip themselves if `luarocks` is not on `PATH`. They
-are the slowest tests here, so they are limited to one at a time.
-
-`crates/stanchion/tests/ui/` holds `trybuild` compile-fail cases pinning the macro's
-diagnostics. They only assert on `error:` lines the macro itself emits, so they are not
-sensitive to rustc version. After deliberately changing a message, refresh the
-expectations with:
-
-```sh
-TRYBUILD=overwrite cargo test -p stanchion --features lua54,vendored --test ui
-```
-
-A mismatch writes the actual output to `wip/` for comparison. (Refreshing uses
-`cargo test`, because `TRYBUILD=overwrite` rewrites files as a side effect of the run.)
+See [docs/testing.md](docs/testing.md) for profiles, doctests and the UI tests.
 
 ## Licence
 

@@ -1,0 +1,5 @@
+name = "greedy"
+version = "0.1.0"
+
+[capabilities.kv]
+namespace = "tenant-7"

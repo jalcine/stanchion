@@ -1,0 +1,5 @@
+name = "fetcher"
+version = "1.0.0"
+
+[capabilities.http]
+hosts = ["example.test"]

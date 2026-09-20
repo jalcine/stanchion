@@ -16,6 +16,7 @@ capabilities and signatures on the other.
 | [`stanchion-sigstore`](crates/stanchion-sigstore) | sigstore verification — quarantines a large dependency graph                    |
 | [`stanchion-dist`](crates/stanchion-dist)         | packaging, the index protocol, OCI transport, pinned installs                   |
 | [`stanchion-remote`](crates/stanchion-remote)     | out-of-process hosting: JSON-RPC protocol, client, host                         |
+| [`stanchion-ffi`](crates/stanchion-ffi)           | the seam the language bindings sit on: dynamic calls, values, capabilities      |
 
 Depend on `stanchion` and pick features; generated code refers to `::stanchion`, so use
 the macro through the facade.

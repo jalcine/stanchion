@@ -3477,6 +3477,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "stanchion-ffi"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "mlua",
+ "serde",
+ "stanchion-registry",
+ "tempfile",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "stanchion-macros"
 version = "0.1.0"
 dependencies = [

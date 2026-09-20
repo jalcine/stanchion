@@ -1,0 +1,41 @@
+[package]
+name = "stanchion-ffi"
+description = "Language-neutral dynamic facade for stanchion, for building foreign-language bindings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# `send` is not optional here. Every foreign runtime calls in from threads it chooses,
+# so the registry has to be `Send + Sync` before a binding can hold one.
+stanchion-registry = { workspace = true, features = ["config", "send"] }
+mlua = { workspace = true, features = ["send"] }
+serde.workspace = true
+toml.workspace = true
+
+futures-executor = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { version = "1", default-features = false, features = ["sync"] }
+
+[features]
+default = []
+async = ["stanchion-registry/async", "mlua/async"]
+signatures = ["stanchion-registry/signatures"]
+luarocks = ["stanchion-registry/luarocks"]
+
+# Which Lua, and whose. No default: picking a VM is the consumer's build-time
+# decision, and a binding that hard-codes one cannot be embedded in an application
+# that already has its own. Omitting all of these fails the build in `mlua`, which is
+# the right error to get.
+lua54 = ["mlua/lua54", "stanchion-registry/lua54"]
+lua53 = ["mlua/lua53", "stanchion-registry/lua53"]
+luajit = ["mlua/luajit", "stanchion-registry/luajit"]
+luau = ["mlua/luau", "stanchion-registry/luau"]
+vendored = ["mlua/vendored", "stanchion-registry/vendored"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

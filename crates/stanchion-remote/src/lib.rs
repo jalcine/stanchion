@@ -26,7 +26,9 @@ pub use client::{RemoteError, RemoteOptions, RemoteRegistry};
 pub use protocol::{
     AuditEntry, CallbackCall, Failure, HostInfo, LoadResult, Outcome, PluginInfo, method,
 };
-pub use server::{
-    CapabilityConfig, HostChannel, HostConfig, SandboxConfig, SignatureConfig, build_registry,
-    load_config, serve,
+pub use server::{HostChannel, build_registry, serve};
+/// Re-exported from the registry, where the host and the language bindings share one
+/// configuration vocabulary. These used to live here; the path is unchanged.
+pub use stanchion_registry::config::{
+    CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config,
 };

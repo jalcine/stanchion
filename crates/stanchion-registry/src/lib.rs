@@ -23,6 +23,8 @@
 //! instruction limits, you need one [`Lua`] per plugin instead.
 
 mod capability;
+#[cfg(feature = "config")]
+pub mod config;
 pub mod dynamic;
 mod error;
 mod manifest;
@@ -41,6 +43,8 @@ pub use toml;
 
 pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY, Policy, Rules};
 pub use sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
+#[cfg(feature = "config")]
+pub use config::{CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config};
 #[cfg(feature = "signatures")]
 pub use signature::{
     BUNDLE_FILE, DirectoryDigest, PluginVerifier, Revocation, Revocations, SIGNATURE_FILE, Signer,

@@ -2,14 +2,13 @@
 
 use std::collections::VecDeque;
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use mlua::{Lua, LuaSerdeExt, MultiValue, StdLib, Value};
-use serde::Deserialize;
+use mlua::{Lua, LuaSerdeExt, MultiValue, Value};
 use serde_json::Value as Json;
 
-use stanchion_registry::{DynClass, DynInstance, Registry, Rules, Sandbox};
+use stanchion_registry::config::HostConfig;
+use stanchion_registry::{DynClass, DynInstance, Registry, Rules};
 
 use jsonrpsee_types::{ErrorCode, ErrorObjectOwned, Id};
 
@@ -19,126 +18,6 @@ use super::protocol::{
     AuditEntry, CallParams, CallbackCall, DispatchParams, Failure, HostInfo, LoadResult, Outcome,
     PluginInfo, PluginParams, RevokeParams, RootParams, error_code, method,
 };
-
-/// The host binary's configuration file.
-///
-/// The host runs plugins the core application does not trust in its own address space,
-/// so its policy has to come from somewhere the plugins cannot write: a file the
-/// operator controls, never the plugin manifests.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HostConfig {
-    /// Directory to load plugins from when the client does not name one.
-    #[serde(default)]
-    pub plugins: Option<PathBuf>,
-    /// Lua state policy for each plugin.
-    #[serde(default)]
-    pub sandbox: SandboxConfig,
-    /// Capability names the host will grant.
-    #[serde(default)]
-    pub capabilities: CapabilityConfig,
-    /// Signature requirements.
-    #[serde(default)]
-    pub signatures: SignatureConfig,
-}
-
-/// Standard libraries and resource limits for plugin states.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SandboxConfig {
-    /// Library names: `string`, `table`, `math`, `coroutine`, `package`, `io`, `os`.
-    #[serde(default)]
-    pub libs: Option<Vec<String>>,
-    /// Globals to unbind after the libraries load, by dotted path.
-    #[serde(default)]
-    pub deny: Option<Vec<String>>,
-    /// Memory ceiling per plugin, in bytes.
-    #[serde(default)]
-    pub memory_limit: Option<usize>,
-    /// Instruction ceiling per call.
-    #[serde(default)]
-    pub instruction_limit: Option<u64>,
-    /// Whether plugins share one state. Defaults to false — the point of a separate
-    /// process is isolation, so it should not stop at the process boundary.
-    #[serde(default)]
-    pub shared: bool,
-}
-
-impl Default for SandboxConfig {
-    fn default() -> Self {
-        SandboxConfig {
-            libs: None,
-            deny: None,
-            memory_limit: Some(64 * 1024 * 1024),
-            instruction_limit: Some(50_000_000),
-            shared: false,
-        }
-    }
-}
-
-/// Which capabilities the host grants.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CapabilityConfig {
-    /// Capability names to grant as requested. Anything else is denied.
-    #[serde(default)]
-    pub allow: Vec<String>,
-    /// Capabilities forwarded to the application over the same channel.
-    ///
-    /// Each becomes a Lua function that calls back into the process that launched
-    /// the host; the application answers it. Listing one here also grants it.
-    #[serde(default)]
-    pub callbacks: Vec<String>,
-}
-
-/// Signature policy.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SignatureConfig {
-    /// Refuse any plugin without a verified signature.
-    #[serde(default)]
-    pub required: bool,
-}
-
-impl SandboxConfig {
-    /// Translates the configured library names into a [`StdLib`] set.
-    ///
-    /// An unknown name is an error rather than a silent omission: quietly dropping a
-    /// library a plugin needs produces a confusing runtime failure instead of a clear
-    /// configuration one.
-    pub fn to_sandbox(&self) -> Result<Sandbox, String> {
-        let mut sandbox = Sandbox::restricted();
-
-        if let Some(names) = &self.libs {
-            let mut libs = StdLib::NONE;
-            for name in names {
-                libs |= match name.as_str() {
-                    "string" => StdLib::STRING,
-                    "table" => StdLib::TABLE,
-                    "math" => StdLib::MATH,
-                    "coroutine" => StdLib::COROUTINE,
-                    "package" => StdLib::PACKAGE,
-                    "io" => StdLib::IO,
-                    "os" => StdLib::OS,
-                    "debug" => StdLib::DEBUG,
-                    other => return Err(format!("unknown standard library `{other}`")),
-                };
-            }
-            sandbox = sandbox.libs(libs);
-        }
-
-        if let Some(deny) = &self.deny {
-            sandbox = sandbox.deny(deny.clone());
-        }
-        if let Some(bytes) = self.memory_limit {
-            sandbox = sandbox.memory_limit(bytes);
-        }
-        if let Some(instructions) = self.instruction_limit {
-            sandbox = sandbox.instruction_limit(instructions);
-        }
-        Ok(sandbox)
-    }
-}
 
 /// Builds the registry a host serves from.
 pub fn build_registry(
@@ -503,11 +382,4 @@ fn audit_signer(entry: &stanchion_registry::PluginAudit) -> String {
 #[cfg(not(feature = "signatures"))]
 fn audit_signer(_entry: &stanchion_registry::PluginAudit) -> String {
     "unverified".to_string()
-}
-
-/// Reads a `HostConfig` from a TOML file.
-pub fn load_config(path: &Path) -> Result<HostConfig, String> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|err| format!("reading `{}`: {err}", path.display()))?;
-    toml::from_str(&source).map_err(|err| format!("parsing `{}`: {err}", path.display()))
 }

@@ -1,0 +1,43 @@
+[package]
+name = "stanchion"
+description = "Lua plugins for Rust applications: typed contracts, sandboxing, capabilities, signatures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mlua.workspace = true
+stanchion-core.workspace = true
+stanchion-registry = { workspace = true, optional = true }
+stanchion-remote = { workspace = true, optional = true }
+stanchion-rocks = { workspace = true, optional = true }
+stanchion-sigstore = { workspace = true, optional = true }
+
+[features]
+default = []
+async = ["stanchion-core/async", "stanchion-registry?/async", "stanchion-remote?/async"]
+send = ["stanchion-core/send", "stanchion-registry?/send", "stanchion-remote?/send"]
+registry = ["dep:stanchion-registry"]
+luarocks = ["registry", "dep:stanchion-rocks", "stanchion-registry/luarocks"]
+signatures = ["registry", "stanchion-registry/signatures"]
+sigstore-verify = ["signatures", "dep:stanchion-sigstore"]
+remote = ["registry", "dep:stanchion-remote"]
+lua54 = ["mlua/lua54", "stanchion-core/lua54"]
+lua53 = ["mlua/lua53", "stanchion-core/lua53"]
+luajit = ["mlua/luajit", "stanchion-core/luajit"]
+luau = ["mlua/luau", "stanchion-core/luau"]
+vendored = ["mlua/vendored", "stanchion-core/vendored"]
+
+[dev-dependencies]
+mlua = { workspace = true, features = ["serde"] }
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+trybuild = "1"
+tempfile = "3"
+
+[package.metadata.docs.rs]
+features = ["lua54", "vendored", "async", "send", "registry", "luarocks", "signatures", "remote"]
+
+[lints]
+workspace = true

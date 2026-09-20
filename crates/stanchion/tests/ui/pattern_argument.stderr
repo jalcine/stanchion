@@ -1,0 +1,5 @@
+error: #[lua_class] arguments must be plain identifiers
+ --> tests/ui/pattern_argument.rs:8:21
+  |
+8 |     fn greet(&self, (a, b): (u32, u32)) -> Result<String>;
+  |                     ^^^^^^

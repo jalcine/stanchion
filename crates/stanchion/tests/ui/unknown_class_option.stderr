@@ -1,0 +1,5 @@
+error: unknown option: expected `class`, `handle` or `name`
+ --> tests/ui/unknown_class_option.rs:6:13
+  |
+6 | #[lua_class(bogus = "nope")]
+  |             ^^^^^

@@ -1,0 +1,5 @@
+error: #[lua_class] does not support generic traits: a Lua class has no type parameters
+ --> tests/ui/generic_trait.rs:7:18
+  |
+7 | pub trait Generic<T> {
+  |                  ^

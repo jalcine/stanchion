@@ -1,0 +1,5 @@
+error: `field` and `function` are mutually exclusive
+ --> tests/ui/field_and_function.rs:8:5
+  |
+8 |     #[lua(field, function)]
+  |     ^

@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jacky/stanchion"
+
+[workspace.dependencies]
+stanchion-core = { path = "crates/stanchion-core", version = "0.1.0" }
+stanchion-macros = { path = "crates/stanchion-macros", version = "0.1.0" }
+stanchion-registry = { path = "crates/stanchion-registry", version = "0.1.0" }
+stanchion-remote = { path = "crates/stanchion-remote", version = "0.1.0" }
+stanchion-rocks = { path = "crates/stanchion-rocks", version = "0.1.0" }
+stanchion-sigstore = { path = "crates/stanchion-sigstore", version = "0.1.0" }
+
+mlua = { version = "0.12", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = { version = "1", features = ["serde"] }
+sha2 = "0.10"
+toml = "0.9"
+
+# The panic policy, in one place so it cannot drift between crates: every fallible
+# path returns an error instead of unwinding into a caller.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"

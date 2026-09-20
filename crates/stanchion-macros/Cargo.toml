@@ -1,0 +1,18 @@
+[package]
+name = "stanchion-macros"
+description = "Attribute macro for stanchion: bind Lua classes to Rust traits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "visit-mut"] }
+
+[lints]
+workspace = true

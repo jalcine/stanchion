@@ -1,0 +1,5 @@
+error: #[lua_class] methods must take `&self`: Lua objects are shared handles
+ --> tests/ui/mut_receiver.rs:8:14
+  |
+8 |     fn greet(&mut self) -> Result<String>;
+  |              ^

@@ -1,0 +1,5 @@
+error: unknown option: expected `name`, `optional`, `field` or `function`
+ --> tests/ui/unknown_method_option.rs:8:11
+  |
+8 |     #[lua(bogus)]
+  |           ^^^^^

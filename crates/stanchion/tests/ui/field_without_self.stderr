@@ -1,0 +1,5 @@
+error: `version` is marked `field` but takes no `&self`: fields live on instances
+ --> tests/ui/field_without_self.rs:9:5
+  |
+9 |     fn version() -> Result<String>;
+  |     ^^

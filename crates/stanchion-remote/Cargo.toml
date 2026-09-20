@@ -1,0 +1,34 @@
+[package]
+name = "stanchion-remote"
+description = "Out-of-process plugin hosting for stanchion, over length-prefixed JSON"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "plugin-host"
+path = "src/bin/plugin_host.rs"
+
+[dependencies]
+mlua = { workspace = true, features = ["serde"] }
+stanchion-core.workspace = true
+stanchion-registry.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[features]
+default = []
+async = ["stanchion-registry/async"]
+send = ["stanchion-registry/send"]
+luarocks = ["stanchion-registry/luarocks"]
+signatures = ["stanchion-registry/signatures"]
+lua54 = ["mlua/lua54"]
+lua53 = ["mlua/lua53"]
+luajit = ["mlua/luajit"]
+luau = ["mlua/luau"]
+vendored = ["mlua/vendored"]
+
+[lints]
+workspace = true

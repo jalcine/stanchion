@@ -1,0 +1,12 @@
+[package]
+name = "stanchion-rocks"
+description = "LuaRocks tree queries and version constraints for stanchion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

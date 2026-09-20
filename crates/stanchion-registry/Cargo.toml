@@ -1,0 +1,31 @@
+[package]
+name = "stanchion-registry"
+description = "Plugin registry for stanchion: manifests, sandboxing, capabilities, reload"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mlua = { workspace = true, features = ["serde"] }
+stanchion-core.workspace = true
+semver.workspace = true
+serde.workspace = true
+toml.workspace = true
+sha2 = { workspace = true, optional = true }
+stanchion-rocks = { workspace = true, optional = true }
+
+[features]
+default = []
+async = ["stanchion-core/async", "mlua/async"]
+send = ["stanchion-core/send", "mlua/send"]
+luarocks = ["dep:stanchion-rocks"]
+signatures = ["dep:sha2"]
+lua54 = ["mlua/lua54"]
+lua53 = ["mlua/lua53"]
+luajit = ["mlua/luajit"]
+luau = ["mlua/luau"]
+vendored = ["mlua/vendored"]
+
+[lints]
+workspace = true

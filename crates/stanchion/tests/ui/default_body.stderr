@@ -1,0 +1,5 @@
+error: #[lua_class] methods cannot have a default body: the body comes from Lua
+ --> tests/ui/default_body.rs:8:5
+  |
+8 |     fn greet(&self) -> Result<String> {
+  |     ^^

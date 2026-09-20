@@ -113,6 +113,9 @@ pub enum FailureReason {
     UntrustedSigner(String),
     /// The build or its signer is on the host's revocation list.
     Revoked(String),
+    /// The plugin does not match what the lockfile pins for it.
+    #[cfg(feature = "signatures")]
+    Lock(crate::lock::LockError),
     /// A file's bytes changed between verification and loading.
     DigestMismatch(String),
     /// Policy refused a capability the plugin requires.
@@ -160,6 +163,8 @@ impl fmt::Display for FailureReason {
             FailureReason::SignatureInvalid(message) => write!(f, "{message}"),
             FailureReason::UntrustedSigner(message) => write!(f, "{message}"),
             FailureReason::Revoked(message) => write!(f, "{message}"),
+            #[cfg(feature = "signatures")]
+            FailureReason::Lock(source) => write!(f, "{source}"),
             FailureReason::DigestMismatch(path) => {
                 write!(f, "`{path}` changed between verification and loading")
             }
@@ -203,6 +208,8 @@ impl Error for FailureReason {
         match self {
             FailureReason::Io(source) => Some(source),
             FailureReason::Lua(source) => Some(source),
+            #[cfg(feature = "signatures")]
+            FailureReason::Lock(source) => Some(source),
             _ => None,
         }
     }

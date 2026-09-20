@@ -57,6 +57,34 @@ from the impl, and from the required-key set, so a class compiled without it sti
 That is why the required keys are `required_methods()` / `required_functions()` rather
 than consts — array elements cannot carry `#[cfg]`.
 
+## Tables or userdata
+
+A handle wraps either a Lua table or userdata. Nothing in the trait says which, and the
+same contract binds both:
+
+```rust
+#[lua_class]
+pub trait Tally {
+    fn new(start: i64) -> Result<Self>;
+    fn bump(&self, amount: i64) -> Result<i64>;
+}
+```
+
+```lua
+local Tally = {}
+Tally.new = make_counter   -- a Rust function returning userdata
+return Tally
+```
+
+`mlua`'s `ObjectLike` covers both shapes but is sealed, so `LuaHandle` re-dispatches
+the operations generated code needs. Validation resolves required methods through
+`__index`, which reaches methods on a userdata metatable; userdata carrying no methods
+at all has no `__index` and raises when probed, so that is reported as the missing
+method rather than as a Lua error.
+
+`LuaObject::handle()` returns the `LuaHandle`; `table()` returns `Option<&Table>` for
+the features that genuinely need a table, such as the registry's `exports` proxies.
+
 ---
 
 [← Documentation index](../README.md#documentation)

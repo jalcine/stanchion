@@ -116,7 +116,7 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
         #[doc = #class_doc]
         #[derive(Clone, Debug)]
         #vis struct #class_ident {
-            table: ::stanchion::mlua::Table,
+            handle: ::stanchion::LuaHandle,
         }
 
         impl #class_ident {
@@ -133,17 +133,19 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
                 __names
             }
 
-            fn from_table(table: ::stanchion::mlua::Table) -> ::stanchion::mlua::Result<Self> {
-                ::stanchion::__private::require_functions(
-                    &table,
+            fn from_handle(
+                handle: ::stanchion::LuaHandle,
+            ) -> ::stanchion::mlua::Result<Self> {
+                ::stanchion::__private::require_handle_functions(
+                    &handle,
                     #class_str,
                     &<Self as ::stanchion::LuaClass>::required_functions(),
                 )?;
-                Ok(Self { table })
+                Ok(Self { handle })
             }
 
-            fn table(&self) -> &::stanchion::mlua::Table {
-                &self.table
+            fn handle(&self) -> &::stanchion::LuaHandle {
+                &self.handle
             }
         }
 
@@ -152,15 +154,15 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
                 value: ::stanchion::mlua::Value,
                 _lua: &::stanchion::mlua::Lua,
             ) -> ::stanchion::mlua::Result<Self> {
-                let table = ::stanchion::__private::expect_table(value, #class_str)?;
-                <Self as ::stanchion::LuaClass>::from_table(table)
+                let handle = ::stanchion::__private::expect_handle(value, #class_str)?;
+                <Self as ::stanchion::LuaClass>::from_handle(handle)
             }
         }
 
         #[doc = #handle_doc]
         #[derive(Clone, Debug)]
         #vis struct #handle_ident {
-            table: ::stanchion::mlua::Table,
+            handle: ::stanchion::LuaHandle,
         }
 
         impl ::stanchion::LuaObject for #handle_ident {
@@ -170,21 +172,23 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
                 __names
             }
 
-            fn from_table(table: ::stanchion::mlua::Table) -> ::stanchion::mlua::Result<Self> {
-                ::stanchion::__private::require_functions(
-                    &table,
+            fn from_handle(
+                handle: ::stanchion::LuaHandle,
+            ) -> ::stanchion::mlua::Result<Self> {
+                ::stanchion::__private::require_handle_functions(
+                    &handle,
                     #handle_str,
                     &<Self as ::stanchion::LuaObject>::required_methods(),
                 )?;
-                Ok(Self { table })
+                Ok(Self { handle })
             }
 
-            fn table(&self) -> &::stanchion::mlua::Table {
-                &self.table
+            fn handle(&self) -> &::stanchion::LuaHandle {
+                &self.handle
             }
 
-            fn into_table(self) -> ::stanchion::mlua::Table {
-                self.table
+            fn into_handle(self) -> ::stanchion::LuaHandle {
+                self.handle
             }
         }
 
@@ -193,8 +197,8 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
                 value: ::stanchion::mlua::Value,
                 _lua: &::stanchion::mlua::Lua,
             ) -> ::stanchion::mlua::Result<Self> {
-                let table = ::stanchion::__private::expect_table(value, #handle_str)?;
-                <Self as ::stanchion::LuaObject>::from_table(table)
+                let handle = ::stanchion::__private::expect_handle(value, #handle_str)?;
+                <Self as ::stanchion::LuaObject>::from_handle(handle)
             }
         }
 
@@ -339,14 +343,14 @@ fn trait_signature(method: &Method) -> TokenStream2 {
 fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
     let Method { cfg_attrs, ident, args, ret, is_async, .. } = method;
     let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
-    let table_expr = if *is_async { quote!(&__table) } else { quote!(__table) };
+    let table_expr = if *is_async { quote!(&__handle) } else { quote!(__handle) };
     let body = call_expr(method, table_expr)?;
 
     Ok(if *is_async {
         quote! {
             #(#cfg_attrs)*
             fn #ident(&self #(, #params)*) -> ::stanchion::BoxFuture<'_, #ret> {
-                let __table = ::core::clone::Clone::clone(&self.table);
+                let __handle = ::core::clone::Clone::clone(&self.handle);
                 ::std::boxed::Box::pin(async move { #body })
             }
         }
@@ -354,7 +358,7 @@ fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
         quote! {
             #(#cfg_attrs)*
             fn #ident(&self #(, #params)*) -> #ret {
-                let __table = &self.table;
+                let __handle = &self.handle;
                 #body
             }
         }
@@ -365,14 +369,14 @@ fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
 fn class_body(method: &Method) -> syn::Result<TokenStream2> {
     let Method { sig_attrs, ident, args, ret, is_async, .. } = method;
     let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
-    let table_expr = if *is_async { quote!(&__table) } else { quote!(__table) };
+    let table_expr = if *is_async { quote!(&__handle) } else { quote!(__handle) };
     let body = call_expr(method, table_expr)?;
 
     Ok(if *is_async {
         quote! {
             #(#sig_attrs)*
             pub fn #ident(&self #(, #params)*) -> ::stanchion::BoxFuture<'_, #ret> {
-                let __table = ::core::clone::Clone::clone(&self.table);
+                let __handle = ::core::clone::Clone::clone(&self.handle);
                 ::std::boxed::Box::pin(async move { #body })
             }
         }
@@ -380,7 +384,7 @@ fn class_body(method: &Method) -> syn::Result<TokenStream2> {
         quote! {
             #(#sig_attrs)*
             pub fn #ident(&self #(, #params)*) -> #ret {
-                let __table = &self.table;
+                let __handle = &self.handle;
                 #body
             }
         }
@@ -395,7 +399,7 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
 
     Ok(match method.kind {
         MethodKind::FieldGet => quote! {
-            ::stanchion::mlua::ObjectLike::get(#table, #name)
+            ::stanchion::LuaHandle::get(#table, #name)
         },
         MethodKind::FieldSet => {
             let Some(value) = arg_idents.first() else {
@@ -405,26 +409,28 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
                 ));
             };
             quote! {
-                ::stanchion::mlua::ObjectLike::set(#table, #name, #value)
+                ::stanchion::LuaHandle::set(#table, #name, #value)
             }
         }
         MethodKind::Method { optional: false } if method.is_async => quote! {
-            ::stanchion::mlua::ObjectLike::call_async_method(#table, #name, #tuple).await
+            ::stanchion::LuaHandle::call_async_method(#table, #name, #tuple).await
         },
         MethodKind::Method { optional: false } => quote! {
-            ::stanchion::mlua::ObjectLike::call_method(#table, #name, #tuple)
+            ::stanchion::LuaHandle::call_method(#table, #name, #tuple)
         },
         MethodKind::Function { optional: false } if method.is_async => quote! {
-            ::stanchion::mlua::ObjectLike::call_async_function(#table, #name, #tuple).await
+            ::stanchion::LuaHandle::call_async_function(#table, #name, #tuple).await
         },
         MethodKind::Function { optional: false } => quote! {
-            ::stanchion::mlua::ObjectLike::call_function(#table, #name, #tuple)
+            ::stanchion::LuaHandle::call_function(#table, #name, #tuple)
         },
         // Optional methods resolve the function by hand so a missing key is `Ok(None)`
         // rather than an error from `call_method`.
         MethodKind::Method { optional: true } | MethodKind::Function { optional: true } => {
             let receiver = match method.kind {
-                MethodKind::Method { .. } => quote!(::core::clone::Clone::clone(#table),),
+                // A hand-resolved optional method still needs `self` passed, and a
+                // handle is not itself a Lua value.
+                MethodKind::Method { .. } => quote!(::stanchion::LuaHandle::to_value(#table),),
                 _ => quote!(),
             };
             let call = if method.is_async {

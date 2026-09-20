@@ -45,7 +45,8 @@ pub use capability::{
 pub use sandbox::{Budget, Sandbox, RESTRICTED_DENY_LIST};
 #[cfg(feature = "signatures")]
 pub use signature::{
-    DirectoryDigest, PluginVerifier, Signer, VerifyError, BUNDLE_FILE, SIGNATURE_FILE,
+    DirectoryDigest, PluginVerifier, Revocation, Revocations, Signer, VerifyError, BUNDLE_FILE,
+    SIGNATURE_FILE,
 };
 
 
@@ -53,7 +54,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use mlua::{Lua, LuaSerdeExt, ObjectLike, Table, Value};
+use mlua::{Lua, LuaSerdeExt, Table, Value};
 
 use stanchion_core::{LuaClass, LuaObject};
 
@@ -267,6 +268,8 @@ pub struct Registry<C: LuaClass> {
     verifier: Option<Box<dyn PluginVerifier>>,
     #[cfg(feature = "signatures")]
     require_signatures: bool,
+    #[cfg(feature = "signatures")]
+    revocations: Option<signature::Revocations>,
     #[cfg(feature = "luarocks")]
     rocks: Option<rocks::RocksConfig>,
     #[cfg(feature = "luarocks")]
@@ -293,6 +296,8 @@ impl<C: LuaClass> Registry<C> {
             verifier: None,
             #[cfg(feature = "signatures")]
             require_signatures: false,
+            #[cfg(feature = "signatures")]
+            revocations: None,
             #[cfg(feature = "luarocks")]
             rocks: None,
             #[cfg(feature = "luarocks")]
@@ -384,6 +389,18 @@ impl<C: LuaClass> Registry<C> {
     #[cfg(feature = "signatures")]
     pub fn require_signatures(mut self, required: bool) -> Self {
         self.require_signatures = required;
+        self
+    }
+
+    /// Refuses builds or signers on a revocation list.
+    ///
+    /// Checked after verification, because a withdrawn plugin's signature is still
+    /// valid — that is precisely why a separate, mutable list is needed. Works without
+    /// a verifier too: a digest denylist refuses a specific build with no signing
+    /// infrastructure at all.
+    #[cfg(feature = "signatures")]
+    pub fn with_revocations(mut self, revocations: signature::Revocations) -> Self {
+        self.revocations = Some(revocations);
         self
     }
 
@@ -942,10 +959,10 @@ impl<C: LuaClass> Registry<C> {
         let config = lua.to_value(&manifest.config)?;
         let dependencies = self.dependency_table(lua, manifest)?;
         let instance: C::Instance = class
-            .table()
+            .handle()
             .call_function(&self.constructor, (config, dependencies))?;
 
-        let exports = self.extract_exports(instance.table())?;
+        let exports = self.extract_exports(instance.handle())?;
         Ok(Loaded { instance, exports, environment, granted })
     }
 
@@ -958,26 +975,40 @@ impl<C: LuaClass> Registry<C> {
         &self,
         manifest: &Manifest,
     ) -> Result<(Signer, Option<DirectoryDigest>), FailureReason> {
-        let Some(verifier) = &self.verifier else {
-            if self.require_signatures {
-                return Err(FailureReason::Unsigned);
-            }
-            return Ok((Signer::Unsigned, None));
+        // A digest is needed to verify a signature, and also to match a denylist
+        // entry, so it is computed whenever either is configured.
+        let wants_digest = self.verifier.is_some()
+            || self.revocations.as_ref().is_some_and(|list| !list.is_empty());
+        let digest = if wants_digest {
+            Some(DirectoryDigest::compute(&manifest.dir)?)
+        } else {
+            None
         };
 
-        let digest = DirectoryDigest::compute(&manifest.dir)?;
-        match verifier.verify(&digest, &manifest.dir) {
-            Ok(signer) => Ok((signer, Some(digest))),
-            Err(VerifyError::Missing) if !self.require_signatures => {
-                Ok((Signer::Unsigned, Some(digest)))
-            }
-            Err(VerifyError::Missing) => Err(FailureReason::Unsigned),
-            Err(err @ VerifyError::Untrusted(_)) => {
-                Err(FailureReason::UntrustedSigner(err.to_string()))
-            }
-            Err(VerifyError::Io(source)) => Err(FailureReason::Io(source)),
-            Err(err) => Err(FailureReason::SignatureInvalid(err.to_string())),
+        let signer = match (&self.verifier, &digest) {
+            (Some(verifier), Some(digest)) => match verifier.verify(digest, &manifest.dir) {
+                Ok(signer) => signer,
+                Err(VerifyError::Missing) if !self.require_signatures => Signer::Unsigned,
+                Err(VerifyError::Missing) => return Err(FailureReason::Unsigned),
+                Err(err @ VerifyError::Untrusted(_)) => {
+                    return Err(FailureReason::UntrustedSigner(err.to_string()));
+                }
+                Err(VerifyError::Io(source)) => return Err(FailureReason::Io(source)),
+                Err(err) => return Err(FailureReason::SignatureInvalid(err.to_string())),
+            },
+            _ if self.require_signatures => return Err(FailureReason::Unsigned),
+            _ => Signer::Unsigned,
+        };
+
+        // After verification, not instead of it: being revoked is a fact about a
+        // signature that is otherwise perfectly valid.
+        if let Some(list) = &self.revocations
+            && let Some(reason) = list.check(digest.as_ref(), &signer)
+        {
+            return Err(FailureReason::Revoked(reason));
         }
+
+        Ok((signer, digest))
     }
 
     /// Resolves and binds one plugin's declared capabilities into its environment.
@@ -1057,11 +1088,14 @@ impl<C: LuaClass> Registry<C> {
     }
 
     /// Reads a plugin's `exports`, accepting either a table or a function returning one.
-    fn extract_exports(&self, instance: &Table) -> Result<Option<Table>, FailureReason> {
+    fn extract_exports(
+        &self,
+        instance: &stanchion_core::LuaHandle,
+    ) -> Result<Option<Table>, FailureReason> {
         match instance.get::<Value>(EXPORTS_KEY)? {
             Value::Nil => Ok(None),
             Value::Table(table) => Ok(Some(table)),
-            Value::Function(function) => Ok(Some(function.call(instance.clone())?)),
+            Value::Function(function) => Ok(Some(function.call(instance.to_value())?)),
             other => Err(FailureReason::Lua(mlua::Error::RuntimeError(format!(
                 "`{EXPORTS_KEY}` must be a table or a function returning one, found {}",
                 other.type_name()

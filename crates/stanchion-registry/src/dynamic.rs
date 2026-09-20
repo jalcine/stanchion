@@ -9,37 +9,37 @@
 //! The trade is that method names and argument types are checked when a call happens
 //! rather than when the plugin loads. In-process hosts should prefer a real trait.
 
-use mlua::{FromLua, Lua, MultiValue, ObjectLike, Result, Table, Value};
+use mlua::{FromLua, Lua, MultiValue, Result, Value};
 
-use stanchion_core::{LuaClass, LuaObject};
+use stanchion_core::{LuaClass, LuaHandle, LuaObject};
 
 /// A plugin class whose methods are resolved at call time.
 #[derive(Clone, Debug)]
 pub struct DynClass {
-    table: Table,
+    handle: LuaHandle,
 }
 
 /// An instance whose methods are resolved at call time.
 #[derive(Clone, Debug)]
 pub struct DynInstance {
-    table: Table,
+    handle: LuaHandle,
 }
 
 impl DynInstance {
     /// Calls a method by name, passing the instance as `self`.
     pub fn call_method(&self, method: &str, args: MultiValue) -> Result<Value> {
-        self.table.call_method(method, args)
+        self.handle.call_method(method, args)
     }
 
     /// Whether the instance resolves `method` to something callable.
     pub fn has_method(&self, method: &str) -> Result<bool> {
-        Ok(self.table.get::<Value>(method)?.is_function())
+        Ok(self.handle.get::<Value>(method)?.is_function())
     }
 
     /// Calls a method asynchronously, passing the instance as `self`.
     #[cfg(feature = "async")]
     pub async fn call_method_async(&self, method: &str, args: MultiValue) -> Result<Value> {
-        self.table.call_async_method(method, args).await
+        self.handle.call_async_method(method, args).await
     }
 }
 
@@ -48,23 +48,23 @@ impl LuaObject for DynInstance {
         Vec::new()
     }
 
-    fn from_table(table: Table) -> Result<Self> {
-        Ok(DynInstance { table })
+    fn from_handle(handle: LuaHandle) -> Result<Self> {
+        Ok(DynInstance { handle })
     }
 
-    fn table(&self) -> &Table {
-        &self.table
+    fn handle(&self) -> &LuaHandle {
+        &self.handle
     }
 
-    fn into_table(self) -> Table {
-        self.table
+    fn into_handle(self) -> LuaHandle {
+        self.handle
     }
 }
 
 impl FromLua for DynInstance {
     fn from_lua(value: Value, _lua: &Lua) -> Result<Self> {
-        let table = stanchion_core::__private::expect_table(value, "DynInstance")?;
-        DynInstance::from_table(table)
+        let handle = stanchion_core::__private::expect_handle(value, "DynInstance")?;
+        DynInstance::from_handle(handle)
     }
 }
 
@@ -76,18 +76,18 @@ impl LuaClass for DynClass {
         Vec::new()
     }
 
-    fn from_table(table: Table) -> Result<Self> {
-        Ok(DynClass { table })
+    fn from_handle(handle: LuaHandle) -> Result<Self> {
+        Ok(DynClass { handle })
     }
 
-    fn table(&self) -> &Table {
-        &self.table
+    fn handle(&self) -> &LuaHandle {
+        &self.handle
     }
 }
 
 impl FromLua for DynClass {
     fn from_lua(value: Value, _lua: &Lua) -> Result<Self> {
-        let table = stanchion_core::__private::expect_table(value, "DynClass")?;
-        DynClass::from_table(table)
+        let handle = stanchion_core::__private::expect_handle(value, "DynClass")?;
+        DynClass::from_handle(handle)
     }
 }

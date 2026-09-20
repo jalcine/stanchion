@@ -350,3 +350,127 @@ fn audit_reports_provenance_without_running_code() -> TestResult {
     assert!(signer_of("signed").is_some_and(|signer| signer.is_verified()));
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Revocation: the mutable half of provenance.
+// ---------------------------------------------------------------------------
+
+use stanchion::registry::Revocations;
+
+#[test]
+fn a_revoked_build_is_refused_although_its_signature_is_valid() -> TestResult {
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    let dir = root.path().join("probe");
+    sign(&dir)?;
+
+    // Take the digest the host will compute, and deny exactly that build.
+    let digest = DirectoryDigest::compute(&dir)?;
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(StubVerifier::new("repo:acme/plugins"))
+        .with_revocations(Revocations::new().deny_digest(digest.hex(), "CVE-2026-1234"));
+
+    let report = registry.load_dir(root.path())?;
+    assert!(report.loaded.is_empty());
+
+    let reason = first_failure(&report)?;
+    assert!(matches!(reason, FailureReason::Revoked(_)), "got: {reason}");
+    assert!(reason.to_string().contains("CVE-2026-1234"), "got: {reason}");
+    Ok(())
+}
+
+#[test]
+fn revoking_an_identity_refuses_everything_it_signed() -> TestResult {
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    sign(&root.path().join("probe"))?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(StubVerifier::new("repo:acme/plugins"))
+        .with_revocations(
+            Revocations::new().deny_identity("repo:acme/plugins", "key compromise"),
+        );
+
+    let report = registry.load_dir(root.path())?;
+    let reason = first_failure(&report)?.to_string();
+    assert!(reason.contains("repo:acme/plugins"), "got: {reason}");
+    assert!(reason.contains("key compromise"), "got: {reason}");
+    Ok(())
+}
+
+#[test]
+fn an_unrelated_revocation_does_not_block_a_plugin() -> TestResult {
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    sign(&root.path().join("probe"))?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(StubVerifier::new("repo:acme/plugins"))
+        .with_revocations(
+            Revocations::new()
+                .deny_digest("0".repeat(64), "some other build")
+                .deny_identity("repo:someone/else", "not us"),
+        );
+
+    assert!(registry.load_dir(root.path())?.is_clean());
+    Ok(())
+}
+
+#[test]
+fn a_digest_denylist_works_without_any_verifier() -> TestResult {
+    // No signing infrastructure at all: just refuse one known-bad build.
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    let digest = DirectoryDigest::compute(&root.path().join("probe"))?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_revocations(Revocations::new().deny_digest(digest.hex(), "known bad"));
+
+    let report = registry.load_dir(root.path())?;
+    assert!(report.loaded.is_empty());
+    assert!(first_failure(&report)?.to_string().contains("known bad"));
+    Ok(())
+}
+
+#[test]
+fn a_revocation_list_loads_from_toml() -> TestResult {
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    let dir = root.path().join("probe");
+    let digest = DirectoryDigest::compute(&dir)?;
+
+    let list_path = root.path().join("revoked.toml");
+    fs::write(
+        &list_path,
+        format!(
+            "[[revoked]]\ndigest = \"{}\"\nreason = \"withdrawn upstream\"\n\n\
+             [[revoked]]\nidentity = \"repo:acme/old\"\nreason = \"rotated\"\n",
+            // Upper case on purpose: hand-written lists should still match.
+            digest.hex().to_uppercase()
+        ),
+    )?;
+
+    let list = Revocations::load(&list_path)?;
+    assert_eq!(list.entries().len(), 2);
+
+    let mut registry: Registry<ProbeClass> =
+        Registry::isolated(Lua::new(), Sandbox::restricted()).with_revocations(list);
+    let report = registry.load_dir(root.path())?;
+    assert!(
+        first_failure(&report)?.to_string().contains("withdrawn upstream"),
+        "got: {:?}",
+        report.failures
+    );
+    Ok(())
+}
+
+#[test]
+fn a_revocation_entry_naming_nothing_is_a_configuration_error() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let list_path = root.path().join("revoked.toml");
+    fs::write(&list_path, "[[revoked]]\nreason = \"oops\"\n")?;
+
+    let Err(error) = Revocations::load(&list_path) else {
+        return Err("an entry matching nothing should be rejected".into());
+    };
+    assert!(
+        error.to_string().contains("names neither `digest` nor `identity`"),
+        "got: {error}"
+    );
+    Ok(())
+}

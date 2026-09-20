@@ -76,12 +76,43 @@ failing: it loads, just without the capability.
 `audit` reports each plugin's signer alongside its requests, still without running any
 plugin code.
 
+## Revocation
+
+A signature proves who produced a plugin. It cannot say the plugin was later
+withdrawn, so revocation is the separate, mutable half — checked **after** verification
+succeeds, because a revoked signature is still a valid signature.
+
+```rust
+let registry = Registry::isolated(Lua::new(), Sandbox::restricted())
+    .with_verifier(verifier)
+    .with_revocations(Revocations::load(Path::new("revoked.toml"))?);
+```
+
+```toml
+[[revoked]]
+digest = "9f86d081884c7d65…"
+reason = "CVE-2026-1234"
+
+[[revoked]]
+identity = "repo:acme/compromised"
+reason = "key compromise"
+```
+
+A digest entry refuses one specific build; an identity entry refuses everything that
+signer produced. Digests compare case-insensitively so a hand-written list still
+matches, and an entry naming neither is a configuration error rather than one that
+silently matches nothing.
+
+Revocation works **without any verifier**: a digest denylist refuses a known-bad build
+with no signing infrastructure at all. The list is consulted at load, so a plugin
+already running when an entry is added keeps running until it is reloaded.
+
 ## What signatures do not buy
 
 - **Origin and integrity, not safety.** A verified plugin from a trusted author can
   still be hostile. A signature says whom to hold responsible.
-- **Revocation is separate.** A withdrawn plugin's signature stays valid; that needs a
-  denylist the host refreshes.
+- **Revocation is a separate list you maintain.** A withdrawn plugin's signature stays
+  valid; nothing but the list says otherwise.
 
 ---
 

@@ -263,3 +263,131 @@ pub(crate) fn to_hex(bytes: &[u8]) -> String {
 }
 
 
+
+/// One entry on a revocation list.
+///
+/// Either a plugin build (by digest) or a signer (by identity), with an optional
+/// reason the host can log or show.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Revocation {
+    /// Hex root digest of a specific plugin build.
+    #[serde(default)]
+    pub digest: Option<String>,
+    /// Signer identity, revoking everything that identity signed.
+    #[serde(default)]
+    pub identity: Option<String>,
+    /// Why, for the host's logs.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+impl Revocation {
+    fn describe(&self, what: &str) -> String {
+        match &self.reason {
+            Some(reason) => format!("{what} is revoked: {reason}"),
+            None => format!("{what} is revoked"),
+        }
+    }
+}
+
+/// Builds and plugins the host refuses to load, whatever their signature says.
+///
+/// A signature proves who produced a plugin; it cannot say the plugin was later
+/// withdrawn. Revocation is the separate, mutable half of that story, so it is checked
+/// *after* verification succeeds — a revoked signature is still a valid signature.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Revocations {
+    #[serde(default)]
+    revoked: Vec<Revocation>,
+}
+
+impl Revocations {
+    /// An empty list, which refuses nothing.
+    pub fn new() -> Self {
+        Revocations::default()
+    }
+
+    /// Refuses one plugin build by its hex root digest.
+    pub fn deny_digest(mut self, digest: impl Into<String>, reason: impl Into<String>) -> Self {
+        self.revoked.push(Revocation {
+            digest: Some(digest.into()),
+            identity: None,
+            reason: Some(reason.into()),
+        });
+        self
+    }
+
+    /// Refuses everything signed by one identity.
+    pub fn deny_identity(mut self, identity: impl Into<String>, reason: impl Into<String>) -> Self {
+        self.revoked.push(Revocation {
+            digest: None,
+            identity: Some(identity.into()),
+            reason: Some(reason.into()),
+        });
+        self
+    }
+
+    /// Reads a TOML revocation list.
+    ///
+    /// ```toml
+    /// [[revoked]]
+    /// digest = "9f86d081884c7d65…"
+    /// reason = "CVE-2026-1234"
+    ///
+    /// [[revoked]]
+    /// identity = "repo:acme/compromised"
+    /// reason = "key compromise"
+    /// ```
+    ///
+    /// An entry naming neither a digest nor an identity is a configuration error
+    /// rather than an entry that silently matches nothing.
+    pub fn load(path: &Path) -> Result<Self, VerifyError> {
+        let source = fs::read_to_string(path)?;
+        let list: Revocations = toml::from_str(&source)
+            .map_err(|err| VerifyError::Invalid(format!("{}: {err}", path.display())))?;
+
+        for (position, entry) in list.revoked.iter().enumerate() {
+            if entry.digest.is_none() && entry.identity.is_none() {
+                return Err(VerifyError::Invalid(format!(
+                    "{}: revoked entry {} names neither `digest` nor `identity`",
+                    path.display(),
+                    position.saturating_add(1)
+                )));
+            }
+        }
+        Ok(list)
+    }
+
+    /// The entries on the list.
+    pub fn entries(&self) -> &[Revocation] {
+        &self.revoked
+    }
+
+    /// Whether the list refuses nothing.
+    pub fn is_empty(&self) -> bool {
+        self.revoked.is_empty()
+    }
+
+    /// Returns why this plugin is refused, or `None` if it is not.
+    ///
+    /// Digests are compared case-insensitively so a list written by hand still matches.
+    pub fn check(&self, digest: Option<&DirectoryDigest>, signer: &Signer) -> Option<String> {
+        let hex = digest.map(DirectoryDigest::hex);
+
+        for entry in &self.revoked {
+            if let (Some(revoked), Some(actual)) = (&entry.digest, &hex)
+                && revoked.trim().eq_ignore_ascii_case(actual)
+            {
+                return Some(entry.describe("this build"));
+            }
+            if let (Some(revoked), Some(actual)) = (&entry.identity, signer.identity())
+                && revoked == actual
+            {
+                return Some(entry.describe(&format!("signer `{actual}`")));
+            }
+        }
+        None
+    }
+}

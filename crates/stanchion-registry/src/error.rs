@@ -105,6 +105,8 @@ pub enum FailureReason {
     SignatureInvalid(String),
     /// The signature verified but the signer is not trusted.
     UntrustedSigner(String),
+    /// The build or its signer is on the host's revocation list.
+    Revoked(String),
     /// A file's bytes changed between verification and loading.
     DigestMismatch(String),
     /// Policy refused a capability the plugin requires.
@@ -143,6 +145,7 @@ impl fmt::Display for FailureReason {
             }
             FailureReason::SignatureInvalid(message) => write!(f, "{message}"),
             FailureReason::UntrustedSigner(message) => write!(f, "{message}"),
+            FailureReason::Revoked(message) => write!(f, "{message}"),
             FailureReason::DigestMismatch(path) => write!(
                 f,
                 "`{path}` changed between verification and loading"

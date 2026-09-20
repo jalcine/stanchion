@@ -27,10 +27,13 @@ mod capability;
 pub mod config;
 pub mod dynamic;
 mod error;
+#[cfg(feature = "signatures")]
+pub mod lock;
 mod manifest;
 mod sandbox;
 #[cfg(feature = "signatures")]
 pub mod signature;
+pub mod upgrade;
 #[cfg(feature = "luarocks")]
 pub use stanchion_rocks as rocks;
 
@@ -45,6 +48,9 @@ pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY
 pub use sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
 #[cfg(feature = "config")]
 pub use config::{CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config};
+#[cfg(feature = "signatures")]
+pub use lock::{LOCK_FILE, LockError, LockedPlugin, Lockfile};
+pub use upgrade::{Change, UpgradeReview};
 #[cfg(feature = "signatures")]
 pub use signature::{
     BUNDLE_FILE, DirectoryDigest, PluginVerifier, Revocation, Revocations, SIGNATURE_FILE, Signer,
@@ -271,6 +277,8 @@ pub struct Registry<C: LuaClass> {
     require_signatures: bool,
     #[cfg(feature = "signatures")]
     revocations: Option<signature::Revocations>,
+    #[cfg(feature = "signatures")]
+    lockfile: Option<lock::Lockfile>,
     #[cfg(feature = "luarocks")]
     rocks: Option<rocks::RocksConfig>,
     #[cfg(feature = "luarocks")]
@@ -299,6 +307,8 @@ impl<C: LuaClass> Registry<C> {
             require_signatures: false,
             #[cfg(feature = "signatures")]
             revocations: None,
+            #[cfg(feature = "signatures")]
+            lockfile: None,
             #[cfg(feature = "luarocks")]
             rocks: None,
             #[cfg(feature = "luarocks")]
@@ -397,6 +407,29 @@ impl<C: LuaClass> Registry<C> {
     pub fn with_revocations(mut self, revocations: signature::Revocations) -> Self {
         self.revocations = Some(revocations);
         self
+    }
+
+    /// Refuses any plugin whose bytes are not the ones this lockfile pins.
+    ///
+    /// This is the control that makes a transport untrusted: an OCI registry, mirror
+    /// or index can serve whatever it likes, and anything other than the pinned digest
+    /// fails to load. It needs no signing infrastructure — a lockfile alone already
+    /// refuses substitution and downgrade, neither of which a signature stops.
+    ///
+    /// Every discovered plugin must be pinned. One in the root with no entry fails as
+    /// [`LockError::Unlocked`] rather than loading, because once a host keeps a
+    /// lockfile, an unpinned directory appearing beside the pinned ones is exactly the
+    /// event worth refusing.
+    #[cfg(feature = "signatures")]
+    pub fn with_lockfile(mut self, lockfile: lock::Lockfile) -> Self {
+        self.lockfile = Some(lockfile);
+        self
+    }
+
+    /// The lockfile this registry enforces, if any.
+    #[cfg(feature = "signatures")]
+    pub fn lockfile(&self) -> Option<&lock::Lockfile> {
+        self.lockfile.as_ref()
     }
 
     /// How plugin states are allocated.
@@ -992,6 +1025,7 @@ impl<C: LuaClass> Registry<C> {
         // A digest is needed to verify a signature, and also to match a denylist
         // entry, so it is computed whenever either is configured.
         let wants_digest = self.verifier.is_some()
+            || self.lockfile.is_some()
             || self
                 .revocations
                 .as_ref()
@@ -1023,6 +1057,16 @@ impl<C: LuaClass> Registry<C> {
             && let Some(reason) = list.check(digest.as_ref(), &signer)
         {
             return Err(FailureReason::Revoked(reason));
+        }
+
+        // Last, because a pin is a statement about a plugin already established to be
+        // what it claims: the digest confirms the bytes, verification decides the
+        // signer, and this decides whether that pairing is the one the host wrote down.
+        if let Some(lockfile) = &self.lockfile
+            && let Some(digest) = &digest
+            && let Err(err) = lockfile.check(manifest, digest, &signer)
+        {
+            return Err(FailureReason::Lock(err));
         }
 
         Ok((signer, digest))

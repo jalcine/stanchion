@@ -113,6 +113,7 @@ Only an unreadable plugin root is fatal. Everything else lands in
 | `UntrustedSigner` | cryptographically sound, but the signer is not trusted |
 | `DigestMismatch` | a file changed between verification and loading |
 | `Revoked` | the build or its signer is on the host's [revocation list](signatures.md#revocation) |
+| `Lock` | the plugin is not the build the lockfile pins, or is not pinned at all |
 | `DependencyFailed` | a dependency failed, so this plugin was skipped |
 | `DependencyCycle` | this plugin is part of a cycle |
 

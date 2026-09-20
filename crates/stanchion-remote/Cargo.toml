@@ -9,7 +9,7 @@ repository.workspace = true
 [dependencies]
 mlua = { workspace = true, features = ["serde"] }
 stanchion-core.workspace = true
-stanchion-registry.workspace = true
+stanchion-registry = { workspace = true, features = ["config"] }
 serde.workspace = true
 serde_json.workspace = true
 jsonrpsee-types.workspace = true

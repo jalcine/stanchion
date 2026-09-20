@@ -17,6 +17,8 @@ stanchion-rocks = { workspace = true, optional = true }
 
 [features]
 default = []
+# Declarative host configuration, for callers that cannot pass closures.
+config = []
 async = ["stanchion-core/async", "mlua/async"]
 send = ["stanchion-core/send", "mlua/send"]
 luarocks = ["dep:stanchion-rocks"]

@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+# `bindings/*` are the foreign-language shims. They are workspace members so one
+# lockfile and one `cargo clippy` cover them, but not default members: building
+# them needs a Python, Ruby or Node toolchain that a Rust-only checkout will not
+# have, and `cargo test` should not start demanding one.
+members = ["crates/*", "bindings/*"]
+default-members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +16,7 @@ repository = "https://github.com/jalcine/stanchion"
 [workspace.dependencies]
 stanchion-core = { path = "crates/stanchion-core", version = "0.1.0" }
 stanchion-dist = { path = "crates/stanchion-dist", version = "0.1.0" }
+stanchion-ffi = { path = "crates/stanchion-ffi", version = "0.1.0" }
 stanchion-macros = { path = "crates/stanchion-macros", version = "0.1.0" }
 stanchion-registry = { path = "crates/stanchion-registry", version = "0.1.0" }
 stanchion-remote = { path = "crates/stanchion-remote", version = "0.1.0" }

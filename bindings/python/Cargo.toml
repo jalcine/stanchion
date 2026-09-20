@@ -1,0 +1,34 @@
+[package]
+name = "stanchion-python"
+description = "Python bindings for stanchion: Lua plugins with sandboxing, capabilities and signatures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "_stanchion"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+stanchion-ffi = { workspace = true, features = ["async", "signatures"] }
+pyo3 = { version = "0.29", features = ["abi3-py310"] }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+
+[features]
+# Lua 5.4, built from source, so `pip install` needs nothing on the system. Turn this
+# off and name another to link the interpreter the application already embeds.
+default = ["lua54", "vendored"]
+lua54 = ["stanchion-ffi/lua54"]
+lua53 = ["stanchion-ffi/lua53"]
+luajit = ["stanchion-ffi/luajit"]
+luau = ["stanchion-ffi/luau"]
+vendored = ["stanchion-ffi/vendored"]
+
+# Set by maturin when building a wheel. Left off for `cargo test`, which needs to link
+# against a real libpython.
+extension-module = ["pyo3/extension-module"]
+
+[lints]
+workspace = true

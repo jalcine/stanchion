@@ -1,0 +1,59 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "stanchion"
+description = "Lua plugins for Python applications: sandboxing, capabilities, signatures"
+requires-python = ">=3.10"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["lua", "plugins", "sandbox", "capabilities", "mlua"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Interpreters",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/jalcine/stanchion"
+Documentation = "https://github.com/jalcine/stanchion/blob/main/docs/bindings.md"
+
+[tool.maturin]
+# The compiled module sits under a hand-written package that re-exports it, so the
+# public surface can carry docstrings, `py.typed` and a stub without the Rust side
+# having to know about any of it.
+module-name = "stanchion._stanchion"
+python-source = "python"
+features = ["pyo3/extension-module"]
+
+# Lua 5.4 built from source: `pip install stanchion` needs nothing on the system. To
+# link an interpreter the application already embeds, build from source with
+# `--no-default-features --features luajit` (see docs/bindings.md).
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "mypy>=1.11", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 96
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+# `conftest` is this suite's own module, not a dependency.
+known-first-party = ["conftest", "stanchion"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["python", "tests"]

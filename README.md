@@ -81,6 +81,7 @@ assert_eq!(greeter.greet("world".to_string())?, "hello, world");
 | [Dependency chains](docs/dependencies.md) | published exports, semver requirements, reload propagation                |
 | [LuaRocks](docs/luarocks.md)              | declaring external Lua libraries, C-module hazards                        |
 | [Out-of-process hosting](docs/remote.md)  | the `plugin-host` binary, JSON-RPC protocol, callbacks, crash containment |
+| [Language bindings](docs/bindings.md)     | Python, Kotlin, Swift, Ruby and JavaScript over the dynamic surface       |
 | [Testing](docs/testing.md)                | running the suite under nextest, profiles, doctests, UI tests             |
 
 ## Examples

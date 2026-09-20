@@ -7,12 +7,17 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value as Json;
 
+use jsonrpsee_types::Id;
+
+use crate::frame::{self, Incoming, Request, Response};
+
 use super::protocol::{
-    AuditEntry, Envelope, Failure, Outcome, PluginInfo, Request, Response, read_message,
-    write_message,
+    AuditEntry, CallParams, CallbackCall, DispatchParams, HostInfo, LoadResult, Outcome,
+    PluginInfo, PluginParams, RevokeParams, RootParams, error_code, method,
 };
 
 /// Something went wrong talking to the host process.
@@ -31,6 +36,8 @@ pub enum RemoteError {
     Host(String),
     /// The host answered with a reply that does not fit the request.
     Protocol(String),
+    /// A plugin called a capability and nothing was registered to answer it.
+    UnhandledCallback(String),
 }
 
 impl fmt::Display for RemoteError {
@@ -46,6 +53,9 @@ impl fmt::Display for RemoteError {
             },
             RemoteError::Host(message) => f.write_str(message),
             RemoteError::Protocol(message) => write!(f, "unexpected reply: {message}"),
+            RemoteError::UnhandledCallback(name) => {
+                write!(f, "a plugin called `{name}`, which this application does not handle")
+            }
         }
     }
 }
@@ -107,12 +117,16 @@ impl RemoteOptions {
     }
 }
 
+/// Answers the capability calls plugins make back into the application.
+type CallbackFn = Box<dyn FnMut(&CallbackCall) -> Result<Json, String>>;
+
 /// A plugin registry living in another process.
 pub struct RemoteRegistry {
     child: Child,
     writer: BufWriter<ChildStdin>,
     reader: BufReader<ChildStdout>,
     next_id: u64,
+    on_callback: Option<CallbackFn>,
 }
 
 impl RemoteRegistry {
@@ -150,52 +164,57 @@ impl RemoteRegistry {
             writer: BufWriter::new(stdin),
             reader: BufReader::new(stdout),
             next_id: 1,
+            on_callback: None,
         })
     }
 
+    /// Answers the capabilities plugins call back into this application.
+    ///
+    /// Without a handler a plugin calling one gets a Lua error, so a host may offer a
+    /// capability the application has not implemented without anything crashing.
+    ///
+    /// The handler receives the grant the host's policy approved, so it can re-check
+    /// rather than trusting the host to have narrowed correctly.
+    pub fn on_callback(
+        mut self,
+        handler: impl FnMut(&CallbackCall) -> Result<Json, String> + 'static,
+    ) -> Self {
+        self.on_callback = Some(Box::new(handler));
+        self
+    }
+
     /// Loads every plugin under `root`, returning what loaded and what did not.
-    pub fn load(&mut self, root: impl AsRef<Path>) -> Result<LoadOutcome, RemoteError> {
+    pub fn load(&mut self, root: impl AsRef<Path>) -> Result<LoadResult, RemoteError> {
         let root = root.as_ref().display().to_string();
-        match self.request(Request::Load { root })? {
-            Response::Loaded { loaded, failures } => Ok(LoadOutcome { loaded, failures }),
-            other => Err(unexpected(&other)),
-        }
+        self.call_host(method::LOAD, RootParams { root })
     }
 
     /// Lists the plugins the host currently holds.
     pub fn list(&mut self) -> Result<Vec<PluginInfo>, RemoteError> {
-        match self.request(Request::List)? {
-            Response::Plugins { plugins } => Ok(plugins),
-            other => Err(unexpected(&other)),
-        }
+        self.call_host(method::LIST, Json::Null)
     }
 
     /// Reports what plugins under `root` request, without running their code.
     pub fn audit(&mut self, root: impl AsRef<Path>) -> Result<Vec<AuditEntry>, RemoteError> {
         let root = root.as_ref().display().to_string();
-        match self.request(Request::Audit { root })? {
-            Response::Audit { entries } => Ok(entries),
-            other => Err(unexpected(&other)),
-        }
+        self.call_host(method::AUDIT, RootParams { root })
     }
 
     /// Calls one method on one plugin, deserializing the result.
     pub fn call<T: DeserializeOwned>(
         &mut self,
         plugin: &str,
-        method: &str,
+        method_name: &str,
         args: impl IntoIterator<Item = Json>,
     ) -> Result<T, RemoteError> {
-        let request = Request::Call {
-            plugin: plugin.to_string(),
-            method: method.to_string(),
-            args: args.into_iter().collect(),
-        };
-        match self.request(request)? {
-            Response::Value { value } => serde_json::from_value(value)
-                .map_err(|err| RemoteError::Protocol(err.to_string())),
-            other => Err(unexpected(&other)),
-        }
+        self.call_host(
+            method::CALL,
+            CallParams {
+                plugin: plugin.to_string(),
+                method: method_name.to_string(),
+                args: args.into_iter().collect(),
+            },
+        )
     }
 
     /// Calls the same method on every plugin, collecting one outcome each.
@@ -203,41 +222,43 @@ impl RemoteRegistry {
     /// A plugin that fails is reported in place, exactly as in-process dispatch does.
     pub fn dispatch(
         &mut self,
-        method: &str,
+        method_name: &str,
         args: impl IntoIterator<Item = Json>,
     ) -> Result<Vec<Outcome>, RemoteError> {
-        let request = Request::Dispatch {
-            method: method.to_string(),
-            args: args.into_iter().collect(),
-        };
-        match self.request(request)? {
-            Response::Outcomes { outcomes } => Ok(outcomes),
-            other => Err(unexpected(&other)),
-        }
+        self.call_host(
+            method::DISPATCH,
+            DispatchParams {
+                method: method_name.to_string(),
+                args: args.into_iter().collect(),
+            },
+        )
     }
 
     /// Re-reads one plugin from disk in the host.
     pub fn reload(&mut self, plugin: &str) -> Result<(), RemoteError> {
-        self.expect_ok(Request::Reload { plugin: plugin.to_string() })
+        self.call_host(method::RELOAD, PluginParams { plugin: plugin.to_string() })
     }
 
     /// Unbinds a capability from a live plugin in the host.
     pub fn revoke(&mut self, plugin: &str, capability: &str) -> Result<(), RemoteError> {
-        self.expect_ok(Request::Revoke {
-            plugin: plugin.to_string(),
-            capability: capability.to_string(),
-        })
+        self.call_host(
+            method::REVOKE,
+            RevokeParams {
+                plugin: plugin.to_string(),
+                capability: capability.to_string(),
+            },
+        )
     }
 
     /// Asks the host to describe itself.
-    pub fn info(&mut self) -> Result<Response, RemoteError> {
-        self.request(Request::Info)
+    pub fn info(&mut self) -> Result<HostInfo, RemoteError> {
+        self.call_host(method::INFO, Json::Null)
     }
 
     /// Asks the host to exit, then waits for it.
     pub fn shutdown(mut self) -> Result<(), RemoteError> {
         // A host that already died is not an error to shut down.
-        let _ = self.expect_ok(Request::Shutdown);
+        let _: Result<Json, _> = self.call_host(method::SHUTDOWN, Json::Null);
         self.child.wait().map_err(RemoteError::Transport)?;
         Ok(())
     }
@@ -247,35 +268,73 @@ impl RemoteRegistry {
         matches!(self.child.try_wait(), Ok(None))
     }
 
-    fn expect_ok(&mut self, request: Request) -> Result<(), RemoteError> {
-        match self.request(request)? {
-            Response::Ok => Ok(()),
-            other => Err(unexpected(&other)),
+    /// Sends one request and reads its reply, answering any callback that arrives
+    /// while waiting, and mapping a dead host to `HostGone`.
+    fn call_host<P: Serialize, T: DeserializeOwned>(
+        &mut self,
+        method_name: &str,
+        params: P,
+    ) -> Result<T, RemoteError> {
+        let number = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        let params = serde_json::to_value(params)
+            .map_err(|err| RemoteError::Protocol(err.to_string()))?;
+
+        if let Err(err) = frame::write(&mut self.writer, &Request::new(number, method_name, params))
+        {
+            return Err(self.diagnose(err));
+        }
+        let id = Id::Number(number);
+
+        loop {
+            match frame::read(&mut self.reader) {
+                Err(err) => return Err(self.diagnose(err)),
+                // A closed stream means the child is gone, which is the case the
+                // whole design exists for.
+                Ok(None) => return Err(self.gone()),
+                Ok(Some(Incoming::Response(response))) if response.id == id => {
+                    if let Some(error) = response.error {
+                        return Err(RemoteError::Host(error.message().to_string()));
+                    }
+                    let value = response.result.unwrap_or(Json::Null);
+                    return serde_json::from_value(value)
+                        .map_err(|err| RemoteError::Protocol(err.to_string()));
+                }
+                Ok(Some(Incoming::Response(_))) => continue,
+                Ok(Some(Incoming::Request(callback))) => self.answer_callback(callback)?,
+            }
         }
     }
 
-    /// Sends one request and reads its reply, mapping a dead host to `HostGone`.
-    fn request(&mut self, request: Request) -> Result<Response, RemoteError> {
-        let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
+    /// Answers a capability call a plugin made back into this application.
+    fn answer_callback(&mut self, callback: Request) -> Result<(), RemoteError> {
+        let name = callback
+            .method
+            .strip_prefix(method::CAPABILITY_PREFIX)
+            .unwrap_or(&callback.method)
+            .to_string();
 
-        if let Err(err) = write_message(&mut self.writer, &Envelope { id, body: request }) {
-            return Err(self.diagnose(err));
-        }
-
-        match read_message::<_, Envelope<Response>>(&mut self.reader) {
-            Ok(Some(envelope)) if envelope.id == id => match envelope.body {
-                Response::Error { message } => Err(RemoteError::Host(message)),
-                body => Ok(body),
+        let outcome = match serde_json::from_value::<CallbackCall>(
+            callback.params.unwrap_or(Json::Null),
+        ) {
+            Err(err) => Err(format!("malformed callback: {err}")),
+            Ok(call) => match self.on_callback.as_mut() {
+                Some(handler) => handler(&call),
+                None => Err(format!(
+                    "this application does not handle the `{name}` capability"
+                )),
             },
-            Ok(Some(envelope)) => Err(RemoteError::Protocol(format!(
-                "reply {} does not match request {id}",
-                envelope.id
-            ))),
-            // A closed stream means the child is gone, which is the interesting case.
-            Ok(None) => Err(self.gone()),
-            Err(err) => Err(self.diagnose(err)),
-        }
+        };
+
+        let response = match outcome {
+            Ok(value) => Response::ok(callback.id, value),
+            Err(message) => Response::failed(
+                callback.id,
+                frame::app_error(error_code::REQUEST_FAILED, message),
+            ),
+        };
+
+        frame::write(&mut self.writer, &response).map_err(|err| self.diagnose(err))
     }
 
     /// Distinguishes a dead host from an ordinary transport failure.
@@ -307,22 +366,3 @@ impl Drop for RemoteRegistry {
     }
 }
 
-/// What one remote load did.
-#[derive(Debug, Clone)]
-pub struct LoadOutcome {
-    /// Plugins that loaded, in order.
-    pub loaded: Vec<String>,
-    /// Plugins that did not, with the host's reason.
-    pub failures: Vec<Failure>,
-}
-
-impl LoadOutcome {
-    /// True when every discovered plugin loaded.
-    pub fn is_clean(&self) -> bool {
-        self.failures.is_empty()
-    }
-}
-
-fn unexpected(response: &Response) -> RemoteError {
-    RemoteError::Protocol(format!("{response:?}"))
-}

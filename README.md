@@ -88,7 +88,7 @@ assert_eq!(greeter.greet("world".to_string())?, "hello, world");
 | `registry` | adds `Registry<C>`: manifest discovery, semver dependency chains, config, reload. Pulls in `toml`, `semver` and `mlua/serde` |
 | `luarocks` | adds `[rocks]` declarations, tree verification and `install_rocks`. Shells out to `luarocks`; no new crates |
 | `signatures` | adds `DirectoryDigest`, the `PluginVerifier` seam, and provenance in capability policy. Pulls in `sha2` |
-| `remote` | adds the `plugin-host` binary and `RemoteRegistry` client. Pulls in `serde_json` |
+| `remote` | adds the `plugin-host` binary and `RemoteRegistry` client, speaking JSON-RPC 2.0. Pulls in `serde_json` and `jsonrpsee-types` |
 | `sigstore-verify` | adds `SigstoreVerifier` for keyless verification. Pulls in `sigstore` and ~246 transitive crates |
 | `lua54`, `lua53`, `luajit`, `luau`, `vendored` | forwarded to `mlua` |
 
@@ -99,8 +99,6 @@ them dyn-compatible.
 
 - Methods must return `mlua::Result<..>`; other error types are not unwrapped.
 - Generic traits are rejected — a Lua class has no type parameters.
-- Handles wrap tables only; userdata-backed classes are not yet supported, though
-  `ObjectLike` would allow it.
 - A registry holds one class type. Mixing native Rust implementations into the same
   registry would need it to store `Box<dyn Trait>`, which cannot be reached generically
   from `C::Instance` on stable (the unsizing coercion is not expressible as a bound).
@@ -108,12 +106,10 @@ them dyn-compatible.
   cross states, so a plugin chain needs shared isolation.
 - In-process isolation bounds CPU and memory, but cannot survive a crash inside the
   interpreter; use the `remote` feature when that matters.
-- The out-of-process host cannot call back into your application yet, so remote plugins
-  are limited to computation plus `log`.
 - Capabilities bound what a plugin can reach, not what it does with what it got, and
   they are only as strong as the providers that enforce their grants.
-- Revocation is unimplemented: a withdrawn plugin's signature remains valid, so a host
-  needs its own denylist.
+- A revocation list is consulted at load, so a plugin already running when an entry is
+  added keeps running until it is reloaded.
 - `SigstoreVerifier` reports the identity your policy enforced, because sigstore's
   verification API answers conformance rather than returning the certificate subject.
 
@@ -142,24 +138,27 @@ rather than an unwrap location.
 Per-crate unit tests plus integration tests in the facade:
 
 ```sh
-cargo test --features lua54,vendored
-cargo test --features lua54,vendored,registry
-cargo test --features lua54,vendored,async,send
-cargo test --features lua54,vendored,async,send,registry
-cargo test --features lua54,vendored,async,send,registry,luarocks
-cargo test --features lua54,vendored,async,send,registry,signatures
-cargo test --features lua54,vendored,remote
+cargo test -p stanchion-rocks
+cargo test -p stanchion-remote --features lua54,vendored
+cargo test -p stanchion --features lua54,vendored
+cargo test -p stanchion --features lua54,vendored,async,send,registry,luarocks,signatures,remote
+```
+
+The remote tests drive the real binary, so build it first:
+
+```sh
+cargo build -p stanchion-remote --features lua54,vendored --bin plugin-host
 ```
 
 The `luarocks` tests build a rock offline with `luarocks make` from a local rockspec, so
 they need no network. They skip themselves if `luarocks` is not on `PATH`.
 
-`tests/ui/` holds `trybuild` compile-fail cases pinning the macro's diagnostics. They
+`crates/stanchion/tests/ui/` holds `trybuild` compile-fail cases pinning the macro's diagnostics. They
 only assert on `error:` lines the macro itself emits, so they are not sensitive to rustc
 version. After deliberately changing a message, refresh the expectations with:
 
 ```sh
-TRYBUILD=overwrite cargo test --features lua54,vendored --test ui
+TRYBUILD=overwrite cargo test -p stanchion --features lua54,vendored --test ui
 ```
 
 A mismatch writes the actual output to `wip/` for comparison.

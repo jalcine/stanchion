@@ -17,13 +17,16 @@
 //! let greeting: String = remote.call("greeter", "greet", [json!("world")])?;
 //! ```
 
+mod frame;
 mod client;
 pub mod protocol;
 mod server;
 
-pub use client::{LoadOutcome, RemoteError, RemoteOptions, RemoteRegistry};
-pub use protocol::{AuditEntry, Failure, Outcome, PluginInfo, Request, Response};
+pub use client::{RemoteError, RemoteOptions, RemoteRegistry};
+pub use protocol::{
+    AuditEntry, CallbackCall, Failure, HostInfo, LoadResult, Outcome, PluginInfo, method,
+};
 pub use server::{
-    build_registry, load_config, serve, CapabilityConfig, HostConfig, SandboxConfig,
+    build_registry, load_config, serve, CapabilityConfig, HostChannel, HostConfig, SandboxConfig,
     SignatureConfig,
 };

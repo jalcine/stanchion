@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use stanchion::remote::{RemoteOptions, RemoteRegistry, Response};
+use stanchion::remote::{CallbackCall, RemoteOptions, RemoteRegistry};
 use serde_json::{Value as Json, json};
 use tempfile::TempDir;
 
@@ -329,13 +329,8 @@ fn the_host_reports_its_own_configuration() -> TestResult {
     let root = plugin_root()?;
     let mut remote = launch(&root, None)?;
 
-    match remote.info()? {
-        Response::Info { isolation, .. } => {
-            // A separate process should not stop isolating at the process boundary.
-            assert_eq!(isolation, "per-plugin");
-        }
-        other => return Err(format!("unexpected reply: {other:?}").into()),
-    }
+    // A separate process should not stop isolating at the process boundary.
+    assert_eq!(remote.info()?.isolation, "per-plugin");
     remote.shutdown()?;
     Ok(())
 }
@@ -391,5 +386,169 @@ fn a_plugin_that_kills_its_process_does_not_take_the_application_with_it() -> Te
     assert!(!remote.is_alive());
 
     // The test process itself is untouched, which is the point being asserted.
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Callbacks: a plugin in the child reaching back into this process.
+// ---------------------------------------------------------------------------
+
+/// Declares a `kv` capability and uses it, so the plugin depends on the application.
+const CALLER: &str = r#"
+local P = {}
+P.__index = P
+
+function P.new(config, deps)
+  return setmetatable({}, P)
+end
+
+function P:lookup(key)
+  return kv(key)
+end
+
+function P:lookup_twice(a, b)
+  return kv(a) .. "/" .. kv(b)
+end
+
+function P:failing()
+  return kv("boom")
+end
+
+function P:undeclared()
+  return type(kv)
+end
+
+return P
+"#;
+
+fn caller_root(manifest: &str) -> Fallible<TempDir> {
+    let root = tempfile::tempdir()?;
+    write_plugin(root.path(), "caller", manifest, CALLER)?;
+    let config = root.path().join("host.toml");
+    fs::write(&config, "[capabilities]\ncallbacks = [\"kv\"]\n")?;
+    Ok(root)
+}
+
+#[test]
+fn a_plugin_calls_back_into_the_application() -> TestResult {
+    let root = caller_root("name = \"caller\"\n\n[capabilities.kv]\n")?;
+    let config = root.path().join("host.toml");
+
+    let options = RemoteOptions::new(host_binary()?)
+        .config(&config)
+        .plugins(root.path())
+        .inherit_stderr(false);
+    let mut remote = RemoteRegistry::launch(options)?.on_callback(
+        |call: &CallbackCall| {
+            assert_eq!(call.capability, "kv");
+            assert_eq!(call.plugin, "caller");
+            match call.args.first().and_then(Json::as_str) {
+                Some("boom") => Err("no such key".to_string()),
+                Some(key) => Ok(json!(format!("value-of-{key}"))),
+                None => Err("kv takes one key".to_string()),
+            }
+        },
+    );
+
+    let value: String = remote.call("caller", "lookup", [json!("alpha")])?;
+    assert_eq!(value, "value-of-alpha");
+
+    // Several callbacks inside one plugin call, all interleaved on one channel.
+    let pair: String = remote.call("caller", "lookup_twice", [json!("a"), json!("b")])?;
+    assert_eq!(pair, "value-of-a/value-of-b");
+
+    remote.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn an_application_error_surfaces_as_a_lua_error() -> TestResult {
+    let root = caller_root("name = \"caller\"\n\n[capabilities.kv]\n")?;
+    let config = root.path().join("host.toml");
+
+    let options = RemoteOptions::new(host_binary()?)
+        .config(&config)
+        .plugins(root.path())
+        .inherit_stderr(false);
+    let mut remote = RemoteRegistry::launch(options)?
+        .on_callback(|_: &CallbackCall| Err("the application refused".to_string()));
+
+    let Err(error) = remote.call::<Json>("caller", "failing", []) else {
+        return Err("a refused callback must fail the plugin call".into());
+    };
+    assert!(error.to_string().contains("the application refused"), "got: {error}");
+
+    // The host and the application both survive a refused callback.
+    assert!(remote.is_alive());
+    remote.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn an_unhandled_callback_fails_without_killing_anything() -> TestResult {
+    let root = caller_root("name = \"caller\"\n\n[capabilities.kv]\n")?;
+    let config = root.path().join("host.toml");
+
+    // No `on_callback` at all: the host offers `kv`, this application does not answer.
+    let options = RemoteOptions::new(host_binary()?)
+        .config(&config)
+        .plugins(root.path())
+        .inherit_stderr(false);
+    let mut remote = RemoteRegistry::launch(options)?;
+
+    let Err(error) = remote.call::<Json>("caller", "lookup", [json!("alpha")]) else {
+        return Err("an unanswered callback must fail".into());
+    };
+    assert!(error.to_string().contains("does not handle"), "got: {error}");
+    assert!(remote.is_alive());
+    remote.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn an_undeclared_capability_is_absent_even_when_the_host_offers_it() -> TestResult {
+    // The host forwards `kv`, but this plugin's manifest never asks for it.
+    let root = caller_root("name = \"caller\"\n")?;
+    let config = root.path().join("host.toml");
+
+    let options = RemoteOptions::new(host_binary()?)
+        .config(&config)
+        .plugins(root.path())
+        .inherit_stderr(false);
+    let mut remote = RemoteRegistry::launch(options)?
+        .on_callback(|_: &CallbackCall| Ok(json!("should never be reached")));
+
+    let kind: String = remote.call("caller", "undeclared", [])?;
+    assert_eq!(kind, "nil", "capabilities stay declared-only across the process line");
+    remote.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn the_approved_grant_travels_with_every_callback() -> TestResult {
+    let root = caller_root(
+        "name = \"caller\"\n\n[capabilities.kv]\nnamespace = \"tenant-7\"\n",
+    )?;
+    let config = root.path().join("host.toml");
+
+    let options = RemoteOptions::new(host_binary()?)
+        .config(&config)
+        .plugins(root.path())
+        .inherit_stderr(false);
+    let mut remote = RemoteRegistry::launch(options)?.on_callback(
+        |call: &CallbackCall| {
+            // The application re-checks rather than trusting the host's narrowing.
+            let namespace = call
+                .grant
+                .get("namespace")
+                .and_then(Json::as_str)
+                .unwrap_or("none");
+            Ok(json!(format!("{namespace}:ok")))
+        },
+    );
+
+    let value: String = remote.call("caller", "lookup", [json!("k")])?;
+    assert_eq!(value, "tenant-7:ok");
+    remote.shutdown()?;
     Ok(())
 }

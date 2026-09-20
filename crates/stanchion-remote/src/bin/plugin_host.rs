@@ -8,14 +8,16 @@
 //! plugin-host --config host.toml [--plugins DIR]
 //! ```
 //!
-//! stdin and stdout carry the protocol; **stderr is free for logging**, which is why
-//! the built-in `log` capability writes there.
+//! stdin and stdout carry JSON-RPC 2.0, one message per line; **stderr is free for
+//! logging**, which is why the built-in `log` capability writes there.
 
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use stanchion_remote::{build_registry, load_config, serve};
+use std::io::BufReader;
+
+use stanchion_remote::{HostChannel, build_registry, load_config, serve};
 
 fn main() -> ExitCode {
     match run() {
@@ -42,7 +44,11 @@ fn run() -> Result<(), String> {
         config.plugins = Some(plugins);
     }
 
-    let mut registry = build_registry(&config)?;
+    let channel = HostChannel::new(
+        BufReader::new(io::stdin()),
+        io::BufWriter::new(io::stdout()),
+    );
+    let mut registry = build_registry(&config, &channel)?;
 
     // Loading up front keeps the client's first call fast, and surfaces a broken
     // plugin root before any request arrives.
@@ -55,8 +61,7 @@ fn run() -> Result<(), String> {
         }
     }
 
-    serve(&mut registry, io::stdin().lock(), io::stdout().lock())
-        .map_err(|err| format!("serving: {err}"))
+    serve(&mut registry, &channel).map_err(|err| format!("serving: {err}"))
 }
 
 const USAGE: &str = "\

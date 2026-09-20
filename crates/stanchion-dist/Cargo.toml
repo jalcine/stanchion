@@ -1,0 +1,48 @@
+[package]
+name = "stanchion-dist"
+description = "Secure plugin distribution for stanchion: OCI artifacts, a signed index, and pinned installs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+stanchion-registry = { workspace = true, features = ["signatures"] }
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+time = { version = "0.3", features = ["parsing", "formatting"] }
+
+flate2 = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
+oci-client = { version = "0.18", default-features = false, features = ["rustls-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time"], optional = true }
+
+[features]
+default = []
+# Reading and writing the on-the-wire plugin package (a tar.gz of the directory).
+package = ["dep:tar", "dep:flate2"]
+# Fetching packages from an OCI registry.
+oci = ["package", "dep:oci-client", "dep:tokio"]
+# Reading an index over HTTPS.
+http = ["dep:reqwest", "dep:tokio"]
+# Everything a host needs to install from a remote index.
+client = ["oci", "http"]
+
+# Forwarded so this crate can be built on its own; the Lua runtime reaches it only
+# through stanchion-registry.
+send = ["stanchion-registry/send"]
+lua54 = ["stanchion-registry/lua54"]
+lua53 = ["stanchion-registry/lua53"]
+luajit = ["stanchion-registry/luajit"]
+luau = ["stanchion-registry/luau"]
+vendored = ["stanchion-registry/vendored"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

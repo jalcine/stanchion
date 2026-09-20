@@ -25,30 +25,27 @@
 mod capability;
 pub mod dynamic;
 mod error;
-#[cfg(feature = "signatures")]
-pub mod signature;
 mod manifest;
 mod sandbox;
+#[cfg(feature = "signatures")]
+pub mod signature;
 #[cfg(feature = "luarocks")]
 pub use stanchion_rocks as rocks;
 
-pub use error::{FailureReason, LoadFailure, RegistryError};
-pub use manifest::{DependencySpec, DetailedDependency, Manifest, MANIFEST_FILE};
 pub use dynamic::{DynClass, DynInstance};
+pub use error::{FailureReason, LoadFailure, RegistryError};
+pub use manifest::{DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest};
 /// Re-exported because [`Decision::GrantWith`] takes a `toml::Table`: a public API
 /// that names a foreign type has to hand you that type.
 pub use toml;
 
-pub use capability::{
-    CapabilityRequest, Decision, Grant, HostSetup, Policy, Rules, OPTIONAL_KEY,
-};
-pub use sandbox::{Budget, Sandbox, RESTRICTED_DENY_LIST};
+pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY, Policy, Rules};
+pub use sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
 #[cfg(feature = "signatures")]
 pub use signature::{
-    DirectoryDigest, PluginVerifier, Revocation, Revocations, Signer, VerifyError, BUNDLE_FILE,
-    SIGNATURE_FILE,
+    BUNDLE_FILE, DirectoryDigest, PluginVerifier, Revocation, Revocations, SIGNATURE_FILE, Signer,
+    VerifyError,
 };
-
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -339,10 +336,7 @@ impl<C: LuaClass> Registry<C> {
     ///     })
     ///     .with_policy(Rules::deny_all().allow("log"))
     /// ```
-    pub fn with_setup(
-        mut self,
-        setup: impl FnOnce(&mut HostSetup) -> mlua::Result<()>,
-    ) -> Self {
+    pub fn with_setup(mut self, setup: impl FnOnce(&mut HostSetup) -> mlua::Result<()>) -> Self {
         let mut host_setup = HostSetup::default();
         // Collected immediately so `audit` can report the host's offer before any
         // plugin loads. A failure is held and surfaced by the next fallible call.
@@ -357,10 +351,7 @@ impl<C: LuaClass> Registry<C> {
     ///
     /// Without a policy every capability is denied, even one with a registered
     /// provider: offering a capability and granting it are separate decisions.
-    pub fn with_policy(
-        mut self,
-        policy: impl Policy + 'static,
-    ) -> Self {
+    pub fn with_policy(mut self, policy: impl Policy + 'static) -> Self {
         self.policy = Some(Box::new(policy));
         self
     }
@@ -462,7 +453,9 @@ impl<C: LuaClass> Registry<C> {
 
     /// Installs ambient globals and cached rock paths on one state.
     fn configure(&self, lua: &Lua) -> Result<(), RegistryError> {
-        self.host_setup.install_ambient(lua).map_err(RegistryError::Lua)?;
+        self.host_setup
+            .install_ambient(lua)
+            .map_err(RegistryError::Lua)?;
         #[cfg(feature = "luarocks")]
         if let Some(paths) = &self.rock_paths {
             prepend_module_paths(lua, paths).map_err(RegistryError::Lua)?;
@@ -547,8 +540,7 @@ impl<C: LuaClass> Registry<C> {
                     name: manifest.name.clone(),
                     dir: manifest.dir.clone(),
                     reason: FailureReason::Rocks(
-                        "declares `[rocks]` but the `luarocks` feature is not enabled"
-                            .to_string(),
+                        "declares `[rocks]` but the `luarocks` feature is not enabled".to_string(),
                     ),
                 });
                 continue;
@@ -671,9 +663,10 @@ impl<C: LuaClass> Registry<C> {
                 exports.repoint(table).map_err(|err| fail(err.into()))?;
                 Some(exports)
             }
-            (None, Some(table)) => {
-                Some(self.make_proxy(&lua, &table).map_err(|err| fail(err.into()))?)
-            }
+            (None, Some(table)) => Some(
+                self.make_proxy(&lua, &table)
+                    .map_err(|err| fail(err.into()))?,
+            ),
             (Some(_), None) => {
                 return Err(fail(FailureReason::MissingExports(name.to_string())));
             }
@@ -712,7 +705,10 @@ impl<C: LuaClass> Registry<C> {
                 if let Some(budget) = &plugin.budget {
                     budget.reset();
                 }
-                Outcome { name: plugin.name(), result: call(&plugin.instance) }
+                Outcome {
+                    name: plugin.name(),
+                    result: call(&plugin.instance),
+                }
             })
             .collect()
     }
@@ -812,7 +808,11 @@ impl<C: LuaClass> Registry<C> {
 
         Ok(Audit {
             plugins,
-            ambient: self.host_setup.ambient_labels().map(str::to_string).collect(),
+            ambient: self
+                .host_setup
+                .ambient_labels()
+                .map(str::to_string)
+                .collect(),
             offered: self.host_setup.offered().map(str::to_string).collect(),
             unreadable,
         })
@@ -820,7 +820,9 @@ impl<C: LuaClass> Registry<C> {
 
     /// Looks a plugin up by name.
     pub fn get(&self, name: &str) -> Option<&Plugin<C>> {
-        self.index.get(name).and_then(|position| self.plugins.get(*position))
+        self.index
+            .get(name)
+            .and_then(|position| self.plugins.get(*position))
     }
 
     /// Every loaded plugin, in load order.
@@ -891,7 +893,10 @@ impl<C: LuaClass> Registry<C> {
                     continue;
                 }
             };
-            if installed.get(&name).is_some_and(|found| requirement.matches(found)) {
+            if installed
+                .get(&name)
+                .is_some_and(|found| requirement.matches(found))
+            {
                 report.satisfied.push(name);
                 continue;
             }
@@ -963,7 +968,12 @@ impl<C: LuaClass> Registry<C> {
             .call_function(&self.constructor, (config, dependencies))?;
 
         let exports = self.extract_exports(instance.handle())?;
-        Ok(Loaded { instance, exports, environment, granted })
+        Ok(Loaded {
+            instance,
+            exports,
+            environment,
+            granted,
+        })
     }
 
     /// Verifies a plugin directory and reports who signed it.
@@ -978,7 +988,10 @@ impl<C: LuaClass> Registry<C> {
         // A digest is needed to verify a signature, and also to match a denylist
         // entry, so it is computed whenever either is configured.
         let wants_digest = self.verifier.is_some()
-            || self.revocations.as_ref().is_some_and(|list| !list.is_empty());
+            || self
+                .revocations
+                .as_ref()
+                .is_some_and(|list| !list.is_empty());
         let digest = if wants_digest {
             Some(DirectoryDigest::compute(&manifest.dir)?)
         } else {
@@ -1055,7 +1068,10 @@ impl<C: LuaClass> Registry<C> {
                     if optional {
                         continue;
                     }
-                    return Err(FailureReason::CapabilityDenied { name: name.clone(), reason });
+                    return Err(FailureReason::CapabilityDenied {
+                        name: name.clone(),
+                        reason,
+                    });
                 }
             };
 
@@ -1109,7 +1125,9 @@ impl<C: LuaClass> Registry<C> {
         let metatable = lua.create_table()?;
         let exports = Exports { proxy, metatable };
         exports.repoint(table.clone())?;
-        exports.proxy.set_metatable(Some(exports.metatable.clone()))?;
+        exports
+            .proxy
+            .set_metatable(Some(exports.metatable.clone()))?;
         Ok(exports)
     }
 }
@@ -1130,8 +1148,8 @@ fn verify_rocks(
     };
 
     for (name, raw) in &manifest.rocks {
-        let requirement = rocks::Requirement::parse(raw)
-            .map_err(|err| FailureReason::Rocks(err.to_string()))?;
+        let requirement =
+            rocks::Requirement::parse(raw).map_err(|err| FailureReason::Rocks(err.to_string()))?;
         match installed.get(name) {
             None => {
                 return Err(FailureReason::MissingRock {
@@ -1238,14 +1256,20 @@ fn install_plugin_require(
                 .set_environment(plugin_env.clone())
                 .eval()?;
             // Lua treats a module returning nothing as `true`.
-            let value = if value.is_nil() { Value::Boolean(true) } else { value };
+            let value = if value.is_nil() {
+                Value::Boolean(true)
+            } else {
+                value
+            };
             loaded.set(name.as_str(), value.clone())?;
             return Ok(value);
         }
 
         match &fallback {
             Some(fallback) => fallback.call(name),
-            None => Err(mlua::Error::RuntimeError(format!("module `{name}` not found"))),
+            None => Err(mlua::Error::RuntimeError(format!(
+                "module `{name}` not found"
+            ))),
         }
     })?;
 

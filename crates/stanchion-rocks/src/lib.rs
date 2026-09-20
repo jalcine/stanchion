@@ -40,7 +40,11 @@ pub enum RocksError {
     /// The `luarocks` binary could not be run at all.
     Spawn { binary: PathBuf, source: io::Error },
     /// `luarocks` ran but reported failure.
-    Command { command: String, status: Option<i32>, stderr: String },
+    Command {
+        command: String,
+        status: Option<i32>,
+        stderr: String,
+    },
     /// A manifest declared a requirement that could not be parsed.
     Requirement { raw: String, message: String },
 }
@@ -51,7 +55,11 @@ impl fmt::Display for RocksError {
             RocksError::Spawn { binary, source } => {
                 write!(f, "could not run `{}`: {source}", binary.display())
             }
-            RocksError::Command { command, status, stderr } => {
+            RocksError::Command {
+                command,
+                status,
+                stderr,
+            } => {
                 let code = status.map_or_else(|| "signal".to_string(), |code| code.to_string());
                 write!(f, "`{command}` failed (exit {code})")?;
                 if !stderr.is_empty() {
@@ -128,7 +136,11 @@ impl RockVersion {
                 Err(_) => Part::Text(component.to_string()),
             })
             .collect();
-        RockVersion { raw: raw.to_string(), parts, revision }
+        RockVersion {
+            raw: raw.to_string(),
+            parts,
+            revision,
+        }
     }
 
     /// The version exactly as LuaRocks reported or the manifest declared it.
@@ -166,7 +178,11 @@ impl RockVersion {
                 Part::Text(text) => Part::Text(format!("{text}\u{7f}")),
             };
         }
-        RockVersion { raw: String::new(), parts, revision: None }
+        RockVersion {
+            raw: String::new(),
+            parts,
+            revision: None,
+        }
     }
 }
 
@@ -258,16 +274,24 @@ impl Requirement {
                         message: format!("`{piece}` names an operator but no version"),
                     });
                 }
-                constraints.push(Constraint { operator, version: RockVersion::parse(rest) });
+                constraints.push(Constraint {
+                    operator,
+                    version: RockVersion::parse(rest),
+                });
             }
         }
 
-        Ok(Requirement { raw: trimmed.to_string(), constraints })
+        Ok(Requirement {
+            raw: trimmed.to_string(),
+            constraints,
+        })
     }
 
     /// Whether an installed version satisfies every constraint.
     pub fn matches(&self, candidate: &RockVersion) -> bool {
-        self.constraints.iter().all(|constraint| constraint.matches(candidate))
+        self.constraints
+            .iter()
+            .all(|constraint| constraint.matches(candidate))
     }
 
     /// True when any version will do, so no version need be passed to `luarocks`.
@@ -523,8 +547,14 @@ mod tests {
 
     #[test]
     fn only_a_pinned_requirement_can_reach_luarocks_install() {
-        assert_eq!(Requirement::parse("2.11").unwrap().pinned_version(), Some("2.11"));
-        assert_eq!(Requirement::parse("== 2.11").unwrap().pinned_version(), Some("2.11"));
+        assert_eq!(
+            Requirement::parse("2.11").unwrap().pinned_version(),
+            Some("2.11")
+        );
+        assert_eq!(
+            Requirement::parse("== 2.11").unwrap().pinned_version(),
+            Some("2.11")
+        );
         assert_eq!(Requirement::parse(">= 2.0").unwrap().pinned_version(), None);
         assert_eq!(Requirement::parse("*").unwrap().pinned_version(), None);
     }
@@ -532,6 +562,9 @@ mod tests {
     #[test]
     fn rejects_an_operator_without_a_version() {
         let err = Requirement::parse(">=").unwrap_err();
-        assert!(err.to_string().contains("names an operator but no version"), "{err}");
+        assert!(
+            err.to_string().contains("names an operator but no version"),
+            "{err}"
+        );
     }
 }

@@ -120,7 +120,10 @@ fn a_declared_rock_is_loadable_from_the_tree() -> TestResult {
 
     assert_eq!(report.loaded, ["rocky"], "failures: {:?}", report.failures);
     let rocky = registry.get("rocky").ok_or("rocky should be loaded")?;
-    assert_eq!(rocky.instance().greet("you".to_string())?, "fakerock greets you");
+    assert_eq!(
+        rocky.instance().greet("you".to_string())?,
+        "fakerock greets you"
+    );
     Ok(())
 }
 
@@ -209,7 +212,10 @@ fn declaring_rocks_without_a_tree_fails_loudly() -> TestResult {
     let FailureReason::Rocks(message) = first_failure(&report)? else {
         return Err(format!("expected a rocks failure, got {:?}", report.failures).into());
     };
-    assert!(message.contains("no LuaRocks tree configured"), "got: {message}");
+    assert!(
+        message.contains("no LuaRocks tree configured"),
+        "got: {message}"
+    );
     Ok(())
 }
 

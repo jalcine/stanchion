@@ -129,13 +129,19 @@ fn plugin_root() -> std::result::Result<TempDir, Box<dyn std::error::Error>> {
         path,
         "grumpy",
         "name = \"grumpy\"\n",
-        Some(&simple_plugin("grumpy", r#"error("grumpy refuses to greet " .. who)"#)),
+        Some(&simple_plugin(
+            "grumpy",
+            r#"error("grumpy refuses to greet " .. who)"#,
+        )),
     )?;
     write_plugin(
         path,
         "hopeful",
         "name = \"hopeful\"\n\n[dependencies]\nghost = { version = \"*\", optional = true }\n",
-        Some(&simple_plugin("hopeful", "return tostring(self.deps.ghost)")),
+        Some(&simple_plugin(
+            "hopeful",
+            "return tostring(self.deps.ghost)",
+        )),
     )?;
     write_plugin(
         path,
@@ -155,7 +161,12 @@ fn plugin_root() -> std::result::Result<TempDir, Box<dyn std::error::Error>> {
         "name = \"picky\"\n\n[dependencies]\nalpha = \"^2.0\"\n",
         Some(&simple_plugin("picky", r#"return who"#)),
     )?;
-    write_plugin(path, "broken", "name = \"broken\"\n", Some("error(\"boom\")\n"))?;
+    write_plugin(
+        path,
+        "broken",
+        "name = \"broken\"\n",
+        Some("error(\"boom\")\n"),
+    )?;
     write_plugin(
         path,
         "orphan",
@@ -235,8 +246,14 @@ fn loads_dependencies_first_and_isolates_every_failure() -> TestResult {
     assert!(!report.is_clean());
 
     let failures = &report.failures;
-    assert!(matches!(reason_for(failures, "broken")?, FailureReason::Lua(_)));
-    assert!(matches!(reason_for(failures, "malformed")?, FailureReason::Manifest(_)));
+    assert!(matches!(
+        reason_for(failures, "broken")?,
+        FailureReason::Lua(_)
+    ));
+    assert!(matches!(
+        reason_for(failures, "malformed")?,
+        FailureReason::Manifest(_)
+    ));
     assert!(matches!(
         reason_for(failures, "orphan")?,
         FailureReason::MissingDependency(dep) if dep == "ghost"
@@ -304,7 +321,9 @@ fn reload_propagates_through_the_dependency_chain() -> TestResult {
     // The proxy beta captured at construction now forwards to alpha's new exports.
     assert_eq!(beta.greet("world".to_string())?, "[howdy] world");
     assert_eq!(
-        plugin(&registry, "alpha")?.instance().greet("world".to_string())?,
+        plugin(&registry, "alpha")?
+            .instance()
+            .greet("world".to_string())?,
         "howdy, world"
     );
     Ok(())
@@ -348,7 +367,9 @@ fn plugin_writes_stay_out_of_the_shared_globals() -> TestResult {
 
     // Reads still reach the real globals, or `string.format` in `greet` would fail.
     assert_eq!(
-        plugin(&registry, "alpha")?.instance().greet("you".to_string())?,
+        plugin(&registry, "alpha")?
+            .instance()
+            .greet("you".to_string())?,
         "hello, you"
     );
     Ok(())
@@ -362,15 +383,24 @@ fn dispatch_reports_each_plugin_separately() -> TestResult {
     let outcomes = registry.dispatch(|plugin| plugin.greet("world".to_string()));
 
     let alpha = outcome_for(&outcomes, "alpha")?;
-    assert_eq!(alpha.as_ref().map_err(|err| err.to_string())?, "hello, world");
+    assert_eq!(
+        alpha.as_ref().map_err(|err| err.to_string())?,
+        "hello, world"
+    );
     let beta = outcome_for(&outcomes, "beta")?;
-    assert_eq!(beta.as_ref().map_err(|err| err.to_string())?, "[hello] world");
+    assert_eq!(
+        beta.as_ref().map_err(|err| err.to_string())?,
+        "[hello] world"
+    );
 
     let Err(error) = outcome_for(&outcomes, "grumpy")? else {
         return Err("grumpy was expected to fail".into());
     };
     let error = error.to_string();
-    assert!(error.contains("grumpy refuses to greet world"), "got: {error}");
+    assert!(
+        error.contains("grumpy refuses to greet world"),
+        "got: {error}"
+    );
     Ok(())
 }
 

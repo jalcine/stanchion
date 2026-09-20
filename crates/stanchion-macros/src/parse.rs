@@ -137,7 +137,9 @@ impl MethodKind {
             if !takes_self {
                 return Err(Error::new(
                     span,
-                    format!("`{ident}` is marked `field` but takes no `&self`: fields live on instances"),
+                    format!(
+                        "`{ident}` is marked `field` but takes no `&self`: fields live on instances"
+                    ),
                 ));
             }
             if opts.optional {
@@ -158,9 +160,13 @@ impl MethodKind {
 
         // Class-level functions have no receiver to pass, so they are always dot calls.
         if !takes_self || opts.function {
-            return Ok(MethodKind::Function { optional: opts.optional });
+            return Ok(MethodKind::Function {
+                optional: opts.optional,
+            });
         }
-        Ok(MethodKind::Method { optional: opts.optional })
+        Ok(MethodKind::Method {
+            optional: opts.optional,
+        })
     }
 
     /// Whether the Lua table must define this key for the handle to be valid.
@@ -183,7 +189,10 @@ impl MethodKind {
 
 fn string_value(expr: &Expr) -> syn::Result<String> {
     match expr {
-        Expr::Lit(ExprLit { lit: Lit::Str(value), .. }) => Ok(value.value()),
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(value),
+            ..
+        }) => Ok(value.value()),
         other => Err(Error::new(other.span(), "expected a string literal")),
     }
 }

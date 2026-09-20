@@ -113,14 +113,15 @@ impl Manifest {
         let mut manifest: Manifest =
             toml::from_str(&source).map_err(|err| FailureReason::Manifest(err.to_string()))?;
         if manifest.name.is_empty() {
-            return Err(FailureReason::Manifest("`name` must not be empty".to_string()));
+            return Err(FailureReason::Manifest(
+                "`name` must not be empty".to_string(),
+            ));
         }
         // Catch a malformed requirement at discovery rather than at load.
         #[cfg(feature = "luarocks")]
         for (rock, requirement) in &manifest.rocks {
-            stanchion_rocks::Requirement::parse(requirement).map_err(|err| {
-                FailureReason::Manifest(format!("rock `{rock}`: {err}"))
-            })?;
+            stanchion_rocks::Requirement::parse(requirement)
+                .map_err(|err| FailureReason::Manifest(format!("rock `{rock}`: {err}")))?;
         }
 
         manifest.dir = dir.to_path_buf();
@@ -134,7 +135,9 @@ impl Manifest {
 
     /// The version other plugins match against; absent means `0.0.0`.
     pub fn effective_version(&self) -> Version {
-        self.version.clone().unwrap_or_else(|| Version::new(0, 0, 0))
+        self.version
+            .clone()
+            .unwrap_or_else(|| Version::new(0, 0, 0))
     }
 }
 
@@ -228,7 +231,10 @@ pub fn resolve_order(manifests: Vec<Manifest>) -> (Vec<Manifest>, Vec<LoadFailur
 
     // Kahn's algorithm, taking ready plugins in name order for a stable result.
     // An absent optional dependency contributes no edge.
-    let dropped: HashSet<String> = failures.iter().map(|failure| failure.name.clone()).collect();
+    let dropped: HashSet<String> = failures
+        .iter()
+        .map(|failure| failure.name.clone())
+        .collect();
     let edges = |manifest: &Manifest| -> Vec<String> {
         manifest
             .dependencies
@@ -244,7 +250,10 @@ pub fn resolve_order(manifests: Vec<Manifest>) -> (Vec<Manifest>, Vec<LoadFailur
         let deps = edges(manifest);
         indegree.insert(manifest.name.clone(), deps.len());
         for dep in deps {
-            dependents.entry(dep).or_default().push(manifest.name.clone());
+            dependents
+                .entry(dep)
+                .or_default()
+                .push(manifest.name.clone());
         }
     }
 

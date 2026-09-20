@@ -54,7 +54,10 @@ impl fmt::Display for RemoteError {
             RemoteError::Host(message) => f.write_str(message),
             RemoteError::Protocol(message) => write!(f, "unexpected reply: {message}"),
             RemoteError::UnhandledCallback(name) => {
-                write!(f, "a plugin called `{name}`, which this application does not handle")
+                write!(
+                    f,
+                    "a plugin called `{name}`, which this application does not handle"
+                )
             }
         }
     }
@@ -236,7 +239,12 @@ impl RemoteRegistry {
 
     /// Re-reads one plugin from disk in the host.
     pub fn reload(&mut self, plugin: &str) -> Result<(), RemoteError> {
-        self.call_host(method::RELOAD, PluginParams { plugin: plugin.to_string() })
+        self.call_host(
+            method::RELOAD,
+            PluginParams {
+                plugin: plugin.to_string(),
+            },
+        )
     }
 
     /// Unbinds a capability from a live plugin in the host.
@@ -277,8 +285,8 @@ impl RemoteRegistry {
     ) -> Result<T, RemoteError> {
         let number = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
-        let params = serde_json::to_value(params)
-            .map_err(|err| RemoteError::Protocol(err.to_string()))?;
+        let params =
+            serde_json::to_value(params).map_err(|err| RemoteError::Protocol(err.to_string()))?;
 
         if let Err(err) = frame::write(&mut self.writer, &Request::new(number, method_name, params))
         {
@@ -314,17 +322,16 @@ impl RemoteRegistry {
             .unwrap_or(&callback.method)
             .to_string();
 
-        let outcome = match serde_json::from_value::<CallbackCall>(
-            callback.params.unwrap_or(Json::Null),
-        ) {
-            Err(err) => Err(format!("malformed callback: {err}")),
-            Ok(call) => match self.on_callback.as_mut() {
-                Some(handler) => handler(&call),
-                None => Err(format!(
-                    "this application does not handle the `{name}` capability"
-                )),
-            },
-        };
+        let outcome =
+            match serde_json::from_value::<CallbackCall>(callback.params.unwrap_or(Json::Null)) {
+                Err(err) => Err(format!("malformed callback: {err}")),
+                Ok(call) => match self.on_callback.as_mut() {
+                    Some(handler) => handler(&call),
+                    None => Err(format!(
+                        "this application does not handle the `{name}` capability"
+                    )),
+                },
+            };
 
         let response = match outcome {
             Ok(value) => Response::ok(callback.id, value),
@@ -365,4 +372,3 @@ impl Drop for RemoteRegistry {
         }
     }
 }
-

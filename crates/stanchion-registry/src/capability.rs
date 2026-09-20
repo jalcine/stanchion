@@ -34,7 +34,11 @@ pub struct Grant {
 
 impl Grant {
     pub(crate) fn new(plugin: String, name: String, params: toml::Table) -> Self {
-        Grant { plugin, name, params }
+        Grant {
+            plugin,
+            name,
+            params,
+        }
     }
 
     /// The plugin this grant was issued to.
@@ -54,7 +58,10 @@ impl Grant {
 
     /// Reads one approved parameter, or `None` if it was not granted.
     pub fn get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.params.get(key).cloned().and_then(|value| value.try_into().ok())
+        self.params
+            .get(key)
+            .cloned()
+            .and_then(|value| value.try_into().ok())
     }
 
     /// Reads one approved parameter, or its default when absent.

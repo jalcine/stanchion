@@ -17,8 +17,8 @@
 //! let greeting: String = remote.call("greeter", "greet", [json!("world")])?;
 //! ```
 
-mod frame;
 mod client;
+mod frame;
 pub mod protocol;
 mod server;
 
@@ -27,6 +27,6 @@ pub use protocol::{
     AuditEntry, CallbackCall, Failure, HostInfo, LoadResult, Outcome, PluginInfo, method,
 };
 pub use server::{
-    build_registry, load_config, serve, CapabilityConfig, HostChannel, HostConfig, SandboxConfig,
-    SignatureConfig,
+    CapabilityConfig, HostChannel, HostConfig, SandboxConfig, SignatureConfig, build_registry,
+    load_config, serve,
 };

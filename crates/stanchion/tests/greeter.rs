@@ -1,7 +1,7 @@
 //! The synchronous half of `#[lua_class]`: constructors, methods, fields, optionals.
 
 use stanchion::mlua::{Error, Lua, Result};
-use stanchion::{load_class, lua_class, LuaObject};
+use stanchion::{LuaObject, load_class, lua_class};
 
 /// Tests report failures as errors rather than panicking, so a broken assumption
 /// surfaces with its own message instead of a bare unwrap location.
@@ -121,7 +121,8 @@ fn rejects_an_instance_missing_a_method() -> TestResult {
         return Err("an instance without `greet` should be rejected".into());
     };
     assert!(
-        err.to_string().contains("missing required function `greet`"),
+        err.to_string()
+            .contains("missing required function `greet`"),
         "unexpected error: {err}"
     );
     Ok(())
@@ -152,8 +153,10 @@ impl Greeter for Shouty {
 #[test]
 fn lua_and_native_impls_mix_in_one_registry() -> Result<()> {
     let lua = Lua::new();
-    let registry: Vec<Box<dyn Greeter>> =
-        vec![Box::new(class(&lua)?.new("hello".to_string())?), Box::new(Shouty)];
+    let registry: Vec<Box<dyn Greeter>> = vec![
+        Box::new(class(&lua)?.new("hello".to_string())?),
+        Box::new(Shouty),
+    ];
 
     let greetings: Vec<String> = registry
         .iter()
@@ -192,7 +195,8 @@ fn cfg_removes_a_method_from_the_required_set() -> TestResult {
 
     match (class.new(), cfg!(feature = "send")) {
         (Err(err), true) => assert!(
-            err.to_string().contains("missing required function `only_with_send`"),
+            err.to_string()
+                .contains("missing required function `only_with_send`"),
             "unexpected error: {err}"
         ),
         (Ok(instance), false) => assert_eq!(instance.always()?, "here"),

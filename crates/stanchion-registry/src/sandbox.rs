@@ -33,7 +33,10 @@ pub struct Budget {
 
 impl Budget {
     fn new(limit: u64) -> Self {
-        Budget { used: Arc::new(AtomicU64::new(0)), limit }
+        Budget {
+            used: Arc::new(AtomicU64::new(0)),
+            limit,
+        }
     }
 
     /// Clears the allowance. Called before each plugin call.
@@ -47,7 +50,10 @@ impl Budget {
     }
 
     fn consume(&self, amount: u64) -> mlua::Result<mlua::VmState> {
-        let used = self.used.fetch_add(amount, Ordering::Relaxed).saturating_add(amount);
+        let used = self
+            .used
+            .fetch_add(amount, Ordering::Relaxed)
+            .saturating_add(amount);
         if used > self.limit {
             return Err(mlua::Error::RuntimeError(format!(
                 "plugin exceeded its instruction limit of {}",
@@ -85,7 +91,10 @@ impl Sandbox {
             options: LuaOptions::new().catch_rust_panics(true),
             memory_limit: None,
             instruction_limit: None,
-            denied: RESTRICTED_DENY_LIST.iter().map(|name| (*name).to_string()).collect(),
+            denied: RESTRICTED_DENY_LIST
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
         }
     }
 

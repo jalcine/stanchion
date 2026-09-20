@@ -160,10 +160,12 @@ pub fn build_registry(
         // that launched the host already captures.
         host.capability("log", |lua, grant| {
             let plugin = grant.plugin().to_string();
-            Ok(Value::Function(lua.create_function(move |_, message: String| {
-                eprintln!("[{plugin}] {message}");
-                Ok(())
-            })?))
+            Ok(Value::Function(lua.create_function(
+                move |_, message: String| {
+                    eprintln!("[{plugin}] {message}");
+                    Ok(())
+                },
+            )?))
         });
 
         for capability in forwarded {
@@ -199,7 +201,12 @@ pub fn build_registry(
     });
 
     let mut rules = Rules::deny_all();
-    for name in config.capabilities.allow.iter().chain(&config.capabilities.callbacks) {
+    for name in config
+        .capabilities
+        .allow
+        .iter()
+        .chain(&config.capabilities.callbacks)
+    {
         rules = rules.allow(name.clone());
     }
     registry = registry.with_policy(rules);
@@ -343,7 +350,9 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
     match request.method.as_str() {
         method::LOAD => {
             let RootParams { root } = parse(request.params)?;
-            let report = registry.load_dir(&root).map_err(|err| failed(err.to_string()))?;
+            let report = registry
+                .load_dir(&root)
+                .map_err(|err| failed(err.to_string()))?;
             encode(&LoadResult {
                 loaded: report.loaded,
                 failures: report
@@ -370,7 +379,9 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
         ),
         method::AUDIT => {
             let RootParams { root } = parse(request.params)?;
-            let audit = registry.audit(&root).map_err(|err| failed(err.to_string()))?;
+            let audit = registry
+                .audit(&root)
+                .map_err(|err| failed(err.to_string()))?;
             encode(
                 &audit
                     .plugins
@@ -388,7 +399,11 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
             )
         }
         method::CALL => {
-            let CallParams { plugin, method, args } = parse(request.params)?;
+            let CallParams {
+                plugin,
+                method,
+                args,
+            } = parse(request.params)?;
             let entry = registry
                 .get(&plugin)
                 .ok_or_else(|| failed(format!("no plugin named `{plugin}`")))?;
@@ -419,7 +434,9 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
         }
         method::RELOAD => {
             let PluginParams { plugin } = parse(request.params)?;
-            registry.reload(&plugin).map_err(|err| failed(err.to_string()))?;
+            registry
+                .reload(&plugin)
+                .map_err(|err| failed(err.to_string()))?;
             Ok(Json::Null)
         }
         method::REVOKE => {
@@ -464,7 +481,8 @@ fn call_plugin(
 
     // `nil` is JSON null rather than an error: a method may legitimately return
     // nothing.
-    lua.from_value::<Json>(result).map_err(|err| err.to_string())
+    lua.from_value::<Json>(result)
+        .map_err(|err| err.to_string())
 }
 
 #[cfg(feature = "signatures")]
@@ -486,7 +504,6 @@ fn audit_signer(entry: &stanchion_registry::PluginAudit) -> String {
 fn audit_signer(_entry: &stanchion_registry::PluginAudit) -> String {
     "unverified".to_string()
 }
-
 
 /// Reads a `HostConfig` from a TOML file.
 pub fn load_config(path: &Path) -> Result<HostConfig, String> {

@@ -11,8 +11,8 @@ use std::sync::Mutex;
 use stanchion::lua_class;
 use stanchion::mlua::{Lua, Result, Table, Value};
 use stanchion::registry::{
-    Decision, DirectoryDigest, FailureReason, PluginVerifier, Registry, Rules, Sandbox, Signer,
-    VerifyError, SIGNATURE_FILE,
+    Decision, DirectoryDigest, FailureReason, PluginVerifier, Registry, Rules, SIGNATURE_FILE,
+    Sandbox, Signer, VerifyError,
 };
 use tempfile::TempDir;
 
@@ -34,12 +34,19 @@ struct StubVerifier {
 
 impl StubVerifier {
     fn new(identity: &str) -> Self {
-        StubVerifier { identity: identity.to_string(), seen: Mutex::new(Vec::new()) }
+        StubVerifier {
+            identity: identity.to_string(),
+            seen: Mutex::new(Vec::new()),
+        }
     }
 }
 
 impl PluginVerifier for StubVerifier {
-    fn verify(&self, digest: &DirectoryDigest, dir: &Path) -> std::result::Result<Signer, VerifyError> {
+    fn verify(
+        &self,
+        digest: &DirectoryDigest,
+        dir: &Path,
+    ) -> std::result::Result<Signer, VerifyError> {
         if let Ok(mut seen) = self.seen.lock() {
             seen.push(digest.hex());
         }
@@ -52,9 +59,14 @@ impl PluginVerifier for StubVerifier {
             Err(err) => return Err(VerifyError::Io(err)),
         };
         if claimed == digest.hex() {
-            Ok(Signer::verified(self.identity.clone(), Some("stub".to_string())))
+            Ok(Signer::verified(
+                self.identity.clone(),
+                Some("stub".to_string()),
+            ))
         } else {
-            Err(VerifyError::Invalid("digest does not match the signature".to_string()))
+            Err(VerifyError::Invalid(
+                "digest does not match the signature".to_string(),
+            ))
         }
     }
 }
@@ -188,7 +200,11 @@ fn require_signatures_rejects_an_unsigned_plugin() -> TestResult {
         .require_signatures(true);
     let report = registry.load_dir(root.path())?;
 
-    assert!(matches!(first_failure(&report)?, FailureReason::Unsigned), "{:?}", report.failures);
+    assert!(
+        matches!(first_failure(&report)?, FailureReason::Unsigned),
+        "{:?}",
+        report.failures
+    );
     Ok(())
 }
 
@@ -237,7 +253,11 @@ fn provenance_tiers_capability_grants() -> TestResult {
         Ok(probe.instance().run(String::new())?)
     };
 
-    assert_eq!(build(true)?, "function", "a signed plugin earns the capability");
+    assert_eq!(
+        build(true)?,
+        "function",
+        "a signed plugin earns the capability"
+    );
     assert_eq!(build(false)?, "nil", "an unsigned one does not");
     Ok(())
 }
@@ -281,7 +301,10 @@ fn a_submodule_altered_after_verification_is_refused() -> TestResult {
         "local helper = require(\"helper\")\n         local P = {}\nP.__index = P\n         function P.new(config, deps) return setmetatable({}, P) end\n         function P:run(input) return helper.value() end\n         return P\n",
     )?;
     let dir = root.path().join("probe");
-    fs::write(dir.join("helper.lua"), "return { value = function() return \"clean\" end }\n")?;
+    fs::write(
+        dir.join("helper.lua"),
+        "return { value = function() return \"clean\" end }\n",
+    )?;
 
     /// Verifies the clean digest, then swaps a file — exactly the race between
     /// checking and loading that per-file hashes exist to close.
@@ -296,20 +319,25 @@ fn a_submodule_altered_after_verification_is_refused() -> TestResult {
             _dir: &Path,
         ) -> std::result::Result<Signer, VerifyError> {
             assert!(digest.covers("helper.lua"));
-            fs::write(&self.target, "return { value = function() return \"evil\" end }\n")?;
+            fs::write(
+                &self.target,
+                "return { value = function() return \"evil\" end }\n",
+            )?;
             Ok(Signer::verified("test", None))
         }
     }
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(
-        Lua::new(),
-        Sandbox::restricted(),
-    )
-    .with_verifier(TamperingVerifier { target: dir.join("helper.lua") });
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(TamperingVerifier {
+            target: dir.join("helper.lua"),
+        });
 
     let report = registry.load_dir(root.path())?;
 
-    assert!(report.loaded.is_empty(), "the tampered submodule must not load");
+    assert!(
+        report.loaded.is_empty(),
+        "the tampered submodule must not load"
+    );
     let reason = first_failure(&report)?.to_string();
     assert!(
         reason.contains("helper.lua") && reason.contains("changed between"),
@@ -374,7 +402,10 @@ fn a_revoked_build_is_refused_although_its_signature_is_valid() -> TestResult {
 
     let reason = first_failure(&report)?;
     assert!(matches!(reason, FailureReason::Revoked(_)), "got: {reason}");
-    assert!(reason.to_string().contains("CVE-2026-1234"), "got: {reason}");
+    assert!(
+        reason.to_string().contains("CVE-2026-1234"),
+        "got: {reason}"
+    );
     Ok(())
 }
 
@@ -385,9 +416,7 @@ fn revoking_an_identity_refuses_everything_it_signed() -> TestResult {
 
     let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
         .with_verifier(StubVerifier::new("repo:acme/plugins"))
-        .with_revocations(
-            Revocations::new().deny_identity("repo:acme/plugins", "key compromise"),
-        );
+        .with_revocations(Revocations::new().deny_identity("repo:acme/plugins", "key compromise"));
 
     let report = registry.load_dir(root.path())?;
     let reason = first_failure(&report)?.to_string();
@@ -452,7 +481,9 @@ fn a_revocation_list_loads_from_toml() -> TestResult {
         Registry::isolated(Lua::new(), Sandbox::restricted()).with_revocations(list);
     let report = registry.load_dir(root.path())?;
     assert!(
-        first_failure(&report)?.to_string().contains("withdrawn upstream"),
+        first_failure(&report)?
+            .to_string()
+            .contains("withdrawn upstream"),
         "got: {:?}",
         report.failures
     );
@@ -469,7 +500,9 @@ fn a_revocation_entry_naming_nothing_is_a_configuration_error() -> TestResult {
         return Err("an entry matching nothing should be rejected".into());
     };
     assert!(
-        error.to_string().contains("names neither `digest` nor `identity`"),
+        error
+            .to_string()
+            .contains("names neither `digest` nor `identity`"),
         "got: {error}"
     );
     Ok(())

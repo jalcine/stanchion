@@ -42,7 +42,12 @@ fn write_plugin(root: &Path, name: &str, manifest: &str, source: &str) -> TestRe
 
 fn single_plugin(body: &str) -> Fallible<TempDir> {
     let root = tempfile::tempdir()?;
-    write_plugin(root.path(), "probe", "name = \"probe\"\n", &probe_source(body))?;
+    write_plugin(
+        root.path(),
+        "probe",
+        "name = \"probe\"\n",
+        &probe_source(body),
+    )?;
     Ok(root)
 }
 
@@ -57,8 +62,7 @@ fn first_failure(report: &stanchion::registry::LoadReport) -> Fallible<&FailureR
 #[test]
 fn restricted_sandbox_withholds_io_and_os() -> TestResult {
     let root = single_plugin(r#"return type(os) .. "/" .. type(io) .. "/" .. type(string)"#)?;
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
 
@@ -71,8 +75,7 @@ fn restricted_sandbox_withholds_io_and_os() -> TestResult {
 #[test]
 fn permissive_sandbox_grants_io_and_os() -> TestResult {
     let root = single_plugin(r#"return type(os) .. "/" .. type(io)"#)?;
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::permissive());
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::permissive());
     registry.load_dir(root.path())?;
 
     let probe = registry.get("probe").ok_or("probe should load")?;
@@ -83,8 +86,7 @@ fn permissive_sandbox_grants_io_and_os() -> TestResult {
 #[test]
 fn deny_list_removes_reachable_escapes() -> TestResult {
     let root = single_plugin(r#"return type(dofile) .. "/" .. type(package.loadlib)"#)?;
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
     registry.load_dir(root.path())?;
 
     // `package` is loaded so `require` works, but `loadlib` would load any .so.
@@ -123,8 +125,7 @@ fn each_plugin_gets_its_own_globals() -> TestResult {
         &probe_source(r#"return tostring(rawget(_G, "shared_marker"))"#),
     )?;
 
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
     registry.load_dir(root.path())?;
 
     let writer = registry.get("writer").ok_or("writer should load")?;
@@ -162,10 +163,8 @@ fn memory_limit_is_enforced_per_plugin() -> TestResult {
 #[test]
 fn instruction_limit_stops_a_runaway_loop() -> TestResult {
     let root = single_plugin(r#"while true do end"#)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(
-        Lua::new(),
-        Sandbox::restricted().instruction_limit(100_000),
-    );
+    let mut registry: Registry<ProbeClass> =
+        Registry::isolated(Lua::new(), Sandbox::restricted().instruction_limit(100_000));
     registry.load_dir(root.path())?;
 
     let probe = registry.get("probe").ok_or("probe should load")?;
@@ -184,10 +183,8 @@ fn instruction_limit_stops_a_runaway_loop() -> TestResult {
 fn the_instruction_budget_resets_between_dispatches() -> TestResult {
     // Each call gets the full allowance, so repeated work does not accumulate.
     let root = single_plugin(r#"local n = 0 for i = 1, 20000 do n = n + i end return "done""#)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(
-        Lua::new(),
-        Sandbox::restricted().instruction_limit(500_000),
-    );
+    let mut registry: Registry<ProbeClass> =
+        Registry::isolated(Lua::new(), Sandbox::restricted().instruction_limit(500_000));
     registry.load_dir(root.path())?;
 
     for round in 0..5 {
@@ -205,8 +202,8 @@ fn the_instruction_budget_resets_between_dispatches() -> TestResult {
 #[test]
 fn ambient_setup_installs_host_functions_into_every_state() -> TestResult {
     let root = single_plugin(r#"return host_greeting()"#)?;
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted()).with_setup(|host| {
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_setup(|host| {
             host.ambient("host_greeting", |lua| {
                 let greeting = lua.create_function(|_, ()| Ok("from the host"))?;
                 lua.globals().set("host_greeting", greeting)
@@ -224,7 +221,12 @@ fn ambient_setup_installs_host_functions_into_every_state() -> TestResult {
 #[test]
 fn dependencies_cannot_cross_isolated_states() -> TestResult {
     let root = tempfile::tempdir()?;
-    write_plugin(root.path(), "base", "name = \"base\"\n", &probe_source(r#"return "base""#))?;
+    write_plugin(
+        root.path(),
+        "base",
+        "name = \"base\"\n",
+        &probe_source(r#"return "base""#),
+    )?;
     write_plugin(
         root.path(),
         "user",
@@ -232,8 +234,7 @@ fn dependencies_cannot_cross_isolated_states() -> TestResult {
         &probe_source(r#"return "user""#),
     )?;
 
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
     let report = registry.load_dir(root.path())?;
 
     assert_eq!(report.loaded, ["base"]);

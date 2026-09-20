@@ -31,7 +31,7 @@
 
 // Re-exported at the root because generated code names these paths.
 pub use stanchion_core::{
-    BoxFuture, LuaClass, LuaHandle, LuaObject, MaybeSend, MaybeSync, __private, load_class,
+    __private, BoxFuture, LuaClass, LuaHandle, LuaObject, MaybeSend, MaybeSync, load_class,
     lua_class, mlua,
 };
 

@@ -2,7 +2,7 @@
 #![cfg(feature = "registry")]
 
 use stanchion::mlua::{AnyUserData, Lua, Result, UserData, UserDataMethods};
-use stanchion::{load_class, lua_class, LuaClass, LuaHandle, LuaObject};
+use stanchion::{LuaClass, LuaHandle, LuaObject, load_class, lua_class};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -41,7 +41,8 @@ return Tally
 
 fn lua_with_constructor() -> Result<Lua> {
     let lua = Lua::new();
-    let make = lua.create_function(|lua, start: i64| lua.create_userdata(Counter { count: start }))?;
+    let make =
+        lua.create_function(|lua, start: i64| lua.create_userdata(Counter { count: start }))?;
     lua.globals().set("make_counter", make)?;
     Ok(lua)
 }
@@ -106,7 +107,9 @@ fn a_userdata_instance_is_rejected_when_it_lacks_a_required_method() -> TestResu
         return Err("userdata without `bump` should be rejected".into());
     };
     assert!(
-        error.to_string().contains("missing required function `bump`"),
+        error
+            .to_string()
+            .contains("missing required function `bump`"),
         "got: {error}"
     );
     // The error names what actually backed the value.

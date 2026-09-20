@@ -26,7 +26,6 @@
 //!
 //! [`ObjectLike::call_async_method`]: mlua::ObjectLike::call_async_method
 
-
 use std::future::Future;
 use std::pin::Pin;
 
@@ -328,10 +327,9 @@ pub mod __private {
                     to: target.to_string(),
                     message: Some(match value {
                         Value::Nil => format!("missing required function `{name}`"),
-                        other => format!(
-                            "`{name}` must be a function, found {}",
-                            other.type_name()
-                        ),
+                        other => {
+                            format!("`{name}` must be a function, found {}", other.type_name())
+                        }
                     }),
                 });
             }

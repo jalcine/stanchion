@@ -3,7 +3,6 @@
 //! Generated code refers to `::stanchion`, so the macro is meant to be used through
 //! the facade crate rather than against `stanchion-core` directly.
 
-
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -282,7 +281,10 @@ fn parse_method(func: &TraitItemFn, handle: &Ident) -> syn::Result<Method> {
         .collect();
 
     let kind = MethodKind::classify(&opts, takes_self, args.len(), &sig.ident, sig.span())?;
-    let lua_name = opts.name.clone().unwrap_or_else(|| kind.default_name(&sig.ident));
+    let lua_name = opts
+        .name
+        .clone()
+        .unwrap_or_else(|| kind.default_name(&sig.ident));
 
     if opts.optional && !returns_option(&ret) {
         return Err(Error::new(
@@ -324,7 +326,14 @@ fn required_pushes(methods: &[&Method]) -> Vec<TokenStream2> {
 
 /// The method signature as it appears in the generated trait.
 fn trait_signature(method: &Method) -> TokenStream2 {
-    let Method { sig_attrs, ident, args, ret, is_async, .. } = method;
+    let Method {
+        sig_attrs,
+        ident,
+        args,
+        ret,
+        is_async,
+        ..
+    } = method;
     let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
     if *is_async {
         quote! {
@@ -341,9 +350,20 @@ fn trait_signature(method: &Method) -> TokenStream2 {
 
 /// The trait impl body for an instance method.
 fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
-    let Method { cfg_attrs, ident, args, ret, is_async, .. } = method;
+    let Method {
+        cfg_attrs,
+        ident,
+        args,
+        ret,
+        is_async,
+        ..
+    } = method;
     let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
-    let table_expr = if *is_async { quote!(&__handle) } else { quote!(__handle) };
+    let table_expr = if *is_async {
+        quote!(&__handle)
+    } else {
+        quote!(__handle)
+    };
     let body = call_expr(method, table_expr)?;
 
     Ok(if *is_async {
@@ -367,9 +387,20 @@ fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
 
 /// The inherent impl body for a class-level function.
 fn class_body(method: &Method) -> syn::Result<TokenStream2> {
-    let Method { sig_attrs, ident, args, ret, is_async, .. } = method;
+    let Method {
+        sig_attrs,
+        ident,
+        args,
+        ret,
+        is_async,
+        ..
+    } = method;
     let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
-    let table_expr = if *is_async { quote!(&__handle) } else { quote!(__handle) };
+    let table_expr = if *is_async {
+        quote!(&__handle)
+    } else {
+        quote!(__handle)
+    };
     let body = call_expr(method, table_expr)?;
 
     Ok(if *is_async {

@@ -79,12 +79,22 @@ pub struct Response {
 impl Response {
     /// A successful reply.
     pub fn ok(id: Id<'static>, result: Json) -> Self {
-        Response { jsonrpc: TwoPointZero, id, result: Some(result), error: None }
+        Response {
+            jsonrpc: TwoPointZero,
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
 
     /// A failed reply.
     pub fn failed(id: Id<'static>, error: ErrorObjectOwned) -> Self {
-        Response { jsonrpc: TwoPointZero, id, result: None, error: Some(error) }
+        Response {
+            jsonrpc: TwoPointZero,
+            id,
+            result: None,
+            error: Some(error),
+        }
     }
 }
 
@@ -182,7 +192,11 @@ mod tests {
     #[test]
     fn a_request_round_trips_and_carries_the_version_marker() {
         let mut buffer = Vec::new();
-        write(&mut buffer, &Request::new(7, "plugins/call", serde_json::json!({"a": 1}))).unwrap();
+        write(
+            &mut buffer,
+            &Request::new(7, "plugins/call", serde_json::json!({"a": 1})),
+        )
+        .unwrap();
 
         // Spec conformance is visible on the wire, not just in our types.
         let text = String::from_utf8(buffer.clone()).unwrap();
@@ -203,7 +217,11 @@ mod tests {
     fn requests_and_responses_are_told_apart_by_shape() {
         let mut buffer = Vec::new();
         write(&mut buffer, &Request::new(1, "host/info", Json::Null)).unwrap();
-        write(&mut buffer, &Response::ok(Id::Number(1), Json::from("done"))).unwrap();
+        write(
+            &mut buffer,
+            &Response::ok(Id::Number(1), Json::from("done")),
+        )
+        .unwrap();
         write(
             &mut buffer,
             &Response::failed(Id::Number(2), error(ErrorCode::MethodNotFound, "nope")),
@@ -211,7 +229,10 @@ mod tests {
         .unwrap();
 
         let mut cursor = io::Cursor::new(buffer);
-        assert!(matches!(read(&mut cursor).unwrap().unwrap(), Incoming::Request(_)));
+        assert!(matches!(
+            read(&mut cursor).unwrap().unwrap(),
+            Incoming::Request(_)
+        ));
 
         match read(&mut cursor).unwrap().unwrap() {
             Incoming::Response(response) => {
@@ -230,7 +251,10 @@ mod tests {
             other => panic!("expected a response, got {other:?}"),
         }
 
-        assert!(read(&mut cursor).unwrap().is_none(), "a clean end is not an error");
+        assert!(
+            read(&mut cursor).unwrap().is_none(),
+            "a clean end is not an error"
+        );
     }
 
     #[test]
@@ -250,6 +274,9 @@ mod tests {
         let mut buffer = b"\n\n".to_vec();
         write(&mut buffer, &Request::new(3, "host/info", Json::Null)).unwrap();
         let mut cursor = io::Cursor::new(buffer);
-        assert!(matches!(read(&mut cursor).unwrap().unwrap(), Incoming::Request(_)));
+        assert!(matches!(
+            read(&mut cursor).unwrap().unwrap(),
+            Incoming::Request(_)
+        ));
     }
 }

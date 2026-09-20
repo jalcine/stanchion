@@ -66,7 +66,12 @@ impl<P: VerificationPolicy> SigstoreVerifier<P> {
 
     /// Wraps a verifier the caller built, for a private Fulcio or Rekor deployment.
     pub fn with_verifier(identity: impl Into<String>, policy: P, verifier: Verifier) -> Self {
-        SigstoreVerifier { verifier, policy, identity: identity.into(), offline: true }
+        SigstoreVerifier {
+            verifier,
+            policy,
+            identity: identity.into(),
+            offline: true,
+        }
     }
 
     /// Whether to skip Rekor's online inclusion check.
@@ -104,6 +109,9 @@ impl<P: VerificationPolicy + mlua::MaybeSend + mlua::MaybeSync> PluginVerifier
             .verify_digest(hasher, bundle, &self.policy, self.offline)
             .map_err(|err| VerifyError::Untrusted(err.to_string()))?;
 
-        Ok(Signer::verified(self.identity.clone(), Some("sigstore".to_string())))
+        Ok(Signer::verified(
+            self.identity.clone(),
+            Some("sigstore".to_string()),
+        ))
     }
 }

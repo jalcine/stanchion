@@ -53,7 +53,10 @@ pub enum Signer {
 impl Signer {
     /// Convenience constructor for a verified signer.
     pub fn verified(identity: impl Into<String>, issuer: Option<String>) -> Self {
-        Signer::Verified { identity: identity.into(), issuer }
+        Signer::Verified {
+            identity: identity.into(),
+            issuer,
+        }
     }
 
     /// The verified identity, or `None` when unsigned.
@@ -82,10 +85,16 @@ impl fmt::Display for Signer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Signer::Unsigned => f.write_str("unsigned"),
-            Signer::Verified { identity, issuer: Some(issuer) } => {
+            Signer::Verified {
+                identity,
+                issuer: Some(issuer),
+            } => {
                 write!(f, "{identity} (via {issuer})")
             }
-            Signer::Verified { identity, issuer: None } => f.write_str(identity),
+            Signer::Verified {
+                identity,
+                issuer: None,
+            } => f.write_str(identity),
         }
     }
 }
@@ -166,7 +175,11 @@ impl DirectoryDigest {
         }
 
         let root: [u8; 32] = Sha256::digest(&preimage).into();
-        Ok(DirectoryDigest { root, preimage, files })
+        Ok(DirectoryDigest {
+            root,
+            preimage,
+            files,
+        })
     }
 
     /// The root digest, which is what gets signed.
@@ -210,7 +223,9 @@ impl DirectoryDigest {
     /// verified, even if the directory changed in between.
     pub fn matches(&self, relative: &str, contents: &[u8]) -> bool {
         let actual: [u8; 32] = Sha256::digest(contents).into();
-        self.files.get(relative).is_some_and(|expected| *expected == actual)
+        self.files
+            .get(relative)
+            .is_some_and(|expected| *expected == actual)
     }
 
     /// Whether the digest covers this relative path at all.
@@ -261,8 +276,6 @@ pub(crate) fn to_hex(bytes: &[u8]) -> String {
     }
     out
 }
-
-
 
 /// One entry on a revocation list.
 ///

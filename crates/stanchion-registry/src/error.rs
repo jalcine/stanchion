@@ -65,7 +65,13 @@ pub struct LoadFailure {
 
 impl fmt::Display for LoadFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "plugin `{}` ({}): {}", self.name, self.dir.display(), self.reason)
+        write!(
+            f,
+            "plugin `{}` ({}): {}",
+            self.name,
+            self.dir.display(),
+            self.reason
+        )
     }
 }
 
@@ -116,7 +122,11 @@ pub enum FailureReason {
     /// A declared rock is not installed in the configured tree.
     MissingRock { name: String, required: String },
     /// A declared rock is installed at a version that fails its requirement.
-    IncompatibleRock { name: String, required: String, found: String },
+    IncompatibleRock {
+        name: String,
+        required: String,
+        found: String,
+    },
     /// The rocks subsystem could not answer for this plugin.
     Rocks(String),
     /// A declared dependency failed to load, so this plugin was skipped.
@@ -134,7 +144,11 @@ impl fmt::Display for FailureReason {
             FailureReason::MissingDependency(name) => {
                 write!(f, "depends on `{name}`, which was not found")
             }
-            FailureReason::IncompatibleDependency { name, required, found } => {
+            FailureReason::IncompatibleDependency {
+                name,
+                required,
+                found,
+            } => {
                 write!(f, "requires `{name}` {required}, but it publishes {found}")
             }
             FailureReason::MissingExports(name) => {
@@ -146,15 +160,17 @@ impl fmt::Display for FailureReason {
             FailureReason::SignatureInvalid(message) => write!(f, "{message}"),
             FailureReason::UntrustedSigner(message) => write!(f, "{message}"),
             FailureReason::Revoked(message) => write!(f, "{message}"),
-            FailureReason::DigestMismatch(path) => write!(
-                f,
-                "`{path}` changed between verification and loading"
-            ),
+            FailureReason::DigestMismatch(path) => {
+                write!(f, "`{path}` changed between verification and loading")
+            }
             FailureReason::CapabilityDenied { name, reason } => {
                 write!(f, "capability `{name}` denied: {reason}")
             }
             FailureReason::UnknownCapability(name) => {
-                write!(f, "requests capability `{name}`, which the host does not offer")
+                write!(
+                    f,
+                    "requests capability `{name}`, which the host does not offer"
+                )
             }
             FailureReason::CrossStateDependency(name) => write!(
                 f,
@@ -164,7 +180,11 @@ impl fmt::Display for FailureReason {
             FailureReason::MissingRock { name, required } => {
                 write!(f, "rock `{name}` {required} is not installed")
             }
-            FailureReason::IncompatibleRock { name, required, found } => {
+            FailureReason::IncompatibleRock {
+                name,
+                required,
+                found,
+            } => {
                 write!(f, "rock `{name}` {required} is installed at {found}")
             }
             FailureReason::Rocks(message) => write!(f, "{message}"),

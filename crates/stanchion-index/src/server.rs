@@ -10,13 +10,61 @@ use stanchion_dist::{
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-use crate::source::{IndexSource, BLOBS_PREFIX};
+use crate::source::{Blob, IndexSource, BLOBS_PREFIX};
 
 /// How long a served document stays believable, unless configured otherwise.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(3600);
 
+/// A response body.
+///
+/// Documents are bytes because they have to be — the `ETag` is a hash of them. A
+/// package is a reader, so serving one costs a buffer rather than its own size in
+/// memory.
+pub enum Body {
+    /// Bytes already in hand.
+    Bytes(Vec<u8>),
+    /// Bytes to be read on demand.
+    Reader(Box<dyn std::io::Read + Send>),
+}
+
+impl Body {
+    /// An empty body.
+    pub fn empty() -> Self {
+        Body::Bytes(Vec::new())
+    }
+
+    /// Whether this body is known to carry nothing.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Body::Bytes(bytes) if bytes.is_empty())
+    }
+
+    /// Reads the whole body into memory.
+    ///
+    /// For tests and for callers that would rather buffer than stream; the point of
+    /// [`Body::Reader`] is that a server does not have to.
+    pub fn into_vec(self) -> std::io::Result<Vec<u8>> {
+        match self {
+            Body::Bytes(bytes) => Ok(bytes),
+            Body::Reader(mut reader) => {
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut reader, &mut bytes)?;
+                Ok(bytes)
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Body::Bytes(bytes) => f.debug_tuple("Bytes").field(&bytes.len()).finish(),
+            Body::Reader(_) => f.write_str("Reader(..)"),
+        }
+    }
+}
+
 /// A response, ready for any framework to translate.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Served {
     /// Status to answer with.
     pub status: StatusCode,
@@ -26,8 +74,10 @@ pub struct Served {
     pub cache_control: String,
     /// Strong `ETag`, quoted, or `None` where one is meaningless.
     pub etag: Option<String>,
+    /// Length, where it is known ahead of reading the body.
+    pub content_length: Option<u64>,
     /// The body. Empty for `304` and for `HEAD`.
-    pub body: Vec<u8>,
+    pub body: Body,
 }
 
 impl Served {
@@ -37,7 +87,8 @@ impl Served {
             content_type: "application/json",
             cache_control: "no-store".to_string(),
             etag: None,
-            body,
+            content_length: Some(body.len() as u64),
+            body: Body::Bytes(body),
         }
     }
 
@@ -117,7 +168,9 @@ impl<S: IndexSource> IndexServer<S> {
 
         let served = apply_conditional(served, if_none_match);
         if method == Method::HEAD {
-            return Served { body: Vec::new(), ..served };
+            // The headers, and nothing read: a HEAD on a package must not pull it
+            // off the disk.
+            return Served { body: Body::empty(), ..served };
         }
         served
     }
@@ -155,14 +208,17 @@ impl<S: IndexSource> IndexServer<S> {
 
     fn blob(&self, digest: &str) -> Served {
         match self.source.blob(digest) {
-            Ok(body) => Served {
+            Ok(Blob { reader, len }) => Served {
                 status: StatusCode::OK,
                 content_type: stanchion_dist::PACKAGE_MEDIA_TYPE,
                 // A package is named by the digest of what it unpacks to, so its bytes
                 // can never change under that name.
                 cache_control: "public, max-age=31536000, immutable".to_string(),
+                // The digest is the validator: no need to hash what we are about to
+                // stream, which is the other reason a package is never buffered.
                 etag: Some(format!("\"{digest}\"")),
-                body,
+                content_length: len,
+                body: Body::Reader(reader),
             },
             Err(err) => error_for(&err),
         }
@@ -179,7 +235,8 @@ impl<S: IndexSource> IndexServer<S> {
             content_type: "application/json",
             cache_control: format!("public, max-age={}", self.remaining(now)),
             etag: Some(etag_of(&body)),
-            body,
+            content_length: Some(body.len() as u64),
+            body: Body::Bytes(body),
         }
     }
 
@@ -255,7 +312,12 @@ fn apply_conditional(served: Served, if_none_match: Option<&str>) -> Served {
             .any(|candidate| candidate.trim_start_matches("W/") == etag);
 
     if matched {
-        Served { status: StatusCode::NOT_MODIFIED, body: Vec::new(), ..served }
+        Served {
+            status: StatusCode::NOT_MODIFIED,
+            content_length: None,
+            body: Body::empty(),
+            ..served
+        }
     } else {
         served
     }

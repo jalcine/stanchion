@@ -1,5 +1,6 @@
 //! Where a server gets documents and packages.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use stanchion_dist::{Catalog, DirectoryIndex, Freshness, IndexError, PluginIndex, PluginReleases};
@@ -32,7 +33,31 @@ pub trait IndexSource {
     /// The digest is the *unpacked directory's*, which is what a client verifies after
     /// extracting — not a hash of these bytes. A source therefore looks the archive up
     /// by that digest rather than computing one.
-    fn blob(&self, digest: &str) -> Result<Vec<u8>, IndexError>;
+    ///
+    /// Returns a reader rather than bytes so a package never has to be held in memory
+    /// to be served. A source that genuinely has bytes can use [`Blob::from_bytes`].
+    fn blob(&self, digest: &str) -> Result<Blob, IndexError>;
+}
+
+/// A package, ready to be streamed.
+pub struct Blob {
+    /// The archive's bytes, read on demand.
+    pub reader: Box<dyn Read + Send>,
+    /// Length, where the source knows it, for `Content-Length`.
+    pub len: Option<u64>,
+}
+
+impl Blob {
+    /// A package a source already holds in memory.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        let len = bytes.len() as u64;
+        Blob { reader: Box::new(std::io::Cursor::new(bytes)), len: Some(len) }
+    }
+
+    /// A package read from anywhere, with a length if it is known.
+    pub fn from_reader(reader: impl Read + Send + 'static, len: Option<u64>) -> Self {
+        Blob { reader: Box::new(reader), len }
+    }
 }
 
 /// Serves an index laid out on disk.
@@ -90,14 +115,18 @@ impl IndexSource for DirectorySource {
         self.index.catalog()
     }
 
-    fn blob(&self, digest: &str) -> Result<Vec<u8>, IndexError> {
+    fn blob(&self, digest: &str) -> Result<Blob, IndexError> {
         let path = self
             .blob_path(digest)
             .ok_or_else(|| IndexError::Malformed(format!("`{digest}` is not a sha256 digest")))?;
 
-        std::fs::read(&path).map_err(|err| match err.kind() {
+        // Opened, not read: the file is streamed to the socket, so a large package
+        // costs a buffer rather than its own size in memory.
+        let file = std::fs::File::open(&path).map_err(|err| match err.kind() {
             std::io::ErrorKind::NotFound => IndexError::UnknownPlugin(digest.to_string()),
             _ => IndexError::Transport(format!("{}: {err}", path.display())),
-        })
+        })?;
+        let len = file.metadata().ok().map(|meta| meta.len());
+        Ok(Blob::from_reader(file, len))
     }
 }

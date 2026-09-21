@@ -8,7 +8,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use http::{Method, StatusCode};
-use stanchion_index::{DirectorySource, IndexServer};
+use stanchion_dist::IndexError;
+use stanchion_index::{Blob, DirectorySource, IndexServer, IndexSource};
 use tempfile::TempDir;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -47,8 +48,10 @@ fn server(root: &Path) -> IndexServer<DirectorySource> {
     IndexServer::new(DirectorySource::new(root)).ttl(Duration::from_secs(3600))
 }
 
-fn json(body: &[u8]) -> Fallible<serde_json::Value> {
-    Ok(serde_json::from_slice(body)?)
+/// Consumes a response body as JSON. Bodies are readers now, so a test that wants
+/// bytes says so.
+fn json(served: stanchion_index::Served) -> Fallible<serde_json::Value> {
+    Ok(serde_json::from_slice(&served.body.into_vec()?)?)
 }
 
 /// Reads a dotted path out of a document, so a missing field fails the test with a
@@ -80,15 +83,18 @@ fn it_serves_the_two_documents_and_a_package() -> TestResult {
 
     let catalog = server.serve(&Method::GET, "/v1/index.json", None);
     assert_eq!(catalog.status, StatusCode::OK);
-    assert_eq!(text(&json(&catalog.body)?, "plugins.0")?, "formatter");
+    assert_eq!(text(&json(catalog)?, "plugins.0")?, "formatter");
 
     let releases = server.serve(&Method::GET, "/v1/plugins/formatter.json", None);
     assert_eq!(releases.status, StatusCode::OK);
-    assert_eq!(text(&json(&releases.body)?, "releases.0.version")?, "1.4.2");
+    assert_eq!(text(&json(releases)?, "releases.0.version")?, "1.4.2");
 
     let blob = server.serve(&Method::GET, &format!("/v1/blobs/{DIGEST}"), None);
     assert_eq!(blob.status, StatusCode::OK);
-    assert_eq!(blob.body, b"package bytes");
+    assert_eq!(blob.content_length, Some(13));
+    // A package arrives as a reader; consuming it here is the test's business, not
+    // the server's.
+    assert_eq!(blob.body.into_vec()?, b"package bytes");
     // A package is named by what it unpacks to, so its bytes cannot change.
     assert!(blob.cache_control.contains("immutable"), "{}", blob.cache_control);
     Ok(())
@@ -103,7 +109,7 @@ fn it_issues_an_expiry_the_stored_documents_do_not_have() -> TestResult {
     let stored = fs::read_to_string(root.path().join("v1/plugins/formatter.json"))?;
     assert!(!stored.contains("expires"));
 
-    let served = json(&server.serve(&Method::GET, "/v1/plugins/formatter.json", None).body)?;
+    let served = json(server.serve(&Method::GET, "/v1/plugins/formatter.json", None))?;
     let expires = text(&served, "expires")?;
     let updated = text(&served, "updated")?;
     assert!(
@@ -127,17 +133,20 @@ fn responses_are_identical_within_a_window_and_change_across_one() -> TestResult
         None,
         base.saturating_add(time::Duration::minutes(30)),
     );
-    assert_eq!(early.body, later.body, "same window must serve the same bytes");
-    assert_eq!(early.etag, later.etag);
-
     let next = server.serve_at(
         &Method::GET,
         "/v1/index.json",
         None,
         base.saturating_add(time::Duration::hours(2)),
     );
-    assert_ne!(early.body, next.body, "a new window must refresh the expiry");
-    assert_ne!(early.etag, next.etag);
+
+    let (early_etag, next_etag) = (early.etag.clone(), next.etag.clone());
+    let early_bytes = early.body.into_vec()?;
+    assert_eq!(early_bytes, later.body.into_vec()?, "same window, same bytes");
+    assert_eq!(early_etag, later.etag);
+
+    assert_ne!(early_bytes, next.body.into_vec()?, "a new window must refresh the expiry");
+    assert_ne!(early_etag, next_etag);
     Ok(())
 }
 
@@ -225,7 +234,8 @@ fn a_traversing_name_is_refused_before_it_reaches_the_disk() -> TestResult {
             "`{name}` produced {}",
             served.status
         );
-        assert!(!served.body.windows(4).any(|w| w == b"root"), "`{name}` leaked a file");
+        let bytes = served.body.into_vec()?;
+        assert!(!bytes.windows(4).any(|w| w == b"root"), "`{name}` leaked a file");
     }
     Ok(())
 }
@@ -240,6 +250,74 @@ fn head_returns_the_headers_without_a_body() -> TestResult {
     assert_eq!(head.status, StatusCode::OK);
     assert_eq!(head.etag, get.etag);
     assert!(head.body.is_empty());
+    Ok(())
+}
+
+/// A source that refuses to be read, so a passing test proves nothing was.
+struct Unreadable;
+
+impl IndexSource for Unreadable {
+    fn releases(&self, name: &str) -> Result<stanchion_dist::PluginReleases, IndexError> {
+        Err(IndexError::UnknownPlugin(name.to_string()))
+    }
+
+    fn blob(&self, _digest: &str) -> Result<Blob, IndexError> {
+        struct Exploding;
+        impl std::io::Read for Exploding {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("a HEAD must not read the package"))
+            }
+        }
+        Ok(Blob::from_reader(Exploding, Some(4096)))
+    }
+}
+
+#[test]
+fn a_head_on_a_package_reports_its_length_without_reading_it() -> TestResult {
+    let server = IndexServer::new(Unreadable);
+    let head = server.serve(&Method::HEAD, &format!("/v1/blobs/{DIGEST}"), None);
+
+    assert_eq!(head.status, StatusCode::OK);
+    // The length comes from the source, not from reading — which the reader above
+    // would have made impossible.
+    assert_eq!(head.content_length, Some(4096));
+    assert!(head.body.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_package_is_never_buffered_to_be_served() -> TestResult {
+    // A reader that would be ruinous to buffer: it reports a size far larger than
+    // anything we would hold in memory, and counts what is actually pulled.
+    struct Counting(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl std::io::Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.fetch_add(buf.len(), std::sync::atomic::Ordering::Relaxed);
+            Ok(buf.len())
+        }
+    }
+
+    struct Huge(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl IndexSource for Huge {
+        fn releases(&self, name: &str) -> Result<stanchion_dist::PluginReleases, IndexError> {
+            Err(IndexError::UnknownPlugin(name.to_string()))
+        }
+        fn blob(&self, _digest: &str) -> Result<Blob, IndexError> {
+            Ok(Blob::from_reader(
+                Counting(std::sync::Arc::clone(&self.0)),
+                Some(8 * 1024 * 1024 * 1024),
+            ))
+        }
+    }
+
+    let read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server = IndexServer::new(Huge(std::sync::Arc::clone(&read)));
+    let served = server.serve(&Method::GET, &format!("/v1/blobs/{DIGEST}"), None);
+
+    assert_eq!(served.content_length, Some(8 * 1024 * 1024 * 1024));
+    // Building the response read nothing at all: the bytes move when the adapter
+    // drains them into a socket.
+    assert_eq!(read.load(std::sync::atomic::Ordering::Relaxed), 0);
     Ok(())
 }
 

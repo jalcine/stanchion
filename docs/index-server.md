@@ -90,6 +90,36 @@ Stored documents are read with `Freshness::Ignored`: their own `expires` is irre
 when the server issues a new one. A directory too stale for a client to accept is still
 a perfectly good source for a server that keeps it fresh.
 
+## Streaming packages
+
+A package is served from a reader, never buffered. `IndexSource::blob` returns a
+`Blob` — a `Box<dyn Read + Send>` and a length where the source knows one — so
+building a response reads nothing at all; the bytes move only as an adapter drains
+them into the socket.
+
+```rust
+fn blob(&self, digest: &str) -> Result<Blob, IndexError>;
+```
+
+The source stays synchronous, matching `PluginIndex`: opening a file is not an async
+problem, but writing it to a socket is. One bridge in `stanchion-index::chunks`
+reconciles those — the read runs on a blocking worker and 64 KiB chunks arrive through
+a channel four deep, so a response holds a few hundred KiB in flight regardless of the
+package's size. Both adapters use it, so chunking is decided in one place.
+
+Two consequences worth knowing:
+
+- **A `HEAD` never reads the package.** The length comes from the source, so a `HEAD`
+  on a 2 GiB archive costs a `stat`.
+- **A read failure part-way truncates the response.** By then the status and headers
+  have gone, so a truncated body is the only signal left — and a client verifying the
+  digest of what it unpacks will reject it, which is the behaviour we want.
+
+If the client hangs up, the channel closes and the reader stops rather than pulling
+the rest of the file into a queue nobody drains.
+
+Documents are still bytes, because they have to be: the `ETag` is a hash of them.
+
 ## What this does not do
 
 - **No write path.** Publishing is putting an archive somewhere fetchable and adding a
@@ -97,8 +127,6 @@ a perfectly good source for a server that keeps it fresh.
   authoritative over what gets pinned, which is a different trust model.
 - **No authority.** Everything served is re-checked against a digest the client holds.
   A compromised bucket reached over flawless TLS is a compromised index.
-- **No streaming.** A package is read into memory before it is served, which suits
-  plugin-sized archives and would need revisiting for large ones.
 
 ---
 

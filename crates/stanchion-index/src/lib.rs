@@ -35,11 +35,17 @@
 mod server;
 mod source;
 
+#[cfg(feature = "stream")]
+mod stream;
+
 #[cfg(feature = "tower")]
 mod tower;
 
-pub use server::{IndexServer, Served, DEFAULT_TTL};
-pub use source::{DirectorySource, IndexSource, BLOBS_PREFIX, BLOBS_SUBDIR};
+pub use server::{Body, IndexServer, Served, DEFAULT_TTL};
+pub use source::{Blob, DirectorySource, IndexSource, BLOBS_PREFIX, BLOBS_SUBDIR};
+
+#[cfg(feature = "stream")]
+pub use stream::{chunks, chunks_of, DEFAULT_CHUNK};
 
 #[cfg(feature = "tower")]
 pub use tower::IndexService;

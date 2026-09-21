@@ -490,3 +490,111 @@ fn isolation_is_per_plugin_unless_asked_otherwise() -> TestResult {
     );
     Ok(())
 }
+
+// ---- the builder's configuration reaches the plugins -----------------------
+//
+// `Builder::build()` once constructed two registries: a configured one handed to the
+// Lua backend, and a bare `Registry::new(Lua::new())` stored as the field every other
+// method locks. Nothing the builder set up survived the call (#2).
+//
+// Eight tests in this workspace failed under that bug, but all of them incidentally —
+// they wanted a capability bound and a bare registry binds none. None of them named
+// the security guarantee that was actually lost. These two do, so a reintroduction
+// fails on the property rather than on a symptom.
+
+/// Reports which standard libraries its state can actually see.
+const PROBER: &str = r#"
+local P = {}
+P.__index = P
+
+function P.new(_) return setmetatable({}, P) end
+
+function P:sees(name) return _G[name] ~= nil end
+
+return P
+"#;
+
+#[test]
+fn the_configured_sandbox_reaches_the_plugins_that_load() -> TestResult {
+    let root = TempDir::new()?;
+    write_plugin(
+        root.path(),
+        "prober",
+        "name = \"prober\"\nentry = \"init.lua\"\n",
+        PROBER,
+    )?;
+
+    // The default sandbox is `restricted()`: no `io`, no `os`, no `debug`.
+    let host = Stanchion::builder().build()?;
+    assert!(host.load(Some(root.path()))?.is_clean());
+
+    for library in ["io", "os", "debug"] {
+        assert_eq!(
+            host.call("prober", "sees", &[Value::Str(library.to_string())])?,
+            Value::Bool(false),
+            "`{library}` must not be reachable from a plugin under the default sandbox",
+        );
+    }
+
+    // A library the restricted set does keep, so the assertion above is discriminating
+    // rather than a plugin that simply cannot see anything.
+    assert_eq!(
+        host.call("prober", "sees", &[Value::Str("string".to_string())])?,
+        Value::Bool(true)
+    );
+    Ok(())
+}
+
+#[cfg(feature = "signatures")]
+#[test]
+fn requiring_signatures_refuses_an_unsigned_plugin() -> TestResult {
+    let root = TempDir::new()?;
+    write_plugin(
+        root.path(),
+        "echo",
+        "name = \"echo\"\nentry = \"init.lua\"\n",
+        ECHO,
+    )?;
+
+    let config = HostConfig {
+        signatures: stanchion_ffi::SignatureConfig { required: true },
+        ..HostConfig::default()
+    };
+    let host = Stanchion::builder().config(config).build()?;
+    let report = host.load(Some(root.path()))?;
+
+    assert!(
+        report.loaded.is_empty(),
+        "an unsigned plugin loaded under `required = true`: {:?}",
+        report.loaded
+    );
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.failures[0].plugin, "echo");
+
+    // Refused, not merely unreported: the plugin must not be callable either.
+    assert_eq!(host.len()?, 0);
+    assert_eq!(
+        host.call("echo", "tagged", &[]).unwrap_err(),
+        Error::UnknownPlugin("echo".to_string())
+    );
+    Ok(())
+}
+
+#[cfg(feature = "signatures")]
+#[test]
+fn signatures_stay_optional_unless_the_host_asks() -> TestResult {
+    // The companion to the test above: the refusal has to come from the configuration,
+    // not from the plugin being unloadable for some unrelated reason.
+    let root = TempDir::new()?;
+    write_plugin(
+        root.path(),
+        "echo",
+        "name = \"echo\"\nentry = \"init.lua\"\n",
+        ECHO,
+    )?;
+
+    let host = Stanchion::builder().build()?;
+    assert!(host.load(Some(root.path()))?.is_clean());
+    assert_eq!(host.len()?, 1);
+    Ok(())
+}

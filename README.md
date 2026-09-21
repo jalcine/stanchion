@@ -19,6 +19,7 @@ capabilities and signatures on the other.
 | [`stanchion-index-poem`](crates/stanchion-index-poem) | Poem adapter for the index server                                          |
 | [`stanchion-remote`](crates/stanchion-remote)     | out-of-process hosting: JSON-RPC protocol, client, host                         |
 | [`stanchion-ffi`](crates/stanchion-ffi)           | the seam the language bindings sit on: dynamic calls, values, capabilities      |
+| [`bindings/`](bindings)                           | Python, Kotlin/Swift and Ruby over that seam                                    |
 
 Depend on `stanchion` and pick features; generated code refers to `::stanchion`, so use
 the macro through the facade.

@@ -123,16 +123,17 @@ return Greeter</code></pre>
 <section class="band">
   <h2>What a crash costs you</h2>
   <p class="sub">
-    In-process limits stop a runaway plugin. They cannot stop a segfault in a C rock,
-    or rescue a state whose allocator already failed.
+    In-process limits stop a runaway plugin, and a panic unwinds, so it can be caught
+    and reported. A segfault is a signal and <code>os.exit</code> is an exit — neither
+    unwinds, and no in-process trick survives them.
   </p>
   <table>
     <thead><tr><th>The plugin does</th><th>In process</th><th>Out of process</th></tr></thead>
     <tbody>
       <tr><td><code>while true do end</code></td><td>instruction limit</td><td>instruction limit</td></tr>
       <tr><td>allocation storm</td><td>memory limit</td><td>memory limit</td></tr>
-      <tr><td><code>os.exit</code>, or a C-rock segfault</td><td><strong>your application dies</strong></td><td><code>RemoteError::HostGone</code></td></tr>
-      <tr><td>interpreter panic</td><td>unwinds into your stack</td><td>the child dies; you keep serving</td></tr>
+      <tr><td><code>os.exit</code>, or a C-rock segfault</td><td><strong>your application dies</strong></td><td><code>HostGone</code>, naming the signal</td></tr>
+      <tr><td>a panic in a host callback</td><td>reported as <code>Panicked</code></td><td>the child dies; you keep serving</td></tr>
     </tbody>
   </table>
 </section>

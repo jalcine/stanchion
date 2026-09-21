@@ -30,6 +30,7 @@ mod error;
 #[cfg(feature = "signatures")]
 pub mod lock;
 mod manifest;
+mod panics;
 mod sandbox;
 #[cfg(feature = "signatures")]
 pub mod signature;
@@ -40,6 +41,7 @@ pub use stanchion_rocks as rocks;
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
 pub use manifest::{DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest};
+pub use panics::Panicked;
 /// Re-exported because [`Decision::GrantWith`] takes a `toml::Table`: a public API
 /// that names a foreign type has to hand you that type.
 pub use toml;
@@ -773,15 +775,20 @@ impl<C: LuaClass> Registry<C> {
 
             let (lua, budget, group) =
                 self.group_state(components.as_ref(), &mut group_states, &manifest)?;
-            let built = self.instantiate(
-                &lua,
-                budget.as_ref(),
-                &manifest,
-                #[cfg(feature = "signatures")]
-                &signer,
-                #[cfg(feature = "signatures")]
-                digest.as_ref(),
-            );
+            // Evaluating a chunk and running a constructor is plugin code, so a panic
+            // there is this plugin's failure rather than the whole load's.
+            let built = panics::guard(|| {
+                self.instantiate(
+                    &lua,
+                    budget.as_ref(),
+                    &manifest,
+                    #[cfg(feature = "signatures")]
+                    &signer,
+                    #[cfg(feature = "signatures")]
+                    digest.as_ref(),
+                )
+            })
+            .unwrap_or_else(|panicked| Err(FailureReason::Panicked(panicked)));
             match built.and_then(|built| {
                 let exports = built
                     .exports
@@ -859,8 +866,8 @@ impl<C: LuaClass> Registry<C> {
         #[cfg(feature = "signatures")]
         let (signer, digest) = self.verify_plugin(&manifest).map_err(&fail)?;
 
-        let built = self
-            .instantiate(
+        let built = panics::guard(|| {
+            self.instantiate(
                 &lua,
                 budget.as_ref(),
                 &manifest,
@@ -869,7 +876,9 @@ impl<C: LuaClass> Registry<C> {
                 #[cfg(feature = "signatures")]
                 digest.as_ref(),
             )
-            .map_err(&fail)?;
+        })
+        .unwrap_or_else(|panicked| Err(FailureReason::Panicked(panicked)))
+        .map_err(&fail)?;
         let (instance, table) = (built.instance, built.exports);
 
         // Reusing the old proxy is what makes a reload visible to dependents: they
@@ -1001,6 +1010,10 @@ impl<C: LuaClass> Registry<C> {
     /// Calls every plugin, collecting one result each.
     ///
     /// A plugin that errors does not stop the others; its error is returned in place.
+    /// The same holds for a plugin that *panics*: the unwind is caught and reported as
+    /// a [`Panicked`] error rather than reaching the caller. That does not make the
+    /// plugin trustworthy afterwards — see [`Panicked`] — and it cannot help with a
+    /// crash that never unwinds, which is what the `remote` feature is for.
     pub fn dispatch<'a, R>(
         &'a self,
         call: impl Fn(&'a C::Instance) -> mlua::Result<R>,
@@ -1014,7 +1027,10 @@ impl<C: LuaClass> Registry<C> {
                 }
                 Outcome {
                     name: plugin.name(),
-                    result: call(&plugin.instance),
+                    // A panicking plugin is reported like a failing one rather than
+                    // taking the caller's stack with it.
+                    result: panics::guard(|| call(&plugin.instance))
+                        .unwrap_or_else(|panicked| Err(panicked.into())),
                 }
             })
             .collect()
@@ -1023,7 +1039,8 @@ impl<C: LuaClass> Registry<C> {
     /// Awaits every plugin in turn, collecting one result each.
     ///
     /// Calls are sequential: they all reach the same Lua state, so running them
-    /// concurrently would only contend on it.
+    /// concurrently would only contend on it. A panic in any poll is caught, exactly
+    /// as in [`Registry::dispatch`].
     #[cfg(feature = "async")]
     pub async fn dispatch_async<'a, R, Fut>(
         &'a self,
@@ -1039,7 +1056,9 @@ impl<C: LuaClass> Registry<C> {
             }
             outcomes.push(Outcome {
                 name: plugin.name(),
-                result: call(&plugin.instance).await,
+                result: panics::guard_future(call(&plugin.instance))
+                    .await
+                    .unwrap_or_else(|panicked| Err(panicked.into())),
             });
         }
         outcomes

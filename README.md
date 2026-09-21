@@ -135,8 +135,9 @@ so a host error enum needs no wrapping at the call site.
 - Plugins that exchange exports have to share a Lua state, because Lua values cannot
   cross states. `Registry::grouped` makes that grouping automatic — one state per
   dependency component — but members of a group share a heap and a budget.
-- In-process isolation bounds CPU and memory, but cannot survive a crash inside the
-  interpreter; use the `remote` feature when that matters.
+- In-process isolation bounds CPU and memory, and a panic in a host callback is caught
+  and reported, but nothing that fails to unwind is survivable — `os.exit` and a
+  segfault are an exit and a signal. Use the `remote` feature when that matters.
 - Capabilities bound what a plugin can reach, not what it does with what it got, and
   they are only as strong as the providers that enforce their grants.
 - Nothing fetches a revocation list for you: you decide when to re-read it and call

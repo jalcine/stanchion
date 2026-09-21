@@ -13,7 +13,7 @@ other four see.
 
 ```
                         ┌─ bindings/python  (pyo3 + maturin)     ── shipped
-                        ├─ bindings/uniffi  (Kotlin, Swift)      ── types proven, packaging pending
+                        ├─ bindings/uniffi  (Kotlin, Swift)      ── Kotlin runs; packaging pending
 stanchion-ffi ──────────┼─ bindings/ruby    (magnus)             ── planned
   Stanchion             └─ bindings/node    (neon)               ── planned
   Value
@@ -169,6 +169,47 @@ application already embeds:
 ```sh
 uv run maturin develop --no-default-features --features luajit
 ```
+
+## Kotlin and Swift
+
+Generated with UniFFI from `bindings/uniffi`. The generator is built from that crate
+so it always matches the `uniffi` the library was compiled against — a mismatch
+produces bindings that compile and then misbehave at the boundary.
+
+```sh
+./bindings/uniffi/smoke.sh          # generates all three, runs the boundary
+./bindings/uniffi/smoke-kotlin.sh   # compiles and runs the Kotlin on the JVM
+```
+
+```kotlin
+class Store : CapabilityProvider {
+    override fun invoke(call: CapabilityCall): Value {
+        val key = (call.args.first() as Value.Str).value
+        return store[key]?.let { Value.Str(it) } ?: throw ProviderException.Refused("no such key")
+    }
+}
+
+val host = Stanchion(config, mapOf("kv" to Store()), policy)
+host.load("plugins/")
+host.call("greeter", "greet", listOf(Value.Str("world")))
+host.callAsync("greeter", "fetch", listOf(Value.Str("https://example.com")))
+```
+
+`callAsync` and `dispatchAsync` are `suspend` functions in Kotlin and `async` in
+Swift. Throwing `ProviderException` from a provider becomes an ordinary Lua error the
+plugin can `pcall`; re-entering the registry from one raises `StanchionException.Reentrant`.
+
+Two things are worth knowing about the shape, both forced by Kotlin:
+
+* The sequence and mapping variants are `Value.Seq` and `Value.Table`, not `List` and
+  `Map`. A variant named `List` becomes a nested class that shadows
+  `kotlin.collections.List` for the rest of the sealed class, so its own field stops
+  naming a list and the generated file will not compile.
+* `args` has no default, so a call with none passes an empty list.
+
+The Swift bindings generate alongside the Kotlin but have not been run — this is a
+Linux checkout with no Swift toolchain. Packaging for both (XCFramework and Swift
+Package, AAR with per-ABI libraries) is still to come.
 
 ## Configuration
 

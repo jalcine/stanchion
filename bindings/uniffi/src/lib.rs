@@ -1,18 +1,22 @@
 //! Kotlin and Swift bindings for stanchion.
 //!
-//! **Phase 2 is not finished.** What is here is deliberate and load-bearing all the
-//! same: it proves every type on the `stanchion-ffi` seam can cross a *generated*
-//! boundary as well as a hand-written one.
-//!
 //! Python came first, and a seam shaped by its first consumer is a seam the other
 //! four have to work around. UniFFI is the strictest of the five — it needs owned,
-//! `Send + Sync` types, flat errors, and foreign traits declared up front — so
-//! compiling this is what keeps `stanchion-ffi` honest. If a `pyo3` convenience ever
-//! leaks into the shared shape, this crate stops building.
+//! `Send + Sync` types, declared error types and foreign traits named up front — so
+//! this crate is what keeps `stanchion-ffi` honest. If a `pyo3` convenience ever
+//! leaks into the shared shape, this stops building.
 //!
-//! What remains for Phase 2: the packaging. `uniffi-bindgen` invocations, a Gradle
-//! smoke test against JNA, a `swift test` against a locally built dylib, and the
-//! `XCFramework`/AAR layout.
+//! Compiling is not the bar, though, and three things here were found only by
+//! running: a flat error cannot be lifted back out of foreign code, a variant named
+//! `List` shadows `kotlin.collections.List` inside its own sealed class, and neither
+//! shows up until the generated bindings are compiled and executed. `smoke.sh` and
+//! `smoke-kotlin.sh` do that, covering values, capability providers, policy
+//! narrowing, the reentrancy guard and `suspend`/`async` calls.
+//!
+//! What remains: packaging. The `XCFramework` and Swift Package layout, the AAR with
+//! its per-ABI libraries, and a Swift run of the smoke tests — the Swift bindings
+//! generate but have not been executed, since this is a Linux checkout with no Swift
+//! toolchain.
 
 use std::sync::Arc;
 
@@ -29,6 +33,13 @@ uniffi::setup_scaffolding!();
 ///
 /// UniFFI renders a recursive enum as a sealed class in Kotlin and an indirect enum
 /// in Swift, which is exactly the shape `stanchion_ffi::Value` already has.
+///
+/// The sequence and mapping variants are `Seq` and `Table` rather than the `List` and
+/// `Map` they mirror. A variant named `List` becomes a nested class inside the sealed
+/// class in Kotlin, which shadows `kotlin.collections.List` for every member
+/// declared after it — so its own `items: List<Value>` field resolves to the variant
+/// rather than to a list, and the generated file does not compile. `Table` is also
+/// what Lua calls both of these anyway.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum Value {
     Nil,
@@ -36,8 +47,8 @@ pub enum Value {
     Int { value: i64 },
     Float { value: f64 },
     Str { value: String },
-    List { items: Vec<Value> },
-    Map { entries: std::collections::HashMap<String, Value> },
+    Seq { items: Vec<Value> },
+    Table { entries: std::collections::HashMap<String, Value> },
 }
 
 impl From<&FfiValue> for Value {
@@ -50,10 +61,10 @@ impl From<&FfiValue> for Value {
             FfiValue::Str(value) => Value::Str {
                 value: value.clone(),
             },
-            FfiValue::List(items) => Value::List {
+            FfiValue::List(items) => Value::Seq {
                 items: items.iter().map(Value::from).collect(),
             },
-            FfiValue::Map(entries) => Value::Map {
+            FfiValue::Map(entries) => Value::Table {
                 entries: entries
                     .iter()
                     .map(|(key, entry)| (key.clone(), Value::from(entry)))
@@ -71,8 +82,8 @@ impl From<&Value> for FfiValue {
             Value::Int { value } => FfiValue::Int(*value),
             Value::Float { value } => FfiValue::Float(*value),
             Value::Str { value } => FfiValue::Str(value.clone()),
-            Value::List { items } => FfiValue::List(items.iter().map(FfiValue::from).collect()),
-            Value::Map { entries } => FfiValue::Map(
+            Value::Seq { items } => FfiValue::List(items.iter().map(FfiValue::from).collect()),
+            Value::Table { entries } => FfiValue::Map(
                 entries
                     .iter()
                     .map(|(key, entry)| (key.clone(), FfiValue::from(entry)))
@@ -186,13 +197,35 @@ pub enum Decision {
     Deny { reason: String },
 }
 
+/// Why a provider could not answer.
+///
+/// A bare `String` would do on the Rust side, but a foreign trait has to declare a
+/// real error type: UniFFI turns this into an exception the foreign implementation
+/// throws, and there is no exception class for "some string".
+///
+/// Deliberately *not* `flat_error`, unlike [`StanchionError`]. A flat error can be
+/// lowered into a foreign exception but never lifted back out, and this one travels
+/// the other way — foreign code raises it and Rust has to read it. Marking it flat
+/// compiles and then fails at the boundary with `Can't lift flat errors`, turning
+/// every refusal into an internal error instead of the catchable Lua error a plugin
+/// is supposed to see.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum ProviderError {
+    /// The provider refused, or failed while doing the work.
+    #[error("{reason}")]
+    Refused { reason: String },
+}
+
 /// Answers a capability a plugin calls.
+///
+/// Throwing surfaces inside Lua as an ordinary runtime error the plugin can `pcall`,
+/// so refusing is a normal outcome rather than a fatal one.
 ///
 /// Do not call back into the `Stanchion` that invoked this: it holds the registry's
 /// lock, so the attempt fails with `Reentrant` rather than deadlocking.
 #[uniffi::export(with_foreign)]
 pub trait CapabilityProvider: Send + Sync {
-    fn invoke(&self, call: CapabilityCall) -> std::result::Result<Value, String>;
+    fn invoke(&self, call: CapabilityCall) -> std::result::Result<Value, ProviderError>;
 }
 
 /// Decides what each plugin may actually have.
@@ -214,7 +247,10 @@ impl FfiProvider for ProviderBridge {
             grant: Value::from(&call.grant),
             args: call.args.iter().map(Value::from).collect(),
         };
-        self.inner.invoke(call).map(|value| FfiValue::from(&value))
+        self.inner
+            .invoke(call)
+            .map(|value| FfiValue::from(&value))
+            .map_err(|err| err.to_string())
     }
 }
 
@@ -352,13 +388,22 @@ impl Stanchion {
     }
 
     /// Calls one method on one plugin.
-    pub fn call(&self, plugin: String, method: String, args: Vec<Value>) -> Result<Value> {
+    pub fn call(
+        &self,
+        plugin: String,
+        method: String,
+        args: Vec<Value>,
+    ) -> Result<Value> {
         let args: Vec<FfiValue> = args.iter().map(FfiValue::from).collect();
         Ok(Value::from(&self.inner.call(&plugin, &method, &args)?))
     }
 
     /// Calls the same method on every plugin, collecting one result each.
-    pub fn dispatch(&self, method: String, args: Vec<Value>) -> Result<Vec<Outcome>> {
+    pub fn dispatch(
+        &self,
+        method: String,
+        args: Vec<Value>,
+    ) -> Result<Vec<Outcome>> {
         let args: Vec<FfiValue> = args.iter().map(FfiValue::from).collect();
         Ok(outcomes(self.inner.dispatch(&method, &args)?))
     }
@@ -378,7 +423,11 @@ impl Stanchion {
     }
 
     /// Awaits the same method on every plugin, in turn.
-    pub async fn dispatch_async(&self, method: String, args: Vec<Value>) -> Result<Vec<Outcome>> {
+    pub async fn dispatch_async(
+        &self,
+        method: String,
+        args: Vec<Value>,
+    ) -> Result<Vec<Outcome>> {
         let args: Vec<FfiValue> = args.iter().map(FfiValue::from).collect();
         Ok(outcomes(self.inner.dispatch_async(&method, &args).await?))
     }

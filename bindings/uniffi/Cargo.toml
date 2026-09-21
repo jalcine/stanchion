@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 stanchion-ffi = { workspace = true, features = ["async", "signatures"] }
-uniffi = { version = "0.32", features = ["tokio"] }
+uniffi = { version = "0.32", features = ["tokio", "cli"] }
 thiserror = "2"
 
 

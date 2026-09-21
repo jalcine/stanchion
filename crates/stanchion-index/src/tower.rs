@@ -9,10 +9,17 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use bytes::Bytes;
+use futures_util::StreamExt;
 use http::{header, HeaderValue, Request, Response, StatusCode};
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Full, StreamBody};
 use tower_service::Service;
 
-use crate::{IndexServer, IndexSource, Served};
+use crate::{Body, IndexServer, IndexSource, Served};
+
+/// The body a mounted index answers with: bytes for documents, a stream for packages.
+pub type IndexBody = BoxBody<Bytes, std::io::Error>;
 
 /// Serves a plugin index as a Tower service.
 pub struct IndexService<S> {
@@ -36,7 +43,7 @@ impl<S, B> Service<Request<B>> for IndexService<S>
 where
     S: IndexSource + Send + Sync + 'static,
 {
-    type Response = Response<Vec<u8>>;
+    type Response = Response<IndexBody>;
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Infallible>> + Send>>;
 
@@ -62,7 +69,7 @@ where
 }
 
 /// Translates a [`Served`] into an `http::Response`.
-pub fn into_response(served: Served) -> Response<Vec<u8>> {
+pub fn into_response(served: Served) -> Response<IndexBody> {
     let mut builder = Response::builder()
         .status(served.status)
         .header(header::CONTENT_TYPE, served.content_type);
@@ -75,9 +82,27 @@ pub fn into_response(served: Served) -> Response<Vec<u8>> {
     {
         builder = builder.header(header::ETAG, value);
     }
-    builder.body(served.body).unwrap_or_else(|_| {
-        let mut fallback = Response::new(Vec::new());
+    if let Some(length) = served.content_length {
+        builder = builder.header(header::CONTENT_LENGTH, length);
+    }
+
+    let body = match served.body {
+        Body::Bytes(bytes) => Full::new(Bytes::from(bytes)).map_err(io_never).boxed(),
+        // Read on a blocking worker, delivered through a bounded channel.
+        Body::Reader(reader) => StreamBody::new(
+            crate::stream::chunks(reader).map(|chunk| chunk.map(http_body::Frame::data)),
+        )
+        .boxed(),
+    };
+
+    builder.body(body).unwrap_or_else(|_| {
+        let mut fallback = Response::new(Full::new(Bytes::new()).map_err(io_never).boxed());
         *fallback.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         fallback
     })
+}
+
+/// `Full` cannot fail, so its error type is uninhabited and this never runs.
+fn io_never(never: std::convert::Infallible) -> std::io::Error {
+    match never {}
 }

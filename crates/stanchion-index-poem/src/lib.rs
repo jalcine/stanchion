@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use poem::http::{header, HeaderValue, StatusCode};
 use poem::{Endpoint, Request, Response};
-use stanchion_index::{IndexServer, IndexSource, Served};
+use stanchion_index::{Body, IndexServer, IndexSource, Served};
 
 /// Wraps an [`IndexServer`] as a Poem endpoint.
 ///
@@ -74,6 +74,9 @@ where
 }
 
 /// Translates a [`Served`] into a Poem response.
+///
+/// A document becomes bytes; a package becomes a stream, so serving a large one costs
+/// a buffer rather than its own size in memory.
 pub fn into_response(served: Served) -> Response {
     let mut builder = Response::builder()
         .status(served.status)
@@ -87,5 +90,15 @@ pub fn into_response(served: Served) -> Response {
     {
         builder = builder.header(header::ETAG, value);
     }
-    builder.body(served.body)
+    if let Some(length) = served.content_length {
+        builder = builder.header(header::CONTENT_LENGTH, length);
+    }
+
+    match served.body {
+        Body::Bytes(bytes) => builder.body(bytes),
+        // Read on a blocking worker, delivered through a bounded channel.
+        Body::Reader(reader) => {
+            builder.body(poem::Body::from_bytes_stream(stanchion_index::chunks(reader)))
+        }
+    }
 }

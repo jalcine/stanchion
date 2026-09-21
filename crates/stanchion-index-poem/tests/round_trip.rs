@@ -146,3 +146,51 @@ async fn a_client_requiring_freshness_accepts_what_the_server_issues() -> TestRe
     .await??;
     Ok(())
 }
+
+#[tokio::test]
+async fn a_large_package_streams_intact_over_the_socket() -> TestResult {
+    let (root, digest) = index_root()?;
+
+    // 24 MiB: far more than a response buffer, and enough that a server holding it
+    // in memory would be obvious. Written with a repeating pattern so truncation or
+    // a mis-ordered chunk shows up as a mismatch rather than a length difference.
+    let size = 24 * 1024 * 1024;
+    let large: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
+    let hex = digest.trim_start_matches("sha256:");
+    fs::write(root.path().join("blobs").join("sha256").join(hex), &large)?;
+
+    let base = start(&root).await?;
+    let fetched = tokio::task::spawn_blocking(move || -> Fallible<Vec<u8>> {
+        Ok(HttpSource::new()
+            .limit(64 * 1024 * 1024)
+            .fetch(&format!("{base}/v1/blobs/{digest}"))?)
+    })
+    .await??;
+
+    assert_eq!(fetched.len(), size, "a streamed package must arrive whole");
+    assert_eq!(fetched, large, "chunks must arrive in order and unaltered");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_head_on_a_package_reports_its_length() -> TestResult {
+    let (root, digest) = index_root()?;
+    let base = start(&root).await?;
+
+    let (status, length) = tokio::task::spawn_blocking(move || -> Fallible<(u16, Option<String>)> {
+        let response = reqwest::blocking::Client::new()
+            .head(format!("{base}/v1/blobs/{digest}"))
+            .send()?;
+        let length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        Ok((response.status().as_u16(), length))
+    })
+    .await??;
+
+    assert_eq!(status, 200);
+    assert_eq!(length.as_deref(), Some(PACKAGE.len().to_string().as_str()));
+    Ok(())
+}

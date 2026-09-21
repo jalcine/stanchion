@@ -1,0 +1,86 @@
+name: CI
+
+# Pull requests *and* pushes to main.
+#
+# PR-only would not have caught what prompted this workflow: the dual-registry bug
+# (#2) landed on main through a direct push, against a suite that was already red.
+# Most work here reaches main without a PR, so main is the branch that needs the
+# check most.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same branch makes the previous run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # mise owns the toolchain versions so CI and a developer's machine cannot
+      # drift — the reason mise.toml pins them in the first place.
+      #
+      # `install_args` installs only the Rust tools up front; the Python, Ruby,
+      # Java, Kotlin and Node entries exist for `bindings/*`, which the smoke tasks
+      # cover separately. mise's `auto_install` is on by default, so anything a task
+      # turns out to need is fetched rather than failing the job — this is a cost
+      # optimisation, not a guarantee about what ends up installed.
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: rust cargo:cargo-nextest
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test
+
+      # The `ci` nextest profile: no fail-fast, retries confined to the two suites
+      # that touch an external tool or a real child process, and JUnit output.
+      #
+      # The luarocks tests skip themselves when the binary is absent, which it is
+      # here, so nothing needs installing for them.
+      - name: Suite
+        run: mise run test -- --profile ci
+
+      # nextest does not run doctests, as .config/nextest.toml notes. Without this
+      # they are checked by nobody. Run through mise so it picks up the same
+      # feature set as the suite rather than a second copy of the list.
+      - name: Doctests
+        run: mise run test:doc
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: rust
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lint
+
+      # Clippy over the workspace and over the three binding crates, which are
+      # workspace members but not default members.
+      - name: Clippy
+        run: mise run lint

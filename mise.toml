@@ -45,18 +45,27 @@ node = "26.3.0"
 # only be compiled and run where a Swift toolchain exists, which for this
 # project means macOS; mise would install one here and then have nothing to do.
 
+[env]
+# The feature set `test` and `lint` share.
+#
+# One variable rather than two literals because they drifted: `lint` carried only
+# the `stanchion/*` features, so anything behind a `stanchion-ffi` feature — the
+# signature-gated tests among them — compiled in the suite but was never linted.
+# A feature added to one of these tasks and not the other is the bug this prevents.
+STANCHION_FEATURES = "stanchion/full,stanchion/lua54,stanchion/vendored,stanchion-ffi/lua54,stanchion-ffi/vendored,stanchion-ffi/signatures,stanchion-ffi/async"
+
 [tasks.test]
 description = "Run the Rust suite under nextest"
-run = """
-cargo nextest run --workspace \
-  --features stanchion/full,stanchion/lua54,stanchion/vendored,\
-stanchion-ffi/lua54,stanchion-ffi/vendored,stanchion-ffi/signatures,stanchion-ffi/async
-"""
+run = "cargo nextest run --workspace --features $STANCHION_FEATURES"
+
+[tasks."test:doc"]
+description = "Doctests, which nextest does not run"
+run = "cargo test --doc --workspace --features $STANCHION_FEATURES"
 
 [tasks.lint]
 description = "Clippy across the workspace and the bindings"
 run = [
-    "cargo clippy --workspace --all-targets --features stanchion/full,stanchion/lua54,stanchion/vendored -- -D warnings",
+    "cargo clippy --workspace --all-targets --features $STANCHION_FEATURES -- -D warnings",
     "cargo clippy -p stanchion-python -p stanchion-uniffi -p stanchion-ruby --all-targets -- -D warnings",
 ]
 

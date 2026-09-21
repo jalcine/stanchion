@@ -141,7 +141,9 @@ return Greeter</code></pre>
   <h2>Built for</h2>
   <p class="sub">
     Semi-trusted authors: your team, your customers under contract, a curated
-    community. See the limits below before you take code from strangers.
+    community. The <a href="docs/capabilities.html">capability</a> and
+    <a href="docs/signatures.html">signature</a> guides cover what changes when the
+    authors are strangers.
   </p>
   <div class="cards">
     <wa-card><h3>Editors and developer tools</h3>
@@ -157,25 +159,6 @@ return Greeter</code></pre>
     <wa-card><h3>Data pipelines</h3>
       <p>Analysts write transforms and get real libraries from LuaRocks, not a bare interpreter.</p></wa-card>
   </div>
-</section>
-
-<section class="band">
-  <h2>Honest limits</h2>
-  <p class="sub">A project page that omits these is marketing. The README does not omit them.</p>
-  <wa-callout variant="warning">
-    <strong>Not yet safe for code from strangers.</strong>
-    Per-plugin isolation bounds CPU and memory, but a plugin still runs in your
-    process unless you host it out of process. Capabilities bound what a plugin can
-    <em>reach</em>, not what it does with what it got — and they are only as strong as
-    the providers that enforce their grants. Manifests are self-asserted until
-    signatures make them attributable.
-  </wa-callout>
-  <ul>
-    <li>Methods must return <code>mlua::Result</code>; other error types are not unwrapped.</li>
-    <li>Generic traits are rejected — a Lua class has no type parameters.</li>
-    <li>Per-plugin isolation and <code>[dependencies]</code> are mutually exclusive: Lua values cannot cross states.</li>
-    <li>A revocation list is consulted at load, so a running plugin keeps running until it is reloaded.</li>
-  </ul>
 </section>
 
 <section class="band">

@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pulldown_cmark::{html, Options, Parser};
+use pulldown_cmark::{html, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// Where guide links that leave the site point instead.
 const REPO: &str = "https://github.com/jalcine/stanchion";
@@ -211,9 +211,75 @@ fn render(source: &str) -> String {
     options.insert(Options::ENABLE_FOOTNOTES);
     options.insert(Options::ENABLE_SMART_PUNCTUATION);
 
+    let events = anchored(Parser::new_ext(source, options).collect());
     let mut html = String::new();
-    html::push_html(&mut html, Parser::new_ext(source, options));
+    html::push_html(&mut html, events.into_iter());
     html
+}
+
+/// Gives every heading the id GitHub would give it.
+///
+/// The guides link to each other's sections (`isolation.md#per-group-…`), which GitHub
+/// resolves because it slugs headings on render. Without the same ids here those links
+/// silently land at the top of the page instead.
+fn anchored(mut events: Vec<Event<'_>>) -> Vec<Event<'_>> {
+    let mut at = 0;
+    while at < events.len() {
+        let Some(Event::Start(Tag::Heading { level, .. })) = events.get(at) else {
+            at = at.saturating_add(1);
+            continue;
+        };
+        let level = *level;
+
+        // The heading's own text, gathered up to its close. Inline code and emphasis
+        // contribute their text, which is what the slug is built from.
+        let mut title = String::new();
+        let mut end = at.saturating_add(1);
+        while let Some(event) = events.get(end) {
+            match event {
+                Event::End(TagEnd::Heading(_)) => break,
+                Event::Text(text) | Event::Code(text) => title.push_str(text),
+                _ => {}
+            }
+            end = end.saturating_add(1);
+        }
+
+        let tag = heading_tag(level);
+        let slug = slug(&title);
+        if let Some(slot) = events.get_mut(at) {
+            *slot = Event::Html(format!("<{tag} id=\"{slug}\">").into());
+        }
+        if let Some(slot) = events.get_mut(end) {
+            *slot = Event::Html(format!("</{tag}>").into());
+        }
+        at = end.saturating_add(1);
+    }
+    events
+}
+
+fn heading_tag(level: HeadingLevel) -> &'static str {
+    match level {
+        HeadingLevel::H1 => "h1",
+        HeadingLevel::H2 => "h2",
+        HeadingLevel::H3 => "h3",
+        HeadingLevel::H4 => "h4",
+        HeadingLevel::H5 => "h5",
+        HeadingLevel::H6 => "h6",
+    }
+}
+
+/// GitHub's heading slug: lowercased, punctuation dropped, spaces hyphenated.
+fn slug(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    for character in title.chars() {
+        match character {
+            ' ' => out.push('-'),
+            '-' | '_' => out.push(character),
+            _ if character.is_alphanumeric() => out.extend(character.to_lowercase()),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The shared navigation, with the current page marked.

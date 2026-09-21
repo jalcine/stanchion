@@ -1,6 +1,6 @@
 # stanchion
 
-Lua plugins for Rust applications. A stanchion both bears load and marks a boundary,
+Securely typed plugin infrastructure for applications and libraries. A stanchion both bears load and marks a boundary,
 which is what this does: typed contracts and dependency wiring on one side, sandboxing,
 capabilities and signatures on the other.
 
@@ -19,6 +19,7 @@ capabilities and signatures on the other.
 | [`stanchion-index-poem`](crates/stanchion-index-poem) | Poem adapter for the index server                                          |
 | [`stanchion-remote`](crates/stanchion-remote)     | out-of-process hosting: JSON-RPC protocol, client, host                         |
 | [`stanchion-ffi`](crates/stanchion-ffi)           | the seam the language bindings sit on: dynamic calls, values, capabilities      |
+| [`stanchion-wasm`](crates/stanchion-wasm)         | a WASM runtime backend for <code>stanchion-ffi</code>                              |
 | [`bindings/`](bindings)                           | Python, Kotlin/Swift and Ruby over that seam                                    |
 
 Depend on `stanchion` and pick features; generated code refers to `::stanchion`, so use

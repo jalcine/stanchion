@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>stanchion · Lua plugins for Rust applications</title>
-<meta name="description" content="Typed Lua plugin contracts for Rust: sandboxing, declared capabilities, signed packages, and out-of-process hosting.">
+<title>stanchion · Securely typed plugin infrastructure for applications and library</title>
+<meta name="description" content="Securely typed plugin infrastructure: sandboxing, declared capabilities, signed packages, and out-of-process hosting.">
 <link rel="icon" href="assets/stanchion.svg" type="image/svg+xml">
 <meta property="og:title" content="stanchion">
-<meta property="og:description" content="Lua plugins for Rust applications. Typed contracts and dependency wiring on one side; sandboxing, capabilities and signatures on the other.">
+<meta property="og:description" content="Securely typed plugin infrastructure for applications and library. Typed contracts and dependency wiring on one side; sandboxing, capabilities and signatures on the other.">
 <meta property="og:type" content="website">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -42,7 +42,7 @@
   <wa-badge variant="neutral" appearance="outlined">MIT or Apache-2.0</wa-badge>
   <h1>stanchion</h1>
   <p class="lede">
-    Lua plugins for Rust applications. A stanchion both bears load and marks a
+    Securely typed plugin infrastructure for applications and library. A stanchion both bears load and marks a
     boundary — which is what this does: typed contracts and dependency wiring on one
     side, sandboxing, capabilities and signatures on the other.
   </p>
@@ -54,11 +54,12 @@
 
 <div class="split">
   <div>
-    <h2 style="margin-top:0">Describe the contract in Rust</h2>
+    <h2 style="margin-top:0">Describe the contract in <span class="word-rotator" data-words='["Rust","Python","Kotlin"]'>Rust</span></h2>
     <p style="color:var(--ink-soft)">
-      Write a trait. <code>#[lua_class]</code> generates the class handle, the instance
-      handle, and the conversions — and validates the contract when a plugin
-      <em>loads</em>, not when a method is finally called at 3am.
+      Write a contract. In Rust the <code>#[lua_class]</code> macro generates the class
+      handle, instance handle, and conversions — Python and Kotlin hosts hook in via
+      the <code>stanchion-ffi</code> crate with the same guarantees. Either way,
+      validation runs when a plugin <em>loads</em>, not when a method is finally called at 3am.
     </p>
 <pre><code>#[lua_class]
 pub trait Greeter {
@@ -77,8 +78,10 @@ pub trait Greeter {
   <div>
     <h2 style="margin-top:0">Implement it in Lua</h2>
     <p style="color:var(--ink-soft)">
-      An ordinary Lua class. The trait stays dyn-compatible, so a native Rust
-      implementation drops into the same <code>Vec&lt;Box&lt;dyn Greeter&gt;&gt;</code>.
+      An ordinary Lua class. Every method the contract expects is verified at
+      load time — missing fields surface before the first call. A native
+      implementation in any supported language lives alongside Lua in the same
+      <code>Vec</code>, and the dispatch layer resolves to whichever one you gave it.
     </p>
 <pre><code>local Greeter = {}
 Greeter.__index = Greeter
@@ -171,12 +174,15 @@ return Greeter</code></pre>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion"><code>stanchion</code></a></td><td>the facade, and the <code>plugin-host</code> binary</td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-core"><code>stanchion-core</code></a></td><td>the <code>#[lua_class]</code> contract</td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-macros"><code>stanchion-macros</code></a></td><td>the attribute macro</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-ffi"><code>stanchion-ffi</code></a></td><td>a dynamic facade for building foreign-language bindings (Python, Kotlin, …)</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-wasm"><code>stanchion-wasm</code></a></td><td>a WASM runtime backend for <code>stanchion-ffi</code></td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-registry"><code>stanchion-registry</code></a></td><td>manifests, sandboxing, capabilities, signatures, reload</td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-rocks"><code>stanchion-rocks</code></a></td><td>LuaRocks trees and version constraints</td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-sigstore"><code>stanchion-sigstore</code></a></td><td>keyless verification, quarantining a large graph</td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-remote"><code>stanchion-remote</code></a></td><td>out-of-process hosting over JSON-RPC 2.0</td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-dist"><code>stanchion-dist</code></a></td><td>packages, the index protocol, pinned installs</td></tr>
       <tr><td><a href="{{repo}}/tree/main/crates/stanchion-index"><code>stanchion-index</code></a></td><td>serving an index, framework-neutral</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-index-poem"><code>stanchion-index-poem</code></a></td><td>a Poem adapter for serving a plugin index</td></tr>
     </tbody>
   </table>
 </section>
@@ -195,6 +201,24 @@ return Greeter</code></pre>
   <a href="{{repo}}/blob/main/LICENSE-APACHE">Apache-2.0</a>
   · <a href="{{repo}}">source</a>
 </footer>
+
+<script>
+(() => {
+  const el = document.querySelector(".word-rotator");
+  if (!el) return;
+  const words = JSON.parse(el.dataset.words);
+  let i = 0;
+  const tick = () => {
+    el.classList.add("fade-out");
+    setTimeout(() => {
+      i = (i + 1) % words.length;
+      el.textContent = words[i];
+      el.classList.remove("fade-out");
+    }, 300);
+  };
+  setInterval(tick, 3000);
+})();
+</script>
 
 </body>
 </html>

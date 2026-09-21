@@ -4,12 +4,9 @@ pub use runtime::{WasmInstance, WasmRuntime};
 use std::path::Path;
 use std::sync::Mutex;
 
-use stanchion_ffi::{
-    BackendRegistry, PluginBackend, PluginInstance, Value,
-};
-use stanchion_registry::{Manifest, PluginType};
+use stanchion_abi::{Error, Manifest, PluginBackend, PluginInstance, PluginType, Result, Value};
 
-/// A WASM plugin backend registered with [`Builder::backend`](stanchion_ffi::Builder::backend).
+/// A WASM plugin backend registered with a [`Builder`].
 ///
 /// Loads plugins from `.wasm` binaries specified in the manifest's
 /// `entry` field. Each plugin calls its first exported function (the entry point)
@@ -21,19 +18,28 @@ impl PluginBackend for WasmBackend {
         PluginType::Wasm
     }
 
-    fn load(
-        &self,
-        manifest: &Manifest,
-        dir: &Path,
-    ) -> Result<Box<dyn PluginInstance>, String> {
+    fn load(&self, manifest: &Manifest, dir: &Path) -> Result<Box<dyn PluginInstance>> {
         let wasm_path = dir.join(&manifest.entry);
-        let wasm_binary = std::fs::read(&wasm_path)
-            .map_err(|e| format!("Failed to read {}: {}", wasm_path.display(), e))?;
-        let runtime = WasmRuntime::new(&wasm_binary)?;
+        let wasm_binary = std::fs::read(&wasm_path).map_err(|e| {
+            Error::Plugin {
+                plugin: manifest.name.clone(),
+                reason: format!("Failed to read {}: {}", wasm_path.display(), e),
+            }
+        })?;
+        let runtime =
+            WasmRuntime::new(&wasm_binary).map_err(|e| Error::Plugin {
+                plugin: manifest.name.clone(),
+                reason: e,
+            })?;
 
         // Use the first exported function as the entry point.
-        let entry = runtime.exports().next()
-            .ok_or_else(|| format!("No exported functions in {}", manifest.entry))?
+        let entry = runtime
+            .exports()
+            .next()
+            .ok_or_else(|| Error::Plugin {
+                plugin: manifest.name.clone(),
+                reason: format!("No exported functions in {}", manifest.entry),
+            })?
             .to_string();
 
         Ok(Box::new(WasmPluginInstance {
@@ -50,16 +56,15 @@ pub struct WasmPluginInstance {
 }
 
 impl PluginInstance for WasmPluginInstance {
-    fn call(&self, method: &str, args: &[Value]) -> Result<Value, String> {
-        let mut runtime = self.runtime.lock().map_err(|e| e.to_string())?;
+    fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
+        let mut runtime = self
+            .runtime
+            .lock()
+            .map_err(|e| Error::Wasm(format!("Mutex poisoned: {e}")))?;
         // If the caller specifies a method name, use it as the export name;
         // otherwise fall back to the first exported function (the entry point).
-        let export = if method.is_empty() {
-            &self.entry
-        } else {
-            method
-        };
-        runtime.call(export, args)
+        let export = if method.is_empty() { &self.entry } else { method };
+        runtime.call(export, args).map_err(Error::Wasm)
     }
 
     fn runtime(&self) -> &str {

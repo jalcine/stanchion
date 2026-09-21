@@ -230,3 +230,37 @@ impl From<io::Error> for FailureReason {
         FailureReason::Io(source)
     }
 }
+
+/// Conversion into the runtime-agnostic [`stanchion_abi::Error`], which a
+/// foreign host or backend surfaces.
+///
+/// These live here rather than in `stanchion-abi` because the source types are
+/// this crate's own; the orphan rule ties each `From` impl to the crate that
+/// owns one of its sides.
+impl From<LoadFailure> for stanchion_abi::Error {
+    fn from(failure: LoadFailure) -> Self {
+        stanchion_abi::Error::Plugin {
+            plugin: failure.name.clone(),
+            reason: failure.reason.to_string(),
+        }
+    }
+}
+
+impl From<RegistryError> for stanchion_abi::Error {
+    fn from(err: RegistryError) -> Self {
+        match err {
+            RegistryError::UnknownPlugin(name) => stanchion_abi::Error::UnknownPlugin(name),
+            RegistryError::Io { path, source } => {
+                stanchion_abi::Error::Io(format!("reading `{}`: {source}", path.display()))
+            }
+            RegistryError::Reload(failure) => stanchion_abi::Error::from(*failure),
+            RegistryError::Lua(source) => stanchion_abi::Error::Lua(source.to_string()),
+            // `RegistryError` is effectively `#[non_exhaustive]`: `Rocks` appears
+            // whenever *any* crate in the build turns on the registry's `luarocks`
+            // feature, which this match cannot know about. Falling through keeps that
+            // from being a build error.
+            #[allow(unreachable_patterns)]
+            other => stanchion_abi::Error::Config(other.to_string()),
+        }
+    }
+}

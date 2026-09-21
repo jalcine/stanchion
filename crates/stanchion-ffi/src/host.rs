@@ -200,12 +200,18 @@ impl Builder {
         }
 
         // Register the built-in Lua backend if no custom one was supplied.
+        //
+        // The same `Arc<Mutex<Registry>>` is shared between `self.registry`
+        // (which `enter()` locks) and the `LuaBackend` (which `load()` uses
+        // to wrap loaded plugins), so that every `Stanchion` method sees the
+        // configured sandbox, capabilities, policy, and signature enforcement.
         if backends.get(&PluginType::Lua).is_none() {
             use crate::backend::LuaBackend;
-            backends.register(Box::new(LuaBackend::new(Arc::new(Mutex::new(registry)))));
+            let registry = Arc::new(Mutex::new(registry));
+            backends.register(Box::new(LuaBackend::new(Arc::clone(&registry))));
             return Ok(Stanchion {
                 id: next_id(),
-                registry: Arc::new(Mutex::new(Registry::new(Lua::new()))),
+                registry,
                 backends: Mutex::new(backends),
                 instances: Mutex::new(Vec::new()),
                 default_root: config.plugins.clone(),
@@ -285,13 +291,14 @@ impl Stanchion {
         let mut failures = Vec::new();
 
         // Read every manifest.
-        let (manifests, _discovery_failures) = stanchion_registry::manifest::discover(&root)
+        let (manifests, _discovery_failures) = stanchion_registry::discover(&root)
             .map_err(|e| Error::Io(format!("reading plugin root {:?}: {}", root, e)))?;
 
         // Separate Lua manifests from non-Lua manifests.
-        let lua_manifests: Vec<_> = manifests
+        let lua_names: Vec<String> = manifests
             .iter()
             .filter(|m| matches!(m.plugin_type, PluginType::Lua))
+            .map(|m| m.name.clone())
             .collect();
 
         let non_lua_manifests: Vec<_> = manifests
@@ -300,7 +307,7 @@ impl Stanchion {
             .collect();
 
         // Load Lua plugins through the existing registry.
-        if !lua_manifests.is_empty() {
+        if !lua_names.is_empty() {
             let mut registry = self.enter()?;
             match registry.load_dir(&root) {
                 Ok(report) => {
@@ -311,9 +318,9 @@ impl Stanchion {
                     }));
                 }
                 Err(e) => {
-                    for manifest in &lua_manifests {
+                    for name in &lua_names {
                         failures.push(Failure {
-                            plugin: manifest.name.clone(),
+                            plugin: name.clone(),
                             reason: e.to_string(),
                         });
                     }
@@ -348,17 +355,18 @@ impl Stanchion {
 
                 match backend.load(&manifest, &manifest.dir) {
                     Ok(instance) => {
+                        let runtime = instance.runtime().to_string();
                         instances.push(PluginInstanceEntry {
                             name: manifest.name.clone(),
                             instance,
-                            runtime: instance.runtime().to_string(),
+                            runtime,
                         });
                         loaded.push(manifest.name);
                     }
                     Err(e) => {
                         failures.push(Failure {
                             plugin: manifest.name,
-                            reason: e,
+                            reason: e.to_string(),
                         });
                     }
                 }
@@ -432,7 +440,7 @@ impl Stanchion {
         let count = registry.len();
         drop(registry);
         let instances = futures_executor::block_on(self.instances.lock());
-        Ok(count + instances.len())
+        Ok(count.saturating_add(instances.len()))
     }
 
     /// Whether no plugins are loaded.
@@ -572,7 +580,7 @@ impl Stanchion {
             refresh_budget(entry);
             let lua_args = to_lua_args(entry.lua(), &args)?;
             let result = entry.instance().call_method_async(&method, lua_args).await?;
-            Value::from_lua(&result)
+            Ok(Value::from_lua(&result)?)
         }).await;
 
         match result {

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 wasmtime = "48.0"
-serde = { version = "1.0", features = ["derive"] }
-toml = "0.7"
-stanchion-ffi = { path = "../stanchion-ffi" }
+stanchion-abi = { workspace = true }
+
+[lints]
+workspace = true

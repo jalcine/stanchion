@@ -51,6 +51,7 @@ use semver::VersionReq;
 use stanchion_registry::upgrade::UpgradeReview;
 use stanchion_registry::{
     DirectoryDigest, LockError, LockedPlugin, Lockfile, Manifest, MANIFEST_FILE,
+    read_manifest,
 };
 
 use crate::index::{IndexError, PluginIndex, Release};
@@ -294,7 +295,7 @@ impl<I: PluginIndex, S: PluginSource> Installer<I, S> {
             package::unpack(archive.as_slice(), &staging, self.limits)?;
             let digest = package::verify_directory(&staging, &release.digest)?;
 
-            let manifest = Manifest::read(&staging)
+            let manifest = read_manifest(&staging)
                 .map_err(|reason| InstallError::Mismatch(format!("`{name}`: {reason}")))?;
             if manifest.name != name {
                 return Err(InstallError::Mismatch(format!(
@@ -369,7 +370,7 @@ fn read_installed(dir: &Path) -> Option<Manifest> {
     if !dir.join(MANIFEST_FILE).is_file() {
         return None;
     }
-    Manifest::read(dir).ok()
+    read_manifest(dir).ok()
 }
 
 /// A plugin that has been fetched and checked but not yet installed.

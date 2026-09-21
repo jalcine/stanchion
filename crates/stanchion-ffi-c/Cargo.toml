@@ -1,0 +1,28 @@
+[package]
+name = "stanchion-ffi-c"
+description = "General-purpose C-ABI library for stanchion: load, sandbox, and call Lua/WASM plugins from any C project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "stanchion_c"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+stanchion-ffi = { workspace = true, features = ["async", "signatures"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+default = ["lua54", "vendored"]
+lua54 = ["stanchion-ffi/lua54"]
+lua53 = ["stanchion-ffi/lua53"]
+luajit = ["stanchion-ffi/luajit"]
+luau = ["stanchion-ffi/luau"]
+vendored = ["stanchion-ffi/vendored"]
+
+[lints]
+workspace = true

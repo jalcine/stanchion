@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Capabilities</h1>
+    <h1 id="capabilities">Capabilities</h1>
 <p>Plugins declare what they need; the host declares what it offers; a policy
 decides what is actually granted.</p>
 <p><code>with_setup</code> is where the host declares <strong>everything</strong> a plugin can reach. Capabilities
@@ -79,7 +79,7 @@ left for the plugin to tamper with at call time.</p>
 <tr><td>Policy denies</td><td><code>CapabilityDenied</code>, plugin fails</td><td>left unbound, plugin loads</td></tr>
 <tr><td>No provider offered</td><td><code>UnknownCapability</code>, plugin fails</td><td>left unbound, plugin loads</td></tr>
 </tbody></table>
-<h2>Audit, introspection, revocation</h2>
+<h2 id="audit-introspection-revocation">Audit, introspection, revocation</h2>
 <pre><code class="language-rust">let audit = registry.audit("plugins/")?;      // executes nothing
 for request in audit.unsatisfiable() { /* asks for what the host cannot offer */ }
 audit.ambient;                                 // reaches every plugin regardless
@@ -91,7 +91,7 @@ registry.revoke("weather", "network")?;        // unbind on a live plugin
 any of its code</strong> — the precondition for accepting plugins you did not write. Revoking
 sets the name to <code>nil</code> in the plugin’s environment; code that already captured the
 value in a local keeps it, so revocation defangs a plugin rather than rewinding it.</p>
-<h2>What this does not buy</h2>
+<h2 id="what-this-does-not-buy">What this does not buy</h2>
 <ul>
 <li><strong>A sloppy provider defeats it.</strong> If a provider ignores its <code>Grant</code> and reads any
 path, the declaration is a comment. Enforcement lives in the provider.</li>

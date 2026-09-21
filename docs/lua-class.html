@@ -35,11 +35,10 @@
 
 <main>
   <article class="prose">
-    <h1>Typed class bindings</h1>
+    <h1 id="typed-class-bindings">Typed class bindings</h1>
 <p>How <code>#[lua_class]</code> turns a Rust trait into a Lua class binding: what it
 generates, the attributes it accepts, and what it validates.</p>
-<h2>What the macro generates</h2>
-<table><thead><tr><th>Item</th><th>Role</th></tr></thead><tbody>
+<h2 id="what-the-macro-generates">What the macro generates</h2><table><thead><tr><th>Item</th><th>Role</th></tr></thead><tbody>
 <tr><td><code>trait Greeter</code></td><td>rewritten to hold only <code>&amp;self</code> methods, so it stays dyn-compatible</td></tr>
 <tr><td><code>GreeterClass</code></td><td>handle to the class table; receiverless trait fns become inherent methods on it</td></tr>
 <tr><td><code>GreeterHandle</code></td><td>instance handle; <code>impl Greeter for GreeterHandle</code> delegates to the Lua object</td></tr>
@@ -50,8 +49,7 @@ generates, the attributes it accepts, and what it validates.</p>
 mix freely:</p>
 <pre><code class="language-rust">let registry: Vec&lt;Box&lt;dyn Greeter&gt;&gt; = vec![Box::new(handle), Box::new(NativeGreeter)];
 </code></pre>
-<h2>Method attributes</h2>
-<table><thead><tr><th>Attribute</th><th>Effect</th></tr></thead><tbody>
+<h2 id="method-attributes">Method attributes</h2><table><thead><tr><th>Attribute</th><th>Effect</th></tr></thead><tbody>
 <tr><td><em>(none)</em>, with <code>&amp;self</code></td><td><code>obj:name(..)</code> — colon call, object passed implicitly</td></tr>
 <tr><td><em>(none)</em>, no receiver</td><td><code>Class.name(..)</code> — moved onto <code>{Trait}Class</code></td></tr>
 <tr><td><code>#[lua(function)]</code></td><td><code>obj.name(..)</code> — dot call on an instance</td></tr>
@@ -64,7 +62,32 @@ the class name used in error messages. A <code>set_</code>-prefixed field method
 key without the prefix (<code>set_greeting</code> → <code>greeting</code>).</p>
 <p>Lookups go through <code>ObjectLike</code>, which honours <code>__index</code>, so methods inherited from a
 base class resolve and validate correctly.</p>
-<h2>Validation</h2>
+<h2 id="error-types">Error types</h2>
+<p>A method returns <code>Result&lt;T, E&gt;</code> for any <code>E: From&lt;mlua::Error&gt;</code>, so a host with its own
+error enum does not wrap every call site:</p>
+<pre><code class="language-rust">enum HostError {
+    Lua(mlua::Error),
+    Policy(String),
+}
+
+impl From&lt;mlua::Error&gt; for HostError {
+    fn from(err: mlua::Error) -&gt; Self {
+        HostError::Lua(err)
+    }
+}
+
+#[lua_class]
+pub trait Greeter {
+    fn new(greeting: String) -&gt; Result&lt;Self, HostError&gt;;
+    fn greet(&amp;self, who: String) -&gt; Result&lt;String, HostError&gt;;
+}
+</code></pre>
+<p><code>mlua::Result</code> still works unchanged: the conversion the macro emits is then the
+blanket <code>impl&lt;T&gt; From&lt;T&gt; for T</code>, which compiles away. The return type does have to be
+written as a <code>Result</code>-shaped path — the macro reads it syntactically rather than
+resolving it — so a <code>type HostResult&lt;T&gt; = Result&lt;T, HostError&gt;;</code> alias is fine, but a
+bare <code>-&gt; String</code> is not.</p>
+<h2 id="validation">Validation</h2>
 <p><code>FromLua</code> checks that every required key resolves to a function before handing back a
 handle, so a malformed plugin fails at load with a typed error rather than
 <code>attempt to call a nil value</code> mid-request:</p>
@@ -75,7 +98,7 @@ handle, so a malformed plugin fails at load with a typed error rather than
 from the impl, and from the required-key set, so a class compiled without it still loads.
 That is why the required keys are <code>required_methods()</code> / <code>required_functions()</code> rather
 than consts — array elements cannot carry <code>#[cfg]</code>.</p>
-<h2>Tables or userdata</h2>
+<h2 id="tables-or-userdata">Tables or userdata</h2>
 <p>A handle wraps either a Lua table or userdata. Nothing in the trait says which, and the
 same contract binds both:</p>
 <pre><code class="language-rust">#[lua_class]

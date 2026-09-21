@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Out-of-process hosting</h1>
+    <h1 id="out-of-process-hosting">Out-of-process hosting</h1>
 <p><a href="isolation.html">Isolation</a> and <a href="capabilities.html">capabilities</a> bound what a plugin can
 <em>reach</em>. Neither bounds what a plugin can do to the process it runs in: a sandbox
 cannot stop a segfault in a C rock, and an instruction limit cannot rescue a state
@@ -64,7 +64,7 @@ for outcome in remote.dispatch("on_event", [json!("tick")])? {
 </code></pre>
 <p>A <a href="https://github.com/jalcine/stanchion/blob/main/crates/stanchion/examples/remote_host.rs">runnable example</a> covers the whole
 path, including a plugin that kills its own process.</p>
-<h2>Transport and protocol</h2>
+<h2 id="transport-and-protocol">Transport and protocol</h2>
 <p><strong>JSON-RPC 2.0 over stdio</strong>, one message per line. Not a bespoke encoding: a host can
 be written in any language that can read newline-delimited JSON on a pipe. No ports, no
 socket files, and stderr stays free for logs, which is where the host’s built-in <code>log</code>
@@ -93,7 +93,7 @@ Plugins load as <code>DynClass</code> — any table with a constructor — and m
 at call time. Arguments and results cross as JSON, converted at the Lua boundary by
 <code>mlua</code>’s serde support. In-process hosting keeps the typed contract; use it when you
 can.</p>
-<h2>Calling back into your application</h2>
+<h2 id="calling-back-into-your-application">Calling back into your application</h2>
 <p>The channel is bidirectional. A capability listed under <code>callbacks</code> becomes a Lua
 function that forwards to the process that launched the host:</p>
 <pre><code class="language-toml">[capabilities]
@@ -123,8 +123,7 @@ Both leave the host and the application running.</li>
 </ul>
 <p>Requests that arrive while a callback is in flight are queued rather than dropped, so
 your application can keep sending while a plugin is mid-call.</p>
-<h2>What a crash looks like</h2>
-<table><thead><tr><th></th><th>In-process</th><th>Out-of-process</th></tr></thead><tbody>
+<h2 id="what-a-crash-looks-like">What a crash looks like</h2><table><thead><tr><th></th><th>In-process</th><th>Out-of-process</th></tr></thead><tbody>
 <tr><td><code>while true do end</code></td><td>instruction limit</td><td>instruction limit</td></tr>
 <tr><td>allocation storm</td><td>memory limit</td><td>memory limit</td></tr>
 <tr><td><code>os.exit</code>, or a segfault in a C rock</td><td><strong>your application dies</strong></td><td><code>RemoteError::HostGone</code></td></tr>
@@ -135,7 +134,7 @@ dead child from an ordinary transport error by reaping it, so a plugin that kill
 process becomes one error value rather than an outage. Dropping a <code>RemoteRegistry</code>
 closes the host’s stdin and kills anything that ignores it, so a dropped client never
 leaks a process.</p>
-<h2>Host configuration</h2>
+<h2 id="host-configuration">Host configuration</h2>
 <p>Policy comes from a file the operator controls, never from plugin manifests:</p>
 <pre><code class="language-toml">plugins = "plugins/"
 
@@ -157,7 +156,7 @@ required = false
 all. <code>shared</code> defaults to <code>false</code> because a separate process should not stop isolating
 at the process boundary. An unknown standard-library name is a configuration error
 rather than a silent omission.</p>
-<h2>Client surface</h2>
+<h2 id="client-surface">Client surface</h2>
 <p><code>RemoteRegistry</code> mirrors the in-process registry, minus the typing:</p>
 <table><thead><tr><th>Method</th><th>Returns</th></tr></thead><tbody>
 <tr><td><code>load(root)</code></td><td><code>LoadResult { loaded, failures }</code></td></tr>

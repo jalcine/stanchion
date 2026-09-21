@@ -35,27 +35,29 @@
 
 <main>
   <article class="prose">
-    <h1>Isolation</h1>
+    <h1 id="isolation">Isolation</h1>
 <p>Whether plugins share one Lua state or get one each, and what a sandbox
 policy can bound.</p>
-<p>Two modes, chosen at construction.</p>
+<p>Three modes, chosen at construction.</p>
 <pre><code class="language-rust">// Shared: every plugin runs in the state you hand over.
 let registry = Registry::new(Lua::new());
 
+let policy = Sandbox::restricted()
+    .memory_limit(16 * 1024 * 1024)
+    .instruction_limit(5_000_000);
+
 // Per-plugin: every plugin gets its own state under a policy.
-let registry = Registry::isolated(
-    Lua::new(),
-    Sandbox::restricted()
-        .memory_limit(16 * 1024 * 1024)
-        .instruction_limit(5_000_000),
-);
+let registry = Registry::isolated(Lua::new(), policy.clone());
+
+// Per-group: plugins wired together by `[dependencies]` share a state.
+let registry = Registry::grouped(Lua::new(), policy);
 </code></pre>
-<table><thead><tr><th></th><th>Shared</th><th>Per-plugin</th></tr></thead><tbody>
-<tr><td>Memory / instruction limits</td><td>impossible</td><td>enforced by the VM</td></tr>
-<tr><td>Standard library selection</td><td>one policy, set by you</td><td>per registry, via <code>Sandbox</code></td></tr>
-<tr><td><code>[dependencies]</code> exports</td><td>injected</td><td><strong>unavailable</strong> — values cannot cross states</td></tr>
-<tr><td>Blast radius of a bad plugin</td><td>shared globals and allocator</td><td>contained to its own state</td></tr>
-<tr><td>Cost</td><td>one state</td><td>one state per plugin</td></tr>
+<table><thead><tr><th></th><th>Shared</th><th>Per-group</th><th>Per-plugin</th></tr></thead><tbody>
+<tr><td>Memory / instruction limits</td><td>impossible</td><td>per group</td><td>per plugin</td></tr>
+<tr><td>Standard library selection</td><td>one policy, set by you</td><td>per registry, via <code>Sandbox</code></td><td>per registry, via <code>Sandbox</code></td></tr>
+<tr><td><code>[dependencies]</code> exports</td><td>injected</td><td>injected within a group</td><td><strong>unavailable</strong> — values cannot cross states</td></tr>
+<tr><td>Blast radius of a bad plugin</td><td>shared globals and allocator</td><td>its group’s globals and allocator</td><td>contained to its own state</td></tr>
+<tr><td>Cost</td><td>one state</td><td>one state per group</td><td>one state per plugin</td></tr>
 </tbody></table>
 <p>Under <strong>shared</strong> isolation each chunk is evaluated with its own environment table whose
 <code>__index</code> is the real globals: a plugin <strong>reads</strong> globals normally but its <strong>writes</strong>
@@ -67,12 +69,32 @@ properties of a <code>Lua</code>, which is exactly why they cannot be applied in
 state. The price is that Lua values cannot cross states, so a <code>[dependencies]</code> entry
 that would inject exports fails with <code>CrossStateDependency</code> (see
 <a href="dependencies.html">dependency chains</a>).</p>
+<h2 id="per-group-limits-without-giving-up-dependencies">Per-group: limits without giving up dependencies</h2>
+<p><code>Registry::grouped</code> pays that price only where it is unavoidable. A Lua value cannot
+cross states, so the registry puts the plugins that need to exchange values in the same
+one: each <strong>connected component</strong> of the dependency graph gets a state, and a plugin
+depending on nothing gets one to itself.</p>
+<pre><code>base ←── middle ←── top        island
+└──────── one state ──────┘    └─ own ─┘
+</code></pre>
+<p>Connectivity is undirected, so a diamond — <code>left</code> and <code>right</code> both on <code>shared</code>, <code>top</code> on
+both — is one group rather than two that later discover they must merge. The partition is
+computed over the whole graph before any state is built.</p>
+<p><code>Plugin::group()</code> reports which state a plugin ended up in; two plugins reporting the
+same <code>Group</code> share one. The group is the accounting unit: members share a heap, a memory
+limit and one instruction budget, so <code>Budget::used</code> reads the same for all of them.</p>
+<p>What this does not do is make a dependency free. Group members share globals and an
+allocator, exactly as plugins do under shared isolation — a runaway loop in one exhausts
+the group’s allowance for all of them. Declaring a dependency is declaring that you
+accept that. What you get is that the blast radius is the group rather than the process,
+and that groups are as separated from each other as plugins are under per-plugin
+isolation.</p>
 <p>Each plugin’s directory is prepended to its state’s <code>package.path</code>, so a plugin can
 <code>require</code> its own files without knowing where it was installed. That <code>require</code> is
 per-plugin: submodules load into the <strong>same environment</strong> as the plugin’s own chunk, so
 they see its granted capabilities, and each plugin gets its own module cache rather
 than sharing <code>package.loaded</code>.</p>
-<h2>Sandbox policy</h2>
+<h2 id="sandbox-policy">Sandbox policy</h2>
 <p><code>Sandbox::restricted()</code> is the default: <code>string</code>, <code>table</code>, <code>math</code>, <code>coroutine</code> and
 <code>package</code> — no <code>io</code>, <code>os</code> or <code>debug</code> — with <code>dofile</code>, <code>loadfile</code> and <code>package.loadlib</code>
 removed on top. <code>package</code> is loaded so <code>require</code> works for rocks and plugin-local
@@ -91,7 +113,7 @@ includes <code>io</code> and <code>os</code>. Neither preset is built on it.</p>
 constructor gets the full allowance — so a plugin is bounded per call rather than
 slowly starving over its lifetime. It rides on Lua’s debug hook, so under <code>luau</code>
 (which has no instruction counter) the limit counts interrupt callbacks instead.</p>
-<h2>Reaching an isolated plugin</h2>
+<h2 id="reaching-an-isolated-plugin">Reaching an isolated plugin</h2>
 <p>A freshly created state has nothing of yours in it. Host functions get there through
 <a href="capabilities.html">capabilities</a>, declared in <code>with_setup</code> and granted per plugin by
 policy — so what a plugin can reach stays a decision rather than a side effect of

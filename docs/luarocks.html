@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>LuaRocks</h1>
+    <h1 id="luarocks">LuaRocks</h1>
 <p>Declaring external Lua libraries in a manifest and making them loadable.</p>
 <p>With the <code>luarocks</code> feature, a plugin declares the external libraries it needs:</p>
 <pre><code class="language-toml">[rocks]
@@ -61,7 +61,7 @@ use LuaRocks’ own operators (<code>~&gt;</code>, comma-separated ranges). They
 component-wise by this crate rather than by the <code>semver</code> crate that handles
 plugin-to-plugin dependencies. A bare <code>2.11</code> accepts an installed <code>2.11-1</code>; a
 requirement that spells out a revision does not.</p>
-<h2>C modules</h2>
+<h2 id="c-modules">C modules</h2>
 <p><code>package.cpath</code> is left alone unless you opt in:</p>
 <pre><code class="language-rust">RocksConfig::new(tree).load_c_modules(true)
 </code></pre>

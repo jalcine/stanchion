@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Testing</h1>
+    <h1 id="testing">Testing</h1>
 <p>Tests run under <a href="https://nexte.st">cargo-nextest</a>. Each test gets its own process,
 which suits this workspace: several tests spawn child processes, shell out to
 <code>luarocks</code>, or drive Lua states into their memory and instruction limits, and one
@@ -70,7 +70,7 @@ expectations with:</p>
 </code></pre>
 <p>A mismatch writes the actual output to <code>wip/</code> for comparison. (Refreshing uses
 <code>cargo test</code>, because <code>TRYBUILD=overwrite</code> rewrites files as a side effect of the run.)</p>
-<h2>Examples</h2>
+<h2 id="examples">Examples</h2>
 <p>The examples under <a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion/examples"><code>crates/stanchion/examples/</code></a>
 compile as part of an ordinary build, so they cannot rot into documentation that no
 longer works:</p>

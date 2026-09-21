@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Distribution</h1>
+    <h1 id="distribution">Distribution</h1>
 <p>Getting a plugin from whoever wrote it onto the machine that runs it, over
 infrastructure none of which has to be trusted.</p>
 <p><a href="signatures.html">Signatures</a> answer one question: <em>who produced these bytes?</em> Shipping
@@ -62,7 +62,7 @@ of anything.</p>
 </code></pre>
 <p>Every box the bytes pass through is untrusted except the lockfile, which the host
 writes and commits to its own repository.</p>
-<h2>The lockfile is the trust anchor</h2>
+<h2 id="the-lockfile-is-the-trust-anchor">The lockfile is the trust anchor</h2>
 <p><code>stanchion.lock</code> states, per plugin, the exact bytes that may load:</p>
 <pre><code class="language-toml">version = 1
 
@@ -93,7 +93,7 @@ host keeps a lockfile, an unpinned directory appearing beside the pinned ones is
 exactly the event worth refusing.</p>
 <p>Pinning works with <strong>no signing infrastructure at all</strong> — a digest is a digest.
 Signatures add attributable authorship on top; they are not a prerequisite.</p>
-<h2>Packages are plain archives</h2>
+<h2 id="packages-are-plain-archives">Packages are plain archives</h2>
 <p>A package is a <code>tar.gz</code> of the plugin directory. There is no manifest, no config blob
 and no media-type negotiation, because there is nothing for them to do: the
 <a href="#running-an-index">index</a> already maps a name and a version to a digest, so a package
@@ -113,7 +113,7 @@ alter a file without breaking the digest.</p>
 <p>The flip side is that <strong>tar metadata is covered by nothing</strong>. Modes, owners, mtimes and
 entry types are attacker-controlled even in a correctly signed package, so unpacking
 ignores all of them.</p>
-<h2>Unpacking refuses more than it accepts</h2>
+<h2 id="unpacking-refuses-more-than-it-accepts">Unpacking refuses more than it accepts</h2>
 <p>An archive from a registry is hostile input <em>before</em> anything about it is verified:
 the digest cannot be checked until the files are on disk. So extraction refuses</p>
 <ul>
@@ -127,7 +127,7 @@ the digest cannot be checked until the files are on disk. So extraction refuses<
 a <code>DirectoryDigest</code> at all: the digest hashes what <code>std::fs::read</code> returns, and for a
 symlink that is whatever it points at <em>on the machine doing the hashing</em>. A plugin
 containing one would verify on the signer’s machine and mean something else on yours.</p>
-<h2>Running an index</h2>
+<h2 id="running-an-index">Running an index</h2>
 <p>An index is <strong>two static JSON documents</strong>. Anything that can serve a file can host
 one — S3, GitHub Pages, nginx, a git repository people clone. There is no database and
 no API, because an index holds no authority worth protecting.</p>
@@ -171,7 +171,7 @@ index nobody maintains stops being believed, which is the correct behaviour for 
 stale mirror.</p>
 <p>Releases are ordered by semver, not by document order, so an index cannot steer a
 client by reordering its own file.</p>
-<h2>Implementing an index</h2>
+<h2 id="implementing-an-index">Implementing an index</h2>
 <p>Serve those two paths, or implement the trait against whatever you already run:</p>
 <pre><code class="language-rust">pub trait PluginIndex {
     fn releases(&amp;self, name: &amp;str) -&gt; Result&lt;PluginReleases, IndexError&gt;;
@@ -195,7 +195,7 @@ depend on <code>stanchion-dist</code> for the document types alone, without an H
 connection to a compromised bucket is a compromised index; HTTPS here keeps a passive
 network from seeing which plugins you run, and is not what stands between you and a
 bad one.</p>
-<h2>Publishing</h2>
+<h2 id="publishing">Publishing</h2>
 <pre><code class="language-rust">let mut archive = Vec::new();
 let digest = package::pack(Path::new("plugins/formatter"), &amp;mut archive)?;
 
@@ -210,7 +210,7 @@ preimage — and include the bundle in the directory so the package carries it.<
 the digest’s own sorted order, so packing one directory twice produces identical bytes.
 Nothing depends on that, since the pin is over the directory, but two packages that
 disagree are much easier to reason about when repacking is deterministic.</p>
-<h2>Installing is staged, and the gap in the middle is the point</h2>
+<h2 id="installing-is-staged-and-the-gap-in-the-middle-is-the-point">Installing is staged, and the gap in the middle is the point</h2>
 <pre><code class="language-rust">let staged = installer.stage_upgrade("formatter", &amp;"^1.0".parse()?, &amp;lockfile)?;
 
 if let Some(review) = staged.review() {
@@ -230,7 +230,7 @@ root — not briefly, not half-written — so the registry is never asked to rea
 a directory that is mid-install. A previous version is moved aside and deleted only
 once the new one is in place, so an interrupted commit leaves either the old plugin or
 the new one.</p>
-<h3>The upgrade review</h3>
+<h3 id="the-upgrade-review">The upgrade review</h3>
 <p><code>audit</code> reads manifests without running any plugin code. Pointed at two versions of
 one plugin, the same idea answers the question that actually matters when bytes arrive
 from elsewhere:</p>
@@ -248,15 +248,14 @@ there is nothing to compare against.</p>
 <p>Narrowing is inferred conservatively. Capability parameters are host-defined, so this
 cannot know that <code>hosts = ["*.acme.com"]</code> is wider than <code>["api.acme.com"]</code>; anything
 it cannot <em>prove</em> is a narrowing counts as a widening. It errs towards noisy.</p>
-<h2>Yanking is not revocation</h2>
-<table><thead><tr><th></th><th>Stops new installs</th><th>Stops a pinned build from loading</th></tr></thead><tbody>
+<h2 id="yanking-is-not-revocation">Yanking is not revocation</h2><table><thead><tr><th></th><th>Stops new installs</th><th>Stops a pinned build from loading</th></tr></thead><tbody>
 <tr><td><code>yanked</code> in the index</td><td>yes</td><td><strong>no</strong></td></tr>
 <tr><td><a href="signatures.html#revocation"><code>Revocations</code></a></td><td>yes</td><td>yes, at next load</td></tr>
 </tbody></table>
 <p>A yank is advice from a publisher; a revocation is a decision by the host. If you need
 a build to stop running on machines that already have it, you need the revocation
 list, and it is consulted at load rather than at install for exactly that reason.</p>
-<h2>What this does not buy</h2>
+<h2 id="what-this-does-not-buy">What this does not buy</h2>
 <ul>
 <li><strong>It does not make a plugin safe.</strong> It makes the bytes you run the bytes you chose.
 Whether that choice was good is what <a href="capabilities.html">capabilities</a> and the

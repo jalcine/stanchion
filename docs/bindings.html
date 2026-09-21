@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Language bindings</h1>
+    <h1 id="language-bindings">Language bindings</h1>
 <p>Using stanchion from Python, Kotlin, Swift, Ruby and JavaScript.</p>
 <p>The Rust API’s <code>Registry&lt;C: LuaClass&gt;</code> is generic over a contract <code>#[lua_class]</code> derives
 from a trait at compile time. No foreign language can supply one, so the bindings take
@@ -54,8 +54,7 @@ stanchion-ffi ──────────┼─ bindings/ruby    (magnus)    
 <p>It shares its value model and its configuration vocabulary with <code>plugin-host</code>, so an
 application can move between in-process and out-of-process hosting without a plugin
 noticing the difference.</p>
-<h2>The surface</h2>
-<table><thead><tr><th>Method</th><th>Does</th></tr></thead><tbody>
+<h2 id="the-surface">The surface</h2><table><thead><tr><th>Method</th><th>Does</th></tr></thead><tbody>
 <tr><td><code>load(root)</code></td><td>discovers and loads every plugin under a root</td></tr>
 <tr><td><code>audit(root)</code></td><td>reports what plugins request, without running any of their code</td></tr>
 <tr><td><code>list()</code> / <code>names()</code> / <code>len()</code></td><td>what is loaded, and who signed it</td></tr>
@@ -68,7 +67,7 @@ noticing the difference.</p>
 method may yield.</p>
 <p>One plugin failing never affects the others: <code>load</code> reports <code>loaded</code> and <code>failures</code>
 side by side, and <code>dispatch</code> returns a per-plugin outcome rather than raising.</p>
-<h2>Values</h2>
+<h2 id="values">Values</h2>
 <p>Arguments and results cross as a single dynamic type: nil, boolean, integer, float,
 string, list, map. It is JSON-shaped so it matches what <code>plugin-host</code> puts on the wire,
 with one addition — Lua’s integer/float split is preserved rather than collapsed.</p>
@@ -92,7 +91,7 @@ a value on its way through a boundary whose job is to carry it faithfully.</li>
 itself. Nothing stops a plugin returning <code>t</code> where <code>t.self = t</code>, and a naive walk of
 that would overflow the stack and take the host process with it.</li>
 </ul>
-<h2>Capabilities from foreign code</h2>
+<h2 id="capabilities-from-foreign-code">Capabilities from foreign code</h2>
 <p>A Rust host registers capabilities as closures. A Python or Kotlin host has none to
 give, so it implements <code>CapabilityProvider</code> and the binding hands over an object. Each
 capability becomes a Lua function bound in the granted plugin’s environment; calling it
@@ -105,18 +104,18 @@ re-check its own bounds instead of trusting the registry to have narrowed correc
 plugin can <code>pcall</code> around it. Refusing is a normal outcome, not a fatal one.</p>
 <p><code>Policy</code> is the other half: foreign code decides, per plugin, what is actually granted,
 and may narrow the parameters rather than only answering yes or no.</p>
-<h3>Do not call back into the registry</h3>
+<h3 id="do-not-call-back-into-the-registry">Do not call back into the registry</h3>
 <p>A provider runs while the registry that invoked it is locked. Calling back into that
 same registry would deadlock — no error, no stack, nothing in a log.</p>
 <p>It does not. The attempt returns a <code>reentrant</code> error instead. Capture whatever the
 provider needs before the call.</p>
 <p>Two registries nest fine: different locks, so there is no hazard, and that stays true.</p>
-<h2>Threading</h2>
+<h2 id="threading">Threading</h2>
 <p>One lock guards the whole registry, so calls from several threads serialize rather than
 race. A long-running plugin therefore blocks every other caller for its duration —
 which is what the instruction and memory limits in <a href="isolation.html">isolation</a> are for,
 and they are on by default.</p>
-<h2>Choosing the Lua VM</h2>
+<h2 id="choosing-the-lua-vm">Choosing the Lua VM</h2>
 <p>No binding hard-codes a VM. A binding that did could not be embedded in an application
 that already has its own, which would leave two Lua VMs in one address space.</p>
 <p>Each binding defaults to Lua 5.4 built from source, so the out-of-the-box install needs
@@ -126,7 +125,7 @@ links against whatever the application already has:</p>
 cargo build -p stanchion-ffi --no-default-features --features luajit   # system LuaJIT
 </code></pre>
 <p>Selecting none fails the build in <code>mlua</code>, which is the right error to get.</p>
-<h2>Python</h2>
+<h2 id="python">Python</h2>
 <pre><code class="language-sh">mise run test:python           # all of the below
 </code></pre>
 <pre><code class="language-sh">cd bindings/python
@@ -168,7 +167,7 @@ one wheel per platform covers every supported interpreter. To link an interprete
 application already embeds:</p>
 <pre><code class="language-sh">uv run maturin develop --no-default-features --features luajit
 </code></pre>
-<h2>Kotlin and Swift</h2>
+<h2 id="kotlin-and-swift">Kotlin and Swift</h2>
 <p>Generated with UniFFI from <code>bindings/uniffi</code>. The generator is built from that crate
 so it always matches the <code>uniffi</code> the library was compiled against — a mismatch
 produces bindings that compile and then misbehave at the boundary.</p>
@@ -203,7 +202,7 @@ naming a list and the generated file will not compile.</li>
 <p>The Swift bindings generate alongside the Kotlin but have not been run — this is a
 Linux checkout with no Swift toolchain. Packaging for both (XCFramework and Swift
 Package, AAR with per-ABI libraries) is still to come.</p>
-<h2>Ruby</h2>
+<h2 id="ruby">Ruby</h2>
 <pre><code class="language-sh">mise run test:ruby     # or `rake` from bindings/ruby
 </code></pre>
 <pre><code class="language-ruby">require "stanchion"
@@ -244,7 +243,7 @@ real difference, just not a concurrency one. Ruby has no fiber-scheduler bridge 
 <p>Packaging is still to come: <code>extconf.rb</code>, rake-compiler and cross-compiled native
 gems belong to the release pass. <code>build.sh</code> stages the extension for development,
 which is what <code>rake compile</code> runs.</p>
-<h2>Configuration</h2>
+<h2 id="configuration">Configuration</h2>
 <p>Bindings and <code>plugin-host</code> read the same shape, so a policy written for one transport
 describes the other unchanged:</p>
 <pre><code class="language-toml">plugins = "plugins/"

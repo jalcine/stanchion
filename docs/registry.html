@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Plugin registry</h1>
+    <h1 id="plugin-registry">Plugin registry</h1>
 <p>Discovering, loading, calling and reloading a directory of plugins.</p>
 <p>See also <a href="isolation.html">isolation</a>, <a href="capabilities.html">capabilities</a>,
 <a href="dependencies.html">dependency chains</a>, <a href="signatures.html">signatures</a>,
@@ -82,7 +82,7 @@ for outcome in registry.dispatch(|p| p.greet("world".to_string())) {
     }
 }
 </code></pre>
-<h2>Reload</h2>
+<h2 id="reload">Reload</h2>
 <p><code>registry.reload("greeter")</code> re-reads the manifest and chunk and swaps in a fresh
 instance. A handle to the plugin’s own instance taken before the reload keeps talking to
 the old object until it is dropped, so in-flight calls do not break.</p>
@@ -103,7 +103,7 @@ shadowing the field on the proxy and silently forking state.</p>
 <p>Two caveats: <code>rawget</code>/<code>rawset</code> bypass the proxy, and identity comparisons see the proxy
 rather than the exports table. A reload that withdraws a previously published <code>exports</code>
 fails and leaves the old instance in place.</p>
-<h2>Failure isolation</h2>
+<h2 id="failure-isolation">Failure isolation</h2>
 <p>Only an unreadable plugin root is fatal. Everything else lands in
 <code>LoadReport::failures</code> while the remaining plugins still load:</p>
 <table><thead><tr><th><code>FailureReason</code></th><th>Cause</th></tr></thead><tbody>
@@ -130,7 +130,7 @@ fails and leaves the old instance in place.</p>
 </tbody></table>
 <p>Dispatch is isolated the same way: <code>dispatch</code> returns one <code>Outcome</code> per plugin, so a
 plugin that errors does not stop the others.</p>
-<h2>Async dispatch</h2>
+<h2 id="async-dispatch">Async dispatch</h2>
 <p>With <code>async</code> + <code>registry</code>, <code>dispatch_async</code> awaits each plugin in turn. Calls are
 sequential by design: they all reach the same Lua state, so running them concurrently
 would only contend on it.</p>

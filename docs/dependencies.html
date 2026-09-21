@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Dependency chains</h1>
+    <h1 id="dependency-chains">Dependency chains</h1>
 <p>Plugins that use each other: published exports, semver requirements, and
 how a <a href="registry.html#reload">reload</a> propagates through a chain.</p>
 <p><code>[dependencies]</code> is a material wiring, not just load order. A plugin publishes what it
@@ -56,6 +56,18 @@ a manifest error rather than a runtime surprise. A dependency present at an unsa
 version fails with <code>IncompatibleDependency</code> before any Lua runs.</p>
 <p>Only direct dependencies are injected — a plugin that declares <code>b</code> does not
 automatically receive <code>b</code>’s own dependencies.</p>
+<h2 id="dependencies-and-isolation">Dependencies and isolation</h2>
+<p>An injected export is a Lua value, and a Lua value cannot cross states. So dependencies
+work under shared isolation, work within a group under
+<a href="isolation.html#per-group-limits-without-giving-up-dependencies"><code>Registry::grouped</code></a>, and
+fail with <code>CrossStateDependency</code> under <code>Registry::isolated</code>.</p>
+<p>Grouped isolation is the middle setting worth knowing about: plugins connected by a
+chain of dependencies share one sandboxed state, and get memory and instruction limits
+as a group, while plugins with nothing between them stay apart. Declaring a dependency
+is therefore also declaring that you accept sharing a heap and a budget with that plugin.</p>
+<p>A dependency also has to be discovered in the same <code>load_dir</code> call as the plugin that
+declares it: the requirement is matched against what that root holds, so a plugin whose
+dependency lives elsewhere fails with <code>MissingDependency</code>.</p>
 <hr />
 <p><a href="../index.html#documentation">← Documentation index</a></p>
 

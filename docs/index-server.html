@@ -35,7 +35,7 @@
 
 <main>
   <article class="prose">
-    <h1>Serving an index</h1>
+    <h1 id="serving-an-index">Serving an index</h1>
 <p>An <a href="distribution.html#running-an-index">index</a> is two JSON documents and a pile of
 immutable package files, so anything that serves bytes can host one. A <em>server</em> earns
 its place by doing what static hosting cannot.</p>
@@ -45,7 +45,7 @@ its place by doing what static hosting cannot.</p>
 <tr><td><strong>Conditional requests</strong></td><td>a client that already has the current document pays for headers, not a body</td></tr>
 </tbody></table>
 <p>If none of those apply, <code>DirectoryIndex</code> plus <code>aws s3 sync</code> is the better answer.</p>
-<h2>Routes</h2>
+<h2 id="routes">Routes</h2>
 <pre><code class="language-text">GET|HEAD  /v1/index.json              the catalog
 GET|HEAD  /v1/plugins/&lt;name&gt;.json     one plugin's releases
 GET|HEAD  /v1/blobs/sha256:&lt;hex&gt;      the package for that digest
@@ -55,7 +55,7 @@ and the client cannot drift apart when the schema moves to v2.</p>
 <p><strong>404 is load-bearing.</strong> A client maps 404 to “no such plugin” and every other non-2xx
 to “the index is unreachable” — the difference between reporting a missing plugin and
 retrying. An unknown plugin or digest is 404; a malformed name or digest is 400.</p>
-<h2>Freshness, and why time is quantised</h2>
+<h2 id="freshness-and-why-time-is-quantised">Freshness, and why time is quantised</h2>
 <p><code>expires</code> is computed per response from a TTL — but from the <strong>start of the TTL
 window</strong>, not from the wall clock:</p>
 <pre><code class="language-rust">IndexServer::new(DirectorySource::new("/srv/plugins"))
@@ -76,7 +76,7 @@ clients with skewed clocks start refusing documents; too long and a yank takes t
 long to reach someone being fed a withheld snapshot.</p>
 <p>Packages are immutable — a package is named by the digest of what it unpacks to — so
 they are served with <code>immutable</code> and their digest as the <code>ETag</code>.</p>
-<h2>Framework independence</h2>
+<h2 id="framework-independence">Framework independence</h2>
 <p>Nothing in <code>stanchion-index</code> knows about a web framework. <code>IndexServer::serve</code> takes a
 method, a path and an optional <code>If-None-Match</code>, and returns a <code>Served</code>: a status,
 headers and bytes. Routing, freshness and conditional requests are all tested without
@@ -90,7 +90,7 @@ trait, and its <code>tower-compat</code> feature only lets it <em>consume</em> <
 tower 0.4 while axum is on 0.5. Any other framework is a ten-line match on <code>Served</code>.</p>
 <p>The source is synchronous, matching <code>PluginIndex</code>, so adapters run it on a blocking
 worker rather than an async one.</p>
-<h2>On-disk layout</h2>
+<h2 id="on-disk-layout">On-disk layout</h2>
 <pre><code class="language-text">&lt;base&gt;/v1/index.json              the catalog, optional
 &lt;base&gt;/v1/plugins/&lt;name&gt;.json     one plugin's releases
 &lt;base&gt;/blobs/sha256/&lt;hex&gt;         the package for that digest
@@ -100,7 +100,7 @@ a colon in a filename is legal on Linux and a nuisance everywhere else.</p>
 <p>Stored documents are read with <code>Freshness::Ignored</code>: their own <code>expires</code> is irrelevant
 when the server issues a new one. A directory too stale for a client to accept is still
 a perfectly good source for a server that keeps it fresh.</p>
-<h2>Streaming packages</h2>
+<h2 id="streaming-packages">Streaming packages</h2>
 <p>A package is served from a reader, never buffered. <code>IndexSource::blob</code> returns a
 <code>Blob</code> — a <code>Box&lt;dyn Read + Send&gt;</code> and a length where the source knows one — so
 building a response reads nothing at all; the bytes move only as an adapter drains
@@ -123,7 +123,7 @@ digest of what it unpacks will reject it, which is the behaviour we want.</li>
 <p>If the client hangs up, the channel closes and the reader stops rather than pulling
 the rest of the file into a queue nobody drains.</p>
 <p>Documents are still bytes, because they have to be: the <code>ETag</code> is a hash of them.</p>
-<h2>What this does not do</h2>
+<h2 id="what-this-does-not-do">What this does not do</h2>
 <ul>
 <li><strong>No write path.</strong> Publishing is putting an archive somewhere fetchable and adding a
 release to the index — two file writes. A publish API would make the server

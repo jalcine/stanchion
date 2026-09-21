@@ -527,7 +527,11 @@ pub(crate) fn parse_releases(raw: &str, name: &str) -> Result<PluginReleases, In
 ///
 /// Names become path segments in every index implementation, so the check belongs
 /// here rather than in each of them.
-pub(crate) fn validate_name(name: &str) -> Result<&str, IndexError> {
+/// Checks a plugin name before it is interpolated into a path or a URL.
+///
+/// Exported because a server taking a name from a request needs exactly the check a
+/// client does before joining it to a base — two copies of this rule would drift.
+pub fn validate_name(name: &str) -> Result<&str, IndexError> {
     let acceptable = !name.is_empty()
         && name.len() <= 128
         && name

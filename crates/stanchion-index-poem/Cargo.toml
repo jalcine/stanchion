@@ -1,0 +1,30 @@
+[package]
+name = "stanchion-index-poem"
+description = "Poem adapter for serving a stanchion plugin index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+stanchion-index.workspace = true
+poem = "3"
+tokio = { version = "1", features = ["rt"] }
+
+[features]
+default = []
+lua54 = ["stanchion-index/lua54"]
+lua53 = ["stanchion-index/lua53"]
+luajit = ["stanchion-index/luajit"]
+luau = ["stanchion-index/luau"]
+vendored = ["stanchion-index/vendored"]
+
+[dev-dependencies]
+stanchion-dist = { workspace = true, features = ["client"] }
+poem = { version = "3", features = ["server"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tempfile = "3"
+semver.workspace = true
+
+[lints]
+workspace = true

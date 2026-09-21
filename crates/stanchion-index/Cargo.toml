@@ -1,0 +1,34 @@
+[package]
+name = "stanchion-index"
+description = "Serve a stanchion plugin index over HTTP, independent of any web framework"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+stanchion-dist = { workspace = true, features = ["package"] }
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true
+tower-service = { version = "0.3", optional = true }
+
+[features]
+default = []
+# A `tower::Service`, so axum, tonic and warp can mount the index directly.
+tower = ["dep:tower-service"]
+lua54 = ["stanchion-dist/lua54"]
+lua53 = ["stanchion-dist/lua53"]
+luajit = ["stanchion-dist/luajit"]
+luau = ["stanchion-dist/luau"]
+vendored = ["stanchion-dist/vendored"]
+
+[dev-dependencies]
+tempfile = "3"
+serde_json.workspace = true
+time = { workspace = true }
+
+[lints]
+workspace = true

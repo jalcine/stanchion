@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Distribution · stanchion</title>
+<meta name="description" content="Distribution — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html" aria-current="page">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Distribution</h1>
+<p>Getting a plugin from whoever wrote it onto the machine that runs it, over
+infrastructure none of which has to be trusted.</p>
+<p><a href="signatures.html">Signatures</a> answer one question: <em>who produced these bytes?</em> Shipping
+plugins raises three more, and a signature answers none of them.</p>
+<table><thead><tr><th>Question</th><th>Answered by</th></tr></thead><tbody>
+<tr><td><em>Which</em> build is the legitimate one?</td><td>the lockfile</td></tr>
+<tr><td>Can the place it came from lie to me?</td><td>it can — the pin is checked after the fetch</td></tr>
+<tr><td>Is this upgrade asking for more than the last one?</td><td>the upgrade review</td></tr>
+</tbody></table>
+<p>These are not hypotheticals. Substituting a different build for the name you asked
+for, downgrading you to an older signed-but-vulnerable release, and publishing a new
+version with one more line in <code>[capabilities]</code> are all attacks that work <strong>with a
+valid signature</strong>, and the last two work with the author’s real key and no compromise
+of anything.</p>
+<pre><code class="language-text">  index (untrusted)          package source (untrusted)
+        │ name + requirement         │ tar.gz
+        ▼                            ▼
+  ┌────────────────────────────────────────────┐
+  │ stage: unpack ‖ digest ‖ manifest ‖ review │   nothing installed yet
+  └────────────────────────────────────────────┘
+        │ a person, or a policy, accepts
+        ▼
+  lockfile pin  ──►  the registry refuses anything else, at every load
+</code></pre>
+<p>Every box the bytes pass through is untrusted except the lockfile, which the host
+writes and commits to its own repository.</p>
+<h2>The lockfile is the trust anchor</h2>
+<p><code>stanchion.lock</code> states, per plugin, the exact bytes that may load:</p>
+<pre><code class="language-toml">version = 1
+
+[plugins.formatter]
+version = "1.4.2"
+digest = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+signer = "repo:acme/plugins"
+source = "https://plugins.acme.test/v1/blobs/sha256:9f86d081884c7d65…"
+</code></pre>
+<pre><code class="language-rust">let registry = Registry::isolated(Lua::new(), Sandbox::restricted())
+    .with_lockfile(Lockfile::load("stanchion.lock")?);
+</code></pre>
+<p><code>digest</code> is the <a href="signatures.html#what-is-signed"><code>DirectoryDigest</code></a> root — the same
+number a signature covers, so pinning adds no second hashing scheme. Everything else
+narrows further, and <code>source</code> carries no authority whatsoever: it says where bytes
+came from, never whether to accept them.</p>
+<p>Three properties follow, and they are the reason to do it this way:</p>
+<ul>
+<li><strong>Substitution fails.</strong> A registry serving different bytes produces a different
+digest. Nothing else has to go right for this to hold.</li>
+<li><strong>Downgrades fail.</strong> An explicit pin is not something a server can move.</li>
+<li><strong><code>signer</code> means what people think verification means.</strong> “Signed by someone the
+trust root accepts” is a far weaker claim than “signed by the author I chose”.
+Pinning the identity is what closes that gap.</li>
+</ul>
+<p>A plugin in the root with no entry fails as <code>Unlocked</code> rather than loading. Once a
+host keeps a lockfile, an unpinned directory appearing beside the pinned ones is
+exactly the event worth refusing.</p>
+<p>Pinning works with <strong>no signing infrastructure at all</strong> — a digest is a digest.
+Signatures add attributable authorship on top; they are not a prerequisite.</p>
+<h2>Packages are plain archives</h2>
+<p>A package is a <code>tar.gz</code> of the plugin directory. There is no manifest, no config blob
+and no media-type negotiation, because there is nothing for them to do: the
+<a href="#running-an-index">index</a> already maps a name and a version to a digest, so a package
+needs only to be fetchable and to unpack to the content that digest describes.</p>
+<p>That makes a package URL an ordinary immutable file. Anything that serves bytes can
+host one — a bucket, a CDN, <code>nginx</code>, or the index server itself:</p>
+<pre><code class="language-text">GET https://plugins.acme.test/v1/blobs/sha256:&lt;hex&gt;
+</code></pre>
+<p>The archive carries the plugin directory including its <code>plugin.sigstore.json</code> — the
+directory digest <a href="signatures.html#what-is-signed">excludes the signature artifact</a> from
+itself precisely so a package can carry its own signature.</p>
+<p><strong>The archive’s own bytes are not the pin.</strong> A pin is a digest over the <em>unpacked
+directory</em>: paths and file contents, nothing else. Repacking with different mtimes, a
+different entry order or a different gzip level produces different bytes and the same
+pin, which is what makes mirroring safe — a mirror can recompress and still cannot
+alter a file without breaking the digest.</p>
+<p>The flip side is that <strong>tar metadata is covered by nothing</strong>. Modes, owners, mtimes and
+entry types are attacker-controlled even in a correctly signed package, so unpacking
+ignores all of them.</p>
+<h2>Unpacking refuses more than it accepts</h2>
+<p>An archive from a registry is hostile input <em>before</em> anything about it is verified:
+the digest cannot be checked until the files are on disk. So extraction refuses</p>
+<ul>
+<li>absolute paths, <code>..</code> components, and paths with a root or drive prefix</li>
+<li>symlinks and hard links, whatever they point at</li>
+<li>anything that is not a regular file or a directory</li>
+<li>the same path appearing twice</li>
+<li>more than 4096 files, 64 MiB total, or 16 MiB in one file (<code>Limits</code>)</li>
+</ul>
+<p>Symlinks are refused rather than sanitised, because a symlink cannot be represented in
+a <code>DirectoryDigest</code> at all: the digest hashes what <code>std::fs::read</code> returns, and for a
+symlink that is whatever it points at <em>on the machine doing the hashing</em>. A plugin
+containing one would verify on the signer’s machine and mean something else on yours.</p>
+<h2>Running an index</h2>
+<p>An index is <strong>two static JSON documents</strong>. Anything that can serve a file can host
+one — S3, GitHub Pages, nginx, a git repository people clone. There is no database and
+no API, because an index holds no authority worth protecting.</p>
+<pre><code class="language-text">&lt;base&gt;/v1/index.json              the catalog: which plugins exist
+&lt;base&gt;/v1/plugins/&lt;name&gt;.json     the releases of one plugin
+</code></pre>
+<pre><code class="language-json">{
+  "schema": 1,
+  "name": "formatter",
+  "updated": "2026-09-20T00:00:00Z",
+  "expires": "2026-09-27T00:00:00Z",
+  "releases": [
+    {
+      "version": "1.4.2",
+      "digest": "sha256:9f86d081884c7d65…",
+      "source": "https://plugins.acme.test/v1/blobs/sha256:9f86d081884c7d65…",
+      "signer": "repo:acme/plugins",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "capabilities": ["network"],
+      "yanked": false
+    }
+  ]
+}
+</code></pre>
+<p>The catalog is the same shape with a <code>plugins</code> array of names, and is optional: an
+index that cannot enumerate is still usable for everything else.</p>
+<table><thead><tr><th>Field</th><th>Weight</th></tr></thead><tbody>
+<tr><td><code>digest</code></td><td>the only field with any. It becomes the pin, and is checked against the bytes that arrive.</td></tr>
+<tr><td><code>version</code></td><td>checked against the manifest inside the package; a disagreement fails the install.</td></tr>
+<tr><td><code>source</code></td><td>a hint. Fetching the same digest from anywhere else is equally acceptable.</td></tr>
+<tr><td><code>signer</code>, <code>issuer</code></td><td>copied into the pin, then enforced by the verifier at load.</td></tr>
+<tr><td><code>capabilities</code></td><td>advisory, for browsing. The manifest is what the registry reads.</td></tr>
+<tr><td><code>yanked</code></td><td>stops new pins. It does <strong>not</strong> stop an existing pin from loading.</td></tr>
+</tbody></table>
+<p><strong><code>expires</code> is not decoration.</strong> An attacker who can stop you reaching the real index
+cannot forge a release, but they can serve you last month’s snapshot forever — hiding
+a yank, or hiding that a fixed version exists. An expiry bounds how long that works,
+which is why <code>Freshness::Required</code> (the default over HTTP) refuses a document that has
+no expiry at all. The cost is that an index must be re-published periodically; an
+index nobody maintains stops being believed, which is the correct behaviour for a
+stale mirror.</p>
+<p>Releases are ordered by semver, not by document order, so an index cannot steer a
+client by reordering its own file.</p>
+<h2>Implementing an index</h2>
+<p>Serve those two paths, or implement the trait against whatever you already run:</p>
+<pre><code class="language-rust">pub trait PluginIndex {
+    fn releases(&amp;self, name: &amp;str) -&gt; Result&lt;PluginReleases, IndexError&gt;;
+    fn catalog(&amp;self) -&gt; Result&lt;Catalog, IndexError&gt; { /* optional */ }
+    fn resolve(&amp;self, name: &amp;str, req: &amp;VersionReq) -&gt; Result&lt;Release, IndexError&gt; { /* provided */ }
+}
+</code></pre>
+<p><code>DirectoryIndex</code> reads the layout from a directory and <code>HttpIndex</code> reads it over
+HTTPS. The trait is deliberately thin because an index is not trusted: it maps a name
+to candidate digests, and every claim it makes is checked against the package that
+actually arrives.</p>
+<p>The crate is dependency-light by default for this reason — an index <em>publisher</em> can
+depend on <code>stanchion-dist</code> for the document types alone, without an HTTP or TLS stack:</p>
+<table><thead><tr><th>Feature</th><th>Adds</th></tr></thead><tbody>
+<tr><td><em>(none)</em></td><td>index documents, <code>PluginIndex</code>, <code>DirectoryIndex</code></td></tr>
+<tr><td><code>package</code></td><td>packing and unpacking packages, <code>Installer</code></td></tr>
+<tr><td><code>http</code></td><td><code>HttpIndex</code> and <code>HttpSource</code>: an index and packages over HTTPS</td></tr>
+<tr><td><code>client</code></td><td>everything a host needs to install from a remote index</td></tr>
+</tbody></table>
+<p>TLS authenticates the <em>server</em>, not what it said. An index reached over a flawless TLS
+connection to a compromised bucket is a compromised index; HTTPS here keeps a passive
+network from seeing which plugins you run, and is not what stands between you and a
+bad one.</p>
+<h2>Publishing</h2>
+<pre><code class="language-rust">let mut archive = Vec::new();
+let digest = package::pack(Path::new("plugins/formatter"), &amp;mut archive)?;
+
+// Publishing is: put the archive somewhere fetchable, then add a release to the
+// index naming that digest. Both halves are ordinary file writes.
+upload(&amp;format!("blobs/sha256:{}", digest.hex()), &amp;archive)?;
+</code></pre>
+<p>Then add a release entry naming that digest and re-publish the index document. Sign
+the directory <a href="signatures.html">as before</a> — <code>cosign sign-blob</code> over the canonical
+preimage — and include the bundle in the directory so the package carries it.</p>
+<p>Packing normalises entry metadata (fixed mtime, mode, ownership) and writes entries in
+the digest’s own sorted order, so packing one directory twice produces identical bytes.
+Nothing depends on that, since the pin is over the directory, but two packages that
+disagree are much easier to reason about when repacking is deterministic.</p>
+<h2>Installing is staged, and the gap in the middle is the point</h2>
+<pre><code class="language-rust">let staged = installer.stage_upgrade("formatter", &amp;"^1.0".parse()?, &amp;lockfile)?;
+
+if let Some(review) = staged.review() {
+    if review.widens() {
+        for concern in review.concerns() { eprintln!("  {concern}"); }
+        staged.discard()?;
+        return Ok(());
+    }
+}
+
+lockfile.pin("formatter", staged.commit()?);
+lockfile.save("stanchion.lock")?;
+</code></pre>
+<p>Fetching and unpacking happen in a staging directory beside the plugin root. <code>commit</code>
+is a rename; <code>discard</code> is a delete. A plugin that fails any check never exists in the
+root — not briefly, not half-written — so the registry is never asked to reason about
+a directory that is mid-install. A previous version is moved aside and deleted only
+once the new one is in place, so an interrupted commit leaves either the old plugin or
+the new one.</p>
+<h3>The upgrade review</h3>
+<p><code>audit</code> reads manifests without running any plugin code. Pointed at two versions of
+one plugin, the same idea answers the question that actually matters when bytes arrive
+from elsewhere:</p>
+<pre><code class="language-text">formatter 1.4.2 -&gt; 1.5.0
+  + capability `network`
+  ! capability `fs`: { paths = ["./data"] } -&gt; { paths = ["./data", "/etc"] }
+  + rock `luasocket` &gt;= 3.0 (unsigned, outside the sandbox)
+</code></pre>
+<p>Stealing a signing key is hard. Publishing version 1.5.0 of a plugin people already
+trust, with one more capability, is not — and a signature does not help, because the
+malicious version is correctly signed by the author whose account was taken. <code>widens()</code>
+is the predicate to gate on: a review that does not widen can be applied unattended,
+and one that does needs a person. A first install always counts as widening, because
+there is nothing to compare against.</p>
+<p>Narrowing is inferred conservatively. Capability parameters are host-defined, so this
+cannot know that <code>hosts = ["*.acme.com"]</code> is wider than <code>["api.acme.com"]</code>; anything
+it cannot <em>prove</em> is a narrowing counts as a widening. It errs towards noisy.</p>
+<h2>Yanking is not revocation</h2>
+<table><thead><tr><th></th><th>Stops new installs</th><th>Stops a pinned build from loading</th></tr></thead><tbody>
+<tr><td><code>yanked</code> in the index</td><td>yes</td><td><strong>no</strong></td></tr>
+<tr><td><a href="signatures.html#revocation"><code>Revocations</code></a></td><td>yes</td><td>yes, at next load</td></tr>
+</tbody></table>
+<p>A yank is advice from a publisher; a revocation is a decision by the host. If you need
+a build to stop running on machines that already have it, you need the revocation
+list, and it is consulted at load rather than at install for exactly that reason.</p>
+<h2>What this does not buy</h2>
+<ul>
+<li><strong>It does not make a plugin safe.</strong> It makes the bytes you run the bytes you chose.
+Whether that choice was good is what <a href="capabilities.html">capabilities</a> and the
+<a href="isolation.html">sandbox</a> are for.</li>
+<li><strong>Availability is not integrity.</strong> An index that stops answering, or answers only
+about old releases, cannot be caught by a digest check. Expiry bounds how long a
+withheld update goes unnoticed; nothing makes an unreachable source tell the truth.</li>
+<li><strong>First contact is a decision, not a verification.</strong> Pinning a plugin you have never
+seen records whatever the index said. The signer pin and the capability review are
+what make writing that entry a judgement rather than a transcription.</li>
+<li><strong><code>[rocks]</code> are a second supply chain.</strong> Nothing here signs, pins or unpacks a
+LuaRocks package, and a <a href="luarocks.html#c-modules">C rock</a> is native code outside the
+sandbox entirely. A newly declared rock is reported as a widening because that is all
+this layer can do about it.</li>
+</ul>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/distribution.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Testing · stanchion</title>
+<meta name="description" content="Testing — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html" aria-current="page">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Testing</h1>
+<p>Tests run under <a href="https://nexte.st">cargo-nextest</a>. Each test gets its own process,
+which suits this workspace: several tests spawn child processes, shell out to
+<code>luarocks</code>, or drive Lua states into their memory and instruction limits, and one
+wedged test cannot take the others with it.</p>
+<pre><code class="language-sh">cargo nextest run --workspace --features lua54,vendored,full
+</code></pre>
+<p>The <code>full</code> feature matters. Integration tests are gated per feature, so a run without
+it compiles most of the suite away and still reports success — 22 tests instead of 103.</p>
+<p>Three profiles are configured in <a href="https://github.com/jalcine/stanchion/blob/main/.config/nextest.toml"><code>.config/nextest.toml</code></a>:</p>
+<table><thead><tr><th>Profile</th><th>For</th></tr></thead><tbody>
+<tr><td><code>default</code></td><td>everything; slow tests are reported and then killed</td></tr>
+<tr><td><code>quick</code></td><td>iteration — skips the <code>rocks</code> and <code>ui</code> suites, which pay for an external tool and a compiler round-trip</td></tr>
+<tr><td><code>ci</code></td><td>retries the two suites that depend on an external tool or a real child process, and writes <code>junit.xml</code></td></tr>
+</tbody></table>
+<pre><code class="language-sh">cargo nextest run -P quick --workspace --features lua54,vendored,full
+</code></pre>
+<p>A <code>slow-timeout</code> is deliberate rather than decorative: several tests prove that a
+runaway plugin gets stopped — an endless loop, an allocation storm, a process that
+kills itself. If one of those guards regressed, the test would otherwise hang forever,
+so nextest reports it slow and then terminates it.</p>
+<p><strong>nextest does not run doctests.</strong> Run those separately:</p>
+<pre><code class="language-sh">cargo test --doc --workspace --features lua54,vendored,full
+</code></pre>
+<p>The <code>luarocks</code> tests build a rock offline with <code>luarocks make</code> from a local rockspec,
+so they need no network, and they skip themselves if <code>luarocks</code> is not on <code>PATH</code>. They
+are the slowest tests here, so they are limited to one at a time.</p>
+<p><code>crates/stanchion/tests/ui/</code> holds <code>trybuild</code> compile-fail cases pinning the macro’s
+diagnostics. They only assert on <code>error:</code> lines the macro itself emits, so they are not
+sensitive to rustc version. After deliberately changing a message, refresh the
+expectations with:</p>
+<pre><code class="language-sh">TRYBUILD=overwrite cargo test -p stanchion --features lua54,vendored --test ui
+</code></pre>
+<p>A mismatch writes the actual output to <code>wip/</code> for comparison. (Refreshing uses
+<code>cargo test</code>, because <code>TRYBUILD=overwrite</code> rewrites files as a side effect of the run.)</p>
+<h2>Examples</h2>
+<p>The examples under <a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion/examples"><code>crates/stanchion/examples/</code></a>
+compile as part of an ordinary build, so they cannot rot into documentation that no
+longer works:</p>
+<pre><code class="language-sh">cargo build -p stanchion --features lua54,vendored,full --examples
+</code></pre>
+<p>Each declares <code>required-features</code>, so a build with a narrower feature set skips
+the ones it cannot compile rather than failing.</p>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/testing.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

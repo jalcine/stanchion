@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plugin registry · stanchion</title>
+<meta name="description" content="Plugin registry — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html" aria-current="page">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Plugin registry</h1>
+<p>Discovering, loading, calling and reloading a directory of plugins.</p>
+<p>See also <a href="isolation.html">isolation</a>, <a href="capabilities.html">capabilities</a>,
+<a href="dependencies.html">dependency chains</a>, <a href="signatures.html">signatures</a>,
+<a href="luarocks.html">LuaRocks</a> and <a href="remote.html">out-of-process hosting</a>.</p>
+<p>The <code>registry</code> feature adds <code>Registry&lt;C&gt;</code>, which loads a directory of plugins into
+either one shared Lua state or one state per plugin.</p>
+<pre><code>plugins/
+  greeter/
+    plugin.toml
+    init.lua
+  formatter/
+    plugin.toml
+    init.lua
+</code></pre>
+<pre><code class="language-toml"># plugins/greeter/plugin.toml
+name = "greeter"
+version = "1.2.0"     # semver; absent means 0.0.0, which satisfies only "*"
+entry = "init.lua"    # optional, defaults to init.lua
+
+[dependencies]
+formatter = "^1.0"
+logger = { version = "^2.0", optional = true }
+
+[config]
+greeting = "hello"
+</code></pre>
+<p>The constructor (<code>new</code> by default, <code>Registry::with_constructor</code> to change it) receives
+the manifest’s <code>[config]</code> table and a <code>deps</code> table holding what this plugin is wired to:</p>
+<pre><code class="language-lua">function Greeter.new(config, deps)
+  return setmetatable({
+    greeting = config.greeting,
+    fmt = deps.formatter,          -- nil if declared optional and absent
+  }, Greeter)
+end
+</code></pre>
+<p>Lua ignores extra arguments, so a plugin that only wants <code>config</code> can keep taking one.</p>
+<pre><code class="language-rust">let mut registry: Registry&lt;GreeterClass&gt; = Registry::new(Lua::new());
+let report = registry.load_dir("plugins/")?;
+
+for outcome in registry.dispatch(|p| p.greet("world".to_string())) {
+    match outcome.result {
+        Ok(text) =&gt; println!("{}: {text}", outcome.name),
+        Err(err) =&gt; eprintln!("{} failed: {err}", outcome.name),
+    }
+}
+</code></pre>
+<h2>Reload</h2>
+<p><code>registry.reload("greeter")</code> re-reads the manifest and chunk and swaps in a fresh
+instance. A handle to the plugin’s own instance taken before the reload keeps talking to
+the old object until it is dropped, so in-flight calls do not break.</p>
+<p>Dependents do not receive an exports table directly; they receive a stable <strong>proxy</strong>
+whose metatable forwards reads and writes to the current one. Reloading a provider
+repoints that metatable, so every dependent sees the new surface without being rebuilt
+and without holding a stale capture:</p>
+<pre><code class="language-rust">let beta = registry.get("beta").unwrap().instance().clone();
+assert_eq!(beta.greet("world".to_string())?, "[hello] world");
+
+registry.reload("alpha")?;   // beta is never rebuilt
+
+assert_eq!(beta.greet("world".to_string())?, "[howdy] world");
+</code></pre>
+<p>Forwarding <code>__newindex</code> as well as <code>__index</code> is what keeps this honest: a method doing
+<code>self.count = self.count + 1</code> through the proxy writes to the real table instead of
+shadowing the field on the proxy and silently forking state.</p>
+<p>Two caveats: <code>rawget</code>/<code>rawset</code> bypass the proxy, and identity comparisons see the proxy
+rather than the exports table. A reload that withdraws a previously published <code>exports</code>
+fails and leaves the old instance in place.</p>
+<h2>Failure isolation</h2>
+<p>Only an unreadable plugin root is fatal. Everything else lands in
+<code>LoadReport::failures</code> while the remaining plugins still load:</p>
+<table><thead><tr><th><code>FailureReason</code></th><th>Cause</th></tr></thead><tbody>
+<tr><td><code>Manifest</code></td><td><code>plugin.toml</code> is not valid TOML, or a name collides</td></tr>
+<tr><td><code>Io</code></td><td>the manifest or entry file could not be read</td></tr>
+<tr><td><code>Lua</code></td><td>the chunk failed, returned an invalid class, or the constructor errored</td></tr>
+<tr><td><code>MissingDependency</code></td><td>a required dependency is not in the plugin root</td></tr>
+<tr><td><code>IncompatibleDependency</code></td><td>a dependency is present, but its version fails the requirement</td></tr>
+<tr><td><code>MissingExports</code></td><td>a dependency publishes no <code>exports</code> table</td></tr>
+<tr><td><code>MissingRock</code></td><td>a declared rock is not installed in the tree</td></tr>
+<tr><td><code>IncompatibleRock</code></td><td>a declared rock is installed at an unsatisfying version</td></tr>
+<tr><td><code>Rocks</code></td><td>rocks were declared with no tree configured, or the feature is off</td></tr>
+<tr><td><code>CrossStateDependency</code></td><td>a dependency’s exports cannot reach a per-plugin state</td></tr>
+<tr><td><code>CapabilityDenied</code></td><td>policy refused a capability the plugin requires</td></tr>
+<tr><td><code>UnknownCapability</code></td><td>the plugin requested something the host does not offer</td></tr>
+<tr><td><code>Unsigned</code></td><td>no signature, and the registry requires one</td></tr>
+<tr><td><code>SignatureInvalid</code></td><td>a signature was present but did not verify</td></tr>
+<tr><td><code>UntrustedSigner</code></td><td>cryptographically sound, but the signer is not trusted</td></tr>
+<tr><td><code>DigestMismatch</code></td><td>a file changed between verification and loading</td></tr>
+<tr><td><code>Revoked</code></td><td>the build or its signer is on the host’s <a href="signatures.html#revocation">revocation list</a></td></tr>
+<tr><td><code>Lock</code></td><td>the plugin is not the build the lockfile pins, or is not pinned at all</td></tr>
+<tr><td><code>DependencyFailed</code></td><td>a dependency failed, so this plugin was skipped</td></tr>
+<tr><td><code>DependencyCycle</code></td><td>this plugin is part of a cycle</td></tr>
+</tbody></table>
+<p>Dispatch is isolated the same way: <code>dispatch</code> returns one <code>Outcome</code> per plugin, so a
+plugin that errors does not stop the others.</p>
+<h2>Async dispatch</h2>
+<p>With <code>async</code> + <code>registry</code>, <code>dispatch_async</code> awaits each plugin in turn. Calls are
+sequential by design: they all reach the same Lua state, so running them concurrently
+would only contend on it.</p>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/registry.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

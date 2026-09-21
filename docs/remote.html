@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Out-of-process hosting · stanchion</title>
+<meta name="description" content="Out-of-process hosting — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html" aria-current="page">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Out-of-process hosting</h1>
+<p><a href="isolation.html">Isolation</a> and <a href="capabilities.html">capabilities</a> bound what a plugin can
+<em>reach</em>. Neither bounds what a plugin can do to the process it runs in: a sandbox
+cannot stop a segfault in a C rock, and an instruction limit cannot rescue a state
+whose allocator already failed. The <code>remote</code> feature moves plugins into a child
+process, where those failures are survivable.</p>
+<pre><code class="language-sh">cargo install stanchion --features lua54,vendored,remote   # provides `plugin-host`
+plugin-host --config host.toml --plugins plugins/
+</code></pre>
+<pre><code class="language-rust">use serde_json::json;
+use stanchion::remote::{RemoteOptions, RemoteRegistry};
+
+let mut remote = RemoteRegistry::launch(
+    RemoteOptions::new("./plugin-host").config("host.toml").plugins("plugins/"),
+)?;
+
+let greeting: String = remote.call("greeter", "greet", [json!("world")])?;
+
+for outcome in remote.dispatch("on_event", [json!("tick")])? {
+    match (outcome.value, outcome.error) {
+        (Some(value), _) =&gt; println!("{}: {value}", outcome.plugin),
+        // Per-plugin, exactly as in-process dispatch behaves.
+        (_, Some(error)) =&gt; eprintln!("{} failed: {error}", outcome.plugin),
+        _ =&gt; {}
+    }
+}
+</code></pre>
+<p>A <a href="https://github.com/jalcine/stanchion/blob/main/crates/stanchion/examples/remote_host.rs">runnable example</a> covers the whole
+path, including a plugin that kills its own process.</p>
+<h2>Transport and protocol</h2>
+<p><strong>JSON-RPC 2.0 over stdio</strong>, one message per line. Not a bespoke encoding: a host can
+be written in any language that can read newline-delimited JSON on a pipe. No ports, no
+socket files, and stderr stays free for logs, which is where the host’s built-in <code>log</code>
+capability writes.</p>
+<p>Methods are namespaced:</p>
+<table><thead><tr><th>Method</th><th>Does</th></tr></thead><tbody>
+<tr><td><code>plugins/load</code></td><td>discover and load every plugin under a root</td></tr>
+<tr><td><code>plugins/list</code></td><td>report the loaded plugins</td></tr>
+<tr><td><code>plugins/audit</code></td><td>report what plugins request, running none of their code</td></tr>
+<tr><td><code>plugins/call</code></td><td>call one method on one plugin</td></tr>
+<tr><td><code>plugins/dispatch</code></td><td>call the same method on every plugin</td></tr>
+<tr><td><code>plugins/reload</code></td><td>re-read one plugin from disk</td></tr>
+<tr><td><code>plugins/revoke</code></td><td>unbind a capability from a live plugin</td></tr>
+<tr><td><code>host/info</code></td><td>describe the host</td></tr>
+<tr><td><code>host/shutdown</code></td><td>finish serving and exit</td></tr>
+<tr><td><code>capability/&lt;name&gt;</code></td><td><strong>host to application</strong>: a plugin calling a capability</td></tr>
+</tbody></table>
+<p><a href="https://docs.rs/jsonrpsee-types"><code>jsonrpsee-types</code></a> supplies the parts where
+conformance matters — request ids, the <code>"2.0"</code> marker, the standard error codes. The
+framing lives in this crate because jsonrpsee’s own transports are HTTP and WebSocket
+only. Envelopes are owned rather than borrowed, since a message read off a pipe
+outlives the buffer it arrived in.</p>
+<p>Calls are <strong>dynamically typed</strong>, and that is forced rather than chosen: a host binary
+is compiled before anyone writes a plugin, so it cannot know a <code>#[lua_class]</code> trait.
+Plugins load as <code>DynClass</code> — any table with a constructor — and methods resolve by name
+at call time. Arguments and results cross as JSON, converted at the Lua boundary by
+<code>mlua</code>’s serde support. In-process hosting keeps the typed contract; use it when you
+can.</p>
+<h2>Calling back into your application</h2>
+<p>The channel is bidirectional. A capability listed under <code>callbacks</code> becomes a Lua
+function that forwards to the process that launched the host:</p>
+<pre><code class="language-toml">[capabilities]
+allow = ["log"]        # answered by the host itself
+callbacks = ["kv"]     # forwarded to your application
+</code></pre>
+<pre><code class="language-rust">use stanchion::remote::CallbackCall;
+
+let mut remote = RemoteRegistry::launch(options)?.on_callback(|call: &amp;CallbackCall| {
+    match call.capability.as_str() {
+        "kv" =&gt; Ok(json!(lookup(&amp;call.args))),
+        other =&gt; Err(format!("`{other}` is not offered")),
+    }
+});
+</code></pre>
+<p>Three properties worth knowing:</p>
+<ul>
+<li><strong>The approved grant travels with every call.</strong> <code>call.grant</code> carries the parameters
+the host’s policy approved, so your application re-checks rather than trusting the
+host to have narrowed correctly.</li>
+<li><strong>Declaration still governs.</strong> A plugin that does not request <code>kv</code> in its manifest
+never gets it, even though the host offers it — capabilities stay declared-only
+across the process line.</li>
+<li><strong>Nothing here is fatal.</strong> An application returning <code>Err</code> surfaces a Lua error in the
+plugin; an application with no handler at all fails the call with a clear message.
+Both leave the host and the application running.</li>
+</ul>
+<p>Requests that arrive while a callback is in flight are queued rather than dropped, so
+your application can keep sending while a plugin is mid-call.</p>
+<h2>What a crash looks like</h2>
+<table><thead><tr><th></th><th>In-process</th><th>Out-of-process</th></tr></thead><tbody>
+<tr><td><code>while true do end</code></td><td>instruction limit</td><td>instruction limit</td></tr>
+<tr><td>allocation storm</td><td>memory limit</td><td>memory limit</td></tr>
+<tr><td><code>os.exit</code>, or a segfault in a C rock</td><td><strong>your application dies</strong></td><td><code>RemoteError::HostGone</code></td></tr>
+<tr><td>interpreter panic</td><td>unwinds into your stack</td><td>child dies, you keep serving</td></tr>
+</tbody></table>
+<p><code>RemoteError::HostGone { status }</code> is the interesting one: the client distinguishes a
+dead child from an ordinary transport error by reaping it, so a plugin that kills its
+process becomes one error value rather than an outage. Dropping a <code>RemoteRegistry</code>
+closes the host’s stdin and kills anything that ignores it, so a dropped client never
+leaks a process.</p>
+<h2>Host configuration</h2>
+<p>Policy comes from a file the operator controls, never from plugin manifests:</p>
+<pre><code class="language-toml">plugins = "plugins/"
+
+[sandbox]
+libs = ["string", "table", "math", "coroutine", "package"]
+deny = ["dofile", "loadfile", "package.loadlib"]
+memory_limit = 67108864        # default 64 MiB
+instruction_limit = 50000000   # default 50M, per call
+shared = false                 # default: a state per plugin
+
+[capabilities]
+allow = ["log"]
+callbacks = []
+
+[signatures]
+required = false
+</code></pre>
+<p>Every key is optional; the defaults above are what the host uses with no config file at
+all. <code>shared</code> defaults to <code>false</code> because a separate process should not stop isolating
+at the process boundary. An unknown standard-library name is a configuration error
+rather than a silent omission.</p>
+<h2>Client surface</h2>
+<p><code>RemoteRegistry</code> mirrors the in-process registry, minus the typing:</p>
+<table><thead><tr><th>Method</th><th>Returns</th></tr></thead><tbody>
+<tr><td><code>load(root)</code></td><td><code>LoadResult { loaded, failures }</code></td></tr>
+<tr><td><code>list()</code></td><td><code>Vec&lt;PluginInfo&gt;</code> — name, version, granted capabilities, signer</td></tr>
+<tr><td><code>audit(root)</code></td><td><code>Vec&lt;AuditEntry&gt;</code> — requests and signer, nothing executed</td></tr>
+<tr><td><code>call(plugin, method, args)</code></td><td>any <code>DeserializeOwned</code></td></tr>
+<tr><td><code>dispatch(method, args)</code></td><td><code>Vec&lt;Outcome&gt;</code> — one per plugin</td></tr>
+<tr><td><code>reload(plugin)</code>, <code>revoke(plugin, capability)</code></td><td><code>()</code></td></tr>
+<tr><td><code>info()</code></td><td><code>HostInfo { version, isolation, signatures_required }</code></td></tr>
+<tr><td><code>is_alive()</code>, <code>shutdown()</code></td><td>liveness, and an orderly stop</td></tr>
+</tbody></table>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/remote.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

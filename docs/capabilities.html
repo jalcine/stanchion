@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Capabilities · stanchion</title>
+<meta name="description" content="Capabilities — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html" aria-current="page">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Capabilities</h1>
+<p>Plugins declare what they need; the host declares what it offers; a policy
+decides what is actually granted.</p>
+<p><code>with_setup</code> is where the host declares <strong>everything</strong> a plugin can reach. Capabilities
+are gated; ambient values are not, and both are reported by <code>audit</code>.</p>
+<pre><code class="language-rust">let registry = Registry::isolated(Lua::new(), Sandbox::restricted())
+    .with_setup(|host| {
+        host.capability("network", |lua, grant| {
+            // The allowlist is baked into the value, so the plugin cannot widen it.
+            let allowed: Vec&lt;String&gt; = grant.get_or_default("hosts");
+            Ok(Value::Function(lua.create_function(move |_, url: String| {
+                if allowed.contains(&amp;url) { fetch(&amp;url) } else { Err(denied()) }
+            })?))
+        });
+        host.ambient("HOST_VERSION", |lua| lua.globals().set("HOST_VERSION", "1.0"));
+        Ok(())
+    })
+    .with_policy(Rules::deny_all().allow_with("network", narrow_to_one_host));
+</code></pre>
+<p>A plugin requests what it needs in its manifest:</p>
+<pre><code class="language-toml">[capabilities.network]
+hosts = ["api.example.com"]
+
+[capabilities.metrics]
+optional = true          # reserved key; stripped before the provider sees params
+</code></pre>
+<p>Granted names are bound in that plugin’s environment, so the class contract is
+untouched — constructors stay <code>new(config, deps)</code>:</p>
+<pre><code class="language-lua">function Weather:fetch()
+  return network(self.host)   -- nil if never granted
+end
+</code></pre>
+<p><strong>Deny by default.</strong> Registering a provider says the host <em>can</em> offer something;
+the policy decides who <em>gets</em> it. Without a policy every capability is refused, even
+one with a provider.</p>
+<p><strong>The policy can narrow, not just refuse.</strong> A host that can only answer yes or no to
+<code>hosts = ["*"]</code> is a rubber stamp. <code>Decision::GrantWith</code> replaces the requested
+parameters, and the provider closes over the approved ones — so there is no parameter
+left for the plugin to tamper with at call time.</p>
+<table><thead><tr><th>Outcome</th><th>Required capability</th><th>Optional capability</th></tr></thead><tbody>
+<tr><td>Policy grants</td><td>bound in the environment</td><td>bound in the environment</td></tr>
+<tr><td>Policy denies</td><td><code>CapabilityDenied</code>, plugin fails</td><td>left unbound, plugin loads</td></tr>
+<tr><td>No provider offered</td><td><code>UnknownCapability</code>, plugin fails</td><td>left unbound, plugin loads</td></tr>
+</tbody></table>
+<h2>Audit, introspection, revocation</h2>
+<pre><code class="language-rust">let audit = registry.audit("plugins/")?;      // executes nothing
+for request in audit.unsatisfiable() { /* asks for what the host cannot offer */ }
+audit.ambient;                                 // reaches every plugin regardless
+
+plugin.granted_capabilities();                 // what policy actually allowed
+registry.revoke("weather", "network")?;        // unbind on a live plugin
+</code></pre>
+<p><code>audit</code> reads manifests only, so you can review what a plugin wants <strong>before running
+any of its code</strong> — the precondition for accepting plugins you did not write. Revoking
+sets the name to <code>nil</code> in the plugin’s environment; code that already captured the
+value in a local keeps it, so revocation defangs a plugin rather than rewinding it.</p>
+<h2>What this does not buy</h2>
+<ul>
+<li><strong>A sloppy provider defeats it.</strong> If a provider ignores its <code>Grant</code> and reads any
+path, the declaration is a comment. Enforcement lives in the provider.</li>
+<li><strong>It bounds reach, not use.</strong> A plugin granted one host can still hammer that host.</li>
+<li><strong>Manifests are self-asserted.</strong> A modest declaration only means something once
+signatures make the manifest attributable.</li>
+</ul>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/capabilities.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

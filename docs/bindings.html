@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Language bindings · stanchion</title>
+<meta name="description" content="Language bindings — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html" aria-current="page">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Language bindings</h1>
+<p>Using stanchion from Python, Kotlin, Swift, Ruby and JavaScript.</p>
+<p>The Rust API’s <code>Registry&lt;C: LuaClass&gt;</code> is generic over a contract <code>#[lua_class]</code> derives
+from a trait at compile time. No foreign language can supply one, so the bindings take
+the same path <a href="remote.html">out-of-process hosting</a> already takes: plugins load as
+<code>DynClass</code> — any table with a constructor — and methods resolve by name at call time.</p>
+<p><code>stanchion-ffi</code> is the seam every binding sits on. It carries no binding dependencies
+of its own, so nothing <code>pyo3</code> or <code>uniffi</code> finds convenient can leak into the shape the
+other four see.</p>
+<pre><code>                        ┌─ bindings/python  (pyo3 + maturin)     ── shipped
+                        ├─ bindings/uniffi  (Kotlin, Swift)      ── Kotlin runs; packaging pending
+stanchion-ffi ──────────┼─ bindings/ruby    (magnus)             ── runs; packaging pending
+  Stanchion             └─ bindings/node    (neon)               ── planned
+  Value
+  Policy / CapabilityProvider
+</code></pre>
+<p>It shares its value model and its configuration vocabulary with <code>plugin-host</code>, so an
+application can move between in-process and out-of-process hosting without a plugin
+noticing the difference.</p>
+<h2>The surface</h2>
+<table><thead><tr><th>Method</th><th>Does</th></tr></thead><tbody>
+<tr><td><code>load(root)</code></td><td>discovers and loads every plugin under a root</td></tr>
+<tr><td><code>audit(root)</code></td><td>reports what plugins request, without running any of their code</td></tr>
+<tr><td><code>list()</code> / <code>names()</code> / <code>len()</code></td><td>what is loaded, and who signed it</td></tr>
+<tr><td><code>call(plugin, method, args)</code></td><td>one method on one plugin</td></tr>
+<tr><td><code>dispatch(method, args)</code></td><td>the same method on every plugin, collecting one result each</td></tr>
+<tr><td><code>reload(plugin)</code></td><td>re-reads one plugin from disk</td></tr>
+<tr><td><code>revoke(plugin, capability)</code></td><td>unbinds a granted capability from a live plugin</td></tr>
+</tbody></table>
+<p><code>call_async</code> and <code>dispatch_async</code> exist behind the <code>async</code> feature, where a plugin
+method may yield.</p>
+<p>One plugin failing never affects the others: <code>load</code> reports <code>loaded</code> and <code>failures</code>
+side by side, and <code>dispatch</code> returns a per-plugin outcome rather than raising.</p>
+<h2>Values</h2>
+<p>Arguments and results cross as a single dynamic type: nil, boolean, integer, float,
+string, list, map. It is JSON-shaped so it matches what <code>plugin-host</code> puts on the wire,
+with one addition — Lua’s integer/float split is preserved rather than collapsed.</p>
+<p>Lua has one table type doing two jobs, so the boundary has to infer which:</p>
+<ul>
+<li>Keys of exactly <code>1..=n</code> become a <strong>list</strong>.</li>
+<li>Anything else becomes a <strong>map</strong>, with keys rendered as strings.</li>
+<li>An empty table becomes an empty <strong>list</strong>. Lua cannot tell an empty sequence from an
+empty mapping, so neither can this.</li>
+<li>A sparse array — <code>{[1] = "a", [3] = "c"}</code> — becomes a map with the keys <code>"1"</code> and
+<code>"3"</code>. Treating it as a list would drop the third element.</li>
+</ul>
+<p>Three things are refused rather than silently flattened, because a <code>nil</code> the caller
+misreads is worse than an error it can see:</p>
+<ul>
+<li><strong>Functions, threads and userdata.</strong> A plugin returning one was written for an
+in-process Rust host.</li>
+<li><strong>Non-UTF-8 strings.</strong> Lua strings are byte strings; lossy replacement would corrupt
+a value on its way through a boundary whose job is to carry it faithfully.</li>
+<li><strong>Tables nested past 64 levels</strong>, which is also what catches a table containing
+itself. Nothing stops a plugin returning <code>t</code> where <code>t.self = t</code>, and a naive walk of
+that would overflow the stack and take the host process with it.</li>
+</ul>
+<h2>Capabilities from foreign code</h2>
+<p>A Rust host registers capabilities as closures. A Python or Kotlin host has none to
+give, so it implements <code>CapabilityProvider</code> and the binding hands over an object. Each
+capability becomes a Lua function bound in the granted plugin’s environment; calling it
+reaches back out to whoever provided it — the same mechanism <code>plugin-host</code> uses for its
+forwarded capabilities, with “out” being a foreign function in this process rather than
+a JSON-RPC peer in another one.</p>
+<p>The grant <a href="capabilities.html">policy approved</a> travels with every call, so a provider can
+re-check its own bounds instead of trusting the registry to have narrowed correctly.</p>
+<p>A provider returning an error surfaces inside Lua as an ordinary runtime error, so a
+plugin can <code>pcall</code> around it. Refusing is a normal outcome, not a fatal one.</p>
+<p><code>Policy</code> is the other half: foreign code decides, per plugin, what is actually granted,
+and may narrow the parameters rather than only answering yes or no.</p>
+<h3>Do not call back into the registry</h3>
+<p>A provider runs while the registry that invoked it is locked. Calling back into that
+same registry would deadlock — no error, no stack, nothing in a log.</p>
+<p>It does not. The attempt returns a <code>reentrant</code> error instead. Capture whatever the
+provider needs before the call.</p>
+<p>Two registries nest fine: different locks, so there is no hazard, and that stays true.</p>
+<h2>Threading</h2>
+<p>One lock guards the whole registry, so calls from several threads serialize rather than
+race. A long-running plugin therefore blocks every other caller for its duration —
+which is what the instruction and memory limits in <a href="isolation.html">isolation</a> are for,
+and they are on by default.</p>
+<h2>Choosing the Lua VM</h2>
+<p>No binding hard-codes a VM. A binding that did could not be embedded in an application
+that already has its own, which would leave two Lua VMs in one address space.</p>
+<p>Each binding defaults to Lua 5.4 built from source, so the out-of-the-box install needs
+nothing present on the system. Turning the default off and naming a version instead
+links against whatever the application already has:</p>
+<pre><code class="language-sh">cargo build -p stanchion-ffi --no-default-features --features lua53,vendored
+cargo build -p stanchion-ffi --no-default-features --features luajit   # system LuaJIT
+</code></pre>
+<p>Selecting none fails the build in <code>mlua</code>, which is the right error to get.</p>
+<h2>Python</h2>
+<pre><code class="language-sh">mise run test:python           # all of the below
+</code></pre>
+<pre><code class="language-sh">cd bindings/python
+uv sync                        # installs the dev group and builds the extension
+uv run maturin develop --uv    # rebuild after a Rust change
+uv run pytest
+</code></pre>
+<p><code>pyproject.toml</code> is the only Python configuration — build backend, metadata, the <code>dev</code>
+dependency group, pytest, ruff and mypy all live there. <code>uv.lock</code> is committed so CI
+resolves what a developer resolved.</p>
+<pre><code class="language-python">import stanchion
+
+def kv(call: stanchion.CapabilityCall) -&gt; str:
+    # `call.grant` holds what policy approved, not what the manifest asked for.
+    return store[call.args[0]]
+
+def policy(request: stanchion.CapabilityRequest) -&gt; stanchion.Decision:
+    if request.signer == "unsigned":
+        return stanchion.Decision.deny("unsigned plugins get no store access")
+    return stanchion.Decision.grant_with({"keys": ["public:*"]})
+
+host = stanchion.Stanchion(capabilities={"kv": kv}, policy=policy)
+report = host.load("plugins/")
+for failure in report.failures:
+    print(failure.plugin, failure.reason)
+
+print(host.call("greeter", "greet", "world"))
+print(await host.call_async("greeter", "fetch", "https://example.com"))
+</code></pre>
+<p>Failures arrive as exceptions under a <code>StanchionError</code> base: <code>UnknownPluginError</code>,
+<code>PluginError</code>, <code>LuaError</code>, <code>ConfigError</code>, <code>CapabilityError</code>, <code>ReentrantError</code>. A
+provider that raises becomes an ordinary Lua error the plugin can <code>pcall</code>; a policy
+that raises denies rather than crashing the host.</p>
+<p>The GIL is released while Lua runs, so other Python threads and asyncio tasks keep
+going. A provider re-acquires it on the same thread, which is why calling back into the
+registry raises <code>ReentrantError</code> instead of hanging.</p>
+<p>Published wheels carry Lua 5.4 built from source and target <code>abi3</code> from Python 3.10, so
+one wheel per platform covers every supported interpreter. To link an interpreter the
+application already embeds:</p>
+<pre><code class="language-sh">uv run maturin develop --no-default-features --features luajit
+</code></pre>
+<h2>Kotlin and Swift</h2>
+<p>Generated with UniFFI from <code>bindings/uniffi</code>. The generator is built from that crate
+so it always matches the <code>uniffi</code> the library was compiled against — a mismatch
+produces bindings that compile and then misbehave at the boundary.</p>
+<pre><code class="language-sh">mise run smoke:uniffi               # generates all three, runs the boundary
+mise run smoke:kotlin               # compiles and runs the Kotlin on the JVM
+</code></pre>
+<p>Both are scripts under <code>bindings/uniffi/</code> and can be run directly. <code>mise.toml</code> pins
+the Kotlin, Java and ktlint versions they expect.</p>
+<pre><code class="language-kotlin">class Store : CapabilityProvider {
+    override fun invoke(call: CapabilityCall): Value {
+        val key = (call.args.first() as Value.Str).value
+        return store[key]?.let { Value.Str(it) } ?: throw ProviderException.Refused("no such key")
+    }
+}
+
+val host = Stanchion(config, mapOf("kv" to Store()), policy)
+host.load("plugins/")
+host.call("greeter", "greet", listOf(Value.Str("world")))
+host.callAsync("greeter", "fetch", listOf(Value.Str("https://example.com")))
+</code></pre>
+<p><code>callAsync</code> and <code>dispatchAsync</code> are <code>suspend</code> functions in Kotlin and <code>async</code> in
+Swift. Throwing <code>ProviderException</code> from a provider becomes an ordinary Lua error the
+plugin can <code>pcall</code>; re-entering the registry from one raises <code>StanchionException.Reentrant</code>.</p>
+<p>Two things are worth knowing about the shape, both forced by Kotlin:</p>
+<ul>
+<li>The sequence and mapping variants are <code>Value.Seq</code> and <code>Value.Table</code>, not <code>List</code> and
+<code>Map</code>. A variant named <code>List</code> becomes a nested class that shadows
+<code>kotlin.collections.List</code> for the rest of the sealed class, so its own field stops
+naming a list and the generated file will not compile.</li>
+<li><code>args</code> has no default, so a call with none passes an empty list.</li>
+</ul>
+<p>The Swift bindings generate alongside the Kotlin but have not been run — this is a
+Linux checkout with no Swift toolchain. Packaging for both (XCFramework and Swift
+Package, AAR with per-ABI libraries) is still to come.</p>
+<h2>Ruby</h2>
+<pre><code class="language-sh">mise run test:ruby     # or `rake` from bindings/ruby
+</code></pre>
+<pre><code class="language-ruby">require "stanchion"
+
+host = Stanchion::Registry.new(
+  capabilities: { "kv" =&gt; -&gt;(call) { STORE.fetch(call[:args].first) } },
+  policy: -&gt;(request) {
+    next Stanchion::Decision.deny("unsigned") if request[:signer] == "unsigned"
+    Stanchion::Decision.grant_with({ "keys" =&gt; ["public:*"] })
+  },
+)
+
+report = host.load("plugins/")
+report[:failures].each { |f| warn "#{f[:plugin]}: #{f[:reason]}" }
+
+host.call("greeter", "greet", "world")
+</code></pre>
+<p>A provider is anything responding to <code>call</code> — a lambda, or an object with the method
+— handed a Hash with <code>:plugin</code>, <code>:capability</code>, <code>:grant</code> and <code>:args</code>. A policy is the
+same shape and must return a <code>Stanchion::Decision</code>. Reports come back as Hashes with
+symbol keys, so <code>report[:loaded]</code> and <code>outcome[:error]</code> read the way Ruby usually
+does.</p>
+<p>Failures raise under a <code>Stanchion::Error</code> base: <code>UnknownPluginError</code>, <code>PluginError</code>,
+<code>LuaError</code>, <code>IOError</code>, <code>ConfigError</code>, <code>CapabilityError</code>, <code>ReentrantError</code>. A provider
+that raises becomes an ordinary Lua error the plugin can <code>pcall</code>; a policy that raises
+denies rather than crashing the host.</p>
+<p>Symbols cross as strings, in arguments and as Hash keys, since Lua has nothing else to
+call them. <code>{ a: 1 }</code> therefore comes back as <code>{ "a" =&gt; 1 }</code>.</p>
+<p><strong>The GVL is held for the whole call</strong>, so a plugin call blocks the Ruby VM. A
+capability provider is Ruby code and may only run on a thread holding the GVL;
+releasing it would mean the callback arrived on a thread that must not touch the VM.
+That is the same trade the JavaScript binding makes, and the instruction and memory
+limits are what bound it.</p>
+<p><code>call_async</code> and <code>dispatch_async</code> therefore do <strong>not</strong> free the VM either. What they
+buy is that the plugin may <code>coroutine.yield</code>, which the plain call cannot drive — a
+real difference, just not a concurrency one. Ruby has no fiber-scheduler bridge in
+<code>magnus</code> to offer anything better yet.</p>
+<p>Packaging is still to come: <code>extconf.rb</code>, rake-compiler and cross-compiled native
+gems belong to the release pass. <code>build.sh</code> stages the extension for development,
+which is what <code>rake compile</code> runs.</p>
+<h2>Configuration</h2>
+<p>Bindings and <code>plugin-host</code> read the same shape, so a policy written for one transport
+describes the other unchanged:</p>
+<pre><code class="language-toml">plugins = "plugins/"
+
+[sandbox]
+libs = ["string", "table", "math"]
+memory_limit = 67108864
+instruction_limit = 50000000
+shared = false
+
+[capabilities]
+allow = ["log"]
+callbacks = ["kv"]
+
+[signatures]
+required = true
+</code></pre>
+<p>Capabilities and policy are fixed before the first plugin loads and cannot be changed
+afterwards. A host that could widen a running plugin’s reach would have given up the
+guarantee the capability system exists to make.</p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/bindings.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

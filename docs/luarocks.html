@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LuaRocks · stanchion</title>
+<meta name="description" content="LuaRocks — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html" aria-current="page">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>LuaRocks</h1>
+<p>Declaring external Lua libraries in a manifest and making them loadable.</p>
+<p>With the <code>luarocks</code> feature, a plugin declares the external libraries it needs:</p>
+<pre><code class="language-toml">[rocks]
+dkjson = "2.11"
+lpeg = "&gt;= 1.0, &lt; 2.0"
+inspect = "~&gt; 3.1"
+</code></pre>
+<pre><code class="language-rust">let registry = Registry::new(Lua::new())
+    .with_rocks(RocksConfig::new("/var/lib/myapp/rocks"));
+</code></pre>
+<p>The registry puts that tree on the shared state’s <code>package.path</code>, then verifies each
+plugin’s declarations against what the tree holds. A plugin declaring <code>[rocks]</code> without
+a configured tree fails to load rather than silently resolving <code>require</code> from whatever
+happens to be on the machine.</p>
+<p><strong>Loading never installs.</strong> Provisioning is an explicit host call:</p>
+<pre><code class="language-rust">let report = registry.install_rocks("plugins/")?;   // before load_dir
+</code></pre>
+<p>so <code>load_dir</code> never touches the network, takes unbounded time, or mutates the machine.
+Note that <code>luarocks install</code> takes a version rather than a constraint expression, so a
+range requirement installs the newest available version and is checked afterwards.</p>
+<p>Rock versions are <strong>not semver</strong> — <code>2.11-1</code> carries a rockspec revision, and constraints
+use LuaRocks’ own operators (<code>~&gt;</code>, comma-separated ranges). They are compared
+component-wise by this crate rather than by the <code>semver</code> crate that handles
+plugin-to-plugin dependencies. A bare <code>2.11</code> accepts an installed <code>2.11-1</code>; a
+requirement that spells out a revision does not.</p>
+<h2>C modules</h2>
+<p><code>package.cpath</code> is left alone unless you opt in:</p>
+<pre><code class="language-rust">RocksConfig::new(tree).load_c_modules(true)
+</code></pre>
+<p>A C rock is a shared object linked against some <code>liblua</code>. With <code>vendored</code>, mlua links
+Lua statically into the host binary, so loading one can pull a <strong>second Lua runtime</strong>
+into the process — a crash or silent corruption, not a clean error. Pure-Lua rocks are
+unaffected. Only enable this when mlua links against the same external Lua the rocks
+were built against.</p>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/luarocks.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

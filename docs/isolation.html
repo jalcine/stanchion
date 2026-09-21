@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Isolation · stanchion</title>
+<meta name="description" content="Isolation — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html" aria-current="page">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Isolation</h1>
+<p>Whether plugins share one Lua state or get one each, and what a sandbox
+policy can bound.</p>
+<p>Two modes, chosen at construction.</p>
+<pre><code class="language-rust">// Shared: every plugin runs in the state you hand over.
+let registry = Registry::new(Lua::new());
+
+// Per-plugin: every plugin gets its own state under a policy.
+let registry = Registry::isolated(
+    Lua::new(),
+    Sandbox::restricted()
+        .memory_limit(16 * 1024 * 1024)
+        .instruction_limit(5_000_000),
+);
+</code></pre>
+<table><thead><tr><th></th><th>Shared</th><th>Per-plugin</th></tr></thead><tbody>
+<tr><td>Memory / instruction limits</td><td>impossible</td><td>enforced by the VM</td></tr>
+<tr><td>Standard library selection</td><td>one policy, set by you</td><td>per registry, via <code>Sandbox</code></td></tr>
+<tr><td><code>[dependencies]</code> exports</td><td>injected</td><td><strong>unavailable</strong> — values cannot cross states</td></tr>
+<tr><td>Blast radius of a bad plugin</td><td>shared globals and allocator</td><td>contained to its own state</td></tr>
+<tr><td>Cost</td><td>one state</td><td>one state per plugin</td></tr>
+</tbody></table>
+<p>Under <strong>shared</strong> isolation each chunk is evaluated with its own environment table whose
+<code>__index</code> is the real globals: a plugin <strong>reads</strong> globals normally but its <strong>writes</strong>
+stay local, so one plugin cannot redefine <code>string.format</code> for the others. That is
+namespace hygiene, not a security boundary — <code>rawset(_G, ...)</code> still reaches the shared
+state, and nothing bounds CPU or memory.</p>
+<p>Under <strong>per-plugin</strong> isolation the boundary is real. Memory and instruction limits are
+properties of a <code>Lua</code>, which is exactly why they cannot be applied inside a shared
+state. The price is that Lua values cannot cross states, so a <code>[dependencies]</code> entry
+that would inject exports fails with <code>CrossStateDependency</code> (see
+<a href="dependencies.html">dependency chains</a>).</p>
+<p>Each plugin’s directory is prepended to its state’s <code>package.path</code>, so a plugin can
+<code>require</code> its own files without knowing where it was installed. That <code>require</code> is
+per-plugin: submodules load into the <strong>same environment</strong> as the plugin’s own chunk, so
+they see its granted capabilities, and each plugin gets its own module cache rather
+than sharing <code>package.loaded</code>.</p>
+<h2>Sandbox policy</h2>
+<p><code>Sandbox::restricted()</code> is the default: <code>string</code>, <code>table</code>, <code>math</code>, <code>coroutine</code> and
+<code>package</code> — no <code>io</code>, <code>os</code> or <code>debug</code> — with <code>dofile</code>, <code>loadfile</code> and <code>package.loadlib</code>
+removed on top. <code>package</code> is loaded so <code>require</code> works for rocks and plugin-local
+modules; <code>loadlib</code> is removed because it would load any shared object on disk.</p>
+<p><code>Sandbox::permissive()</code> adds <code>io</code> and <code>os</code> and drops the deny list. Use it for
+first-party plugins, not for code you did not write.</p>
+<p>Note that mlua’s <code>StdLib::ALL_SAFE</code> means <em>memory</em>-safe, not sandboxed — it still
+includes <code>io</code> and <code>os</code>. Neither preset is built on it.</p>
+<pre><code class="language-rust">Sandbox::restricted()
+    .libs(StdLib::STRING | StdLib::TABLE)   // exactly these
+    .deny(["os.execute", "os.exit"])        // replace the deny list
+    .memory_limit(16 * 1024 * 1024)         // bytes, VM-enforced
+    .instruction_limit(5_000_000)           // per call, not per lifetime
+</code></pre>
+<p>The instruction limit resets at every call boundary — each <code>dispatch</code> and each
+constructor gets the full allowance — so a plugin is bounded per call rather than
+slowly starving over its lifetime. It rides on Lua’s debug hook, so under <code>luau</code>
+(which has no instruction counter) the limit counts interrupt callbacks instead.</p>
+<h2>Reaching an isolated plugin</h2>
+<p>A freshly created state has nothing of yours in it. Host functions get there through
+<a href="capabilities.html">capabilities</a>, declared in <code>with_setup</code> and granted per plugin by
+policy — so what a plugin can reach stays a decision rather than a side effect of
+being loaded.</p>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/isolation.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

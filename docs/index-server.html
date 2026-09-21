@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Serving an index · stanchion</title>
+<meta name="description" content="Serving an index — stanchion, Lua plugins for Rust applications.">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html" aria-current="page">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1>Serving an index</h1>
+<p>An <a href="distribution.html#running-an-index">index</a> is two JSON documents and a pile of
+immutable package files, so anything that serves bytes can host one. A <em>server</em> earns
+its place by doing what static hosting cannot.</p>
+<table><thead><tr><th>It buys you</th><th>Why static hosting cannot</th></tr></thead><tbody>
+<tr><td><strong>A fresh <code>expires</code> on every response</strong></td><td>a client’s default refuses a document without an unexpired one, so static hosting means re-publishing on a schedule</td></tr>
+<tr><td><strong>A source that is not a directory</strong></td><td>a database, a monorepo, whatever answers <code>IndexSource</code></td></tr>
+<tr><td><strong>Conditional requests</strong></td><td>a client that already has the current document pays for headers, not a body</td></tr>
+</tbody></table>
+<p>If none of those apply, <code>DirectoryIndex</code> plus <code>aws s3 sync</code> is the better answer.</p>
+<h2>Routes</h2>
+<pre><code class="language-text">GET|HEAD  /v1/index.json              the catalog
+GET|HEAD  /v1/plugins/&lt;name&gt;.json     one plugin's releases
+GET|HEAD  /v1/blobs/sha256:&lt;hex&gt;      the package for that digest
+</code></pre>
+<p>Paths come from <code>CATALOG_PATH</code> and <code>releases_path</code> in <code>stanchion-dist</code>, so the server
+and the client cannot drift apart when the schema moves to v2.</p>
+<p><strong>404 is load-bearing.</strong> A client maps 404 to “no such plugin” and every other non-2xx
+to “the index is unreachable” — the difference between reporting a missing plugin and
+retrying. An unknown plugin or digest is 404; a malformed name or digest is 400.</p>
+<h2>Freshness, and why time is quantised</h2>
+<p><code>expires</code> is computed per response from a TTL — but from the <strong>start of the TTL
+window</strong>, not from the wall clock:</p>
+<pre><code class="language-rust">IndexServer::new(DirectorySource::new("/srv/plugins"))
+    .ttl(Duration::from_secs(3600))
+</code></pre>
+<p>That detail is what makes conditional requests possible at all. A document that took
+<code>expires</code> from <code>now</code> would have different bytes on every request, so an <code>ETag</code> over
+the body could never match and <code>If-None-Match</code> would be dead weight. Quantised, every
+response inside a window is byte-identical, the <code>ETag</code> is a plain content hash, and
+<code>Cache-Control: max-age</code> counts down to the window’s end.</p>
+<p>It also closes the obvious hole: a <code>304</code> lets a client keep the body it has, <em>including
+the <code>expires</code> it was served with</em>. Because a match can only occur inside the window
+that issued it, a conditional request can never extend a document past its expiry — at
+the boundary the bytes change, the validator stops matching, and the client is handed a
+fresh document.</p>
+<p>The TTL is the one real tuning decision, so it is clamped to 60s–24h. Too short and
+clients with skewed clocks start refusing documents; too long and a yank takes that
+long to reach someone being fed a withheld snapshot.</p>
+<p>Packages are immutable — a package is named by the digest of what it unpacks to — so
+they are served with <code>immutable</code> and their digest as the <code>ETag</code>.</p>
+<h2>Framework independence</h2>
+<p>Nothing in <code>stanchion-index</code> knows about a web framework. <code>IndexServer::serve</code> takes a
+method, a path and an optional <code>If-None-Match</code>, and returns a <code>Served</code>: a status,
+headers and bytes. Routing, freshness and conditional requests are all tested without
+binding a port.</p>
+<table><thead><tr><th>Adapter</th><th>For</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-index-poem"><code>stanchion-index-poem</code></a></td><td><a href="https://docs.rs/poem">Poem</a>, whose <code>Endpoint</code> is not a <code>tower::Service</code></td></tr>
+<tr><td>the <code>tower</code> feature of <code>stanchion-index</code></td><td>anything that is one — axum, tonic, warp</td></tr>
+</tbody></table>
+<p>Poem needs its own adapter because it is <strong>not</strong> Tower-based: it has its own <code>Endpoint</code>
+trait, and its <code>tower-compat</code> feature only lets it <em>consume</em> <code>tower::Layer</code>, pinned to
+tower 0.4 while axum is on 0.5. Any other framework is a ten-line match on <code>Served</code>.</p>
+<p>The source is synchronous, matching <code>PluginIndex</code>, so adapters run it on a blocking
+worker rather than an async one.</p>
+<h2>On-disk layout</h2>
+<pre><code class="language-text">&lt;base&gt;/v1/index.json              the catalog, optional
+&lt;base&gt;/v1/plugins/&lt;name&gt;.json     one plugin's releases
+&lt;base&gt;/blobs/sha256/&lt;hex&gt;         the package for that digest
+</code></pre>
+<p>Packages live under a <code>sha256/</code> segment rather than a <code>sha256:&lt;hex&gt;</code> filename, because
+a colon in a filename is legal on Linux and a nuisance everywhere else.</p>
+<p>Stored documents are read with <code>Freshness::Ignored</code>: their own <code>expires</code> is irrelevant
+when the server issues a new one. A directory too stale for a client to accept is still
+a perfectly good source for a server that keeps it fresh.</p>
+<h2>Streaming packages</h2>
+<p>A package is served from a reader, never buffered. <code>IndexSource::blob</code> returns a
+<code>Blob</code> — a <code>Box&lt;dyn Read + Send&gt;</code> and a length where the source knows one — so
+building a response reads nothing at all; the bytes move only as an adapter drains
+them into the socket.</p>
+<pre><code class="language-rust">fn blob(&amp;self, digest: &amp;str) -&gt; Result&lt;Blob, IndexError&gt;;
+</code></pre>
+<p>The source stays synchronous, matching <code>PluginIndex</code>: opening a file is not an async
+problem, but writing it to a socket is. One bridge in <code>stanchion-index::chunks</code>
+reconciles those — the read runs on a blocking worker and 64 KiB chunks arrive through
+a channel four deep, so a response holds a few hundred KiB in flight regardless of the
+package’s size. Both adapters use it, so chunking is decided in one place.</p>
+<p>Two consequences worth knowing:</p>
+<ul>
+<li><strong>A <code>HEAD</code> never reads the package.</strong> The length comes from the source, so a <code>HEAD</code>
+on a 2 GiB archive costs a <code>stat</code>.</li>
+<li><strong>A read failure part-way truncates the response.</strong> By then the status and headers
+have gone, so a truncated body is the only signal left — and a client verifying the
+digest of what it unpacks will reject it, which is the behaviour we want.</li>
+</ul>
+<p>If the client hangs up, the channel closes and the reader stops rather than pulling
+the rest of the file into a queue nobody drains.</p>
+<p>Documents are still bytes, because they have to be: the <code>ETag</code> is a hash of them.</p>
+<h2>What this does not do</h2>
+<ul>
+<li><strong>No write path.</strong> Publishing is putting an archive somewhere fetchable and adding a
+release to the index — two file writes. A publish API would make the server
+authoritative over what gets pinned, which is a different trust model.</li>
+<li><strong>No authority.</strong> Everything served is re-checked against a digest the client holds.
+A compromised bucket reached over flawless TLS is a compromised index.</li>
+</ul>
+<hr />
+<p><a href="../index.html#documentation">← Documentation index</a></p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/index-server.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

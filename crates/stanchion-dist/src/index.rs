@@ -240,7 +240,7 @@ impl IndexDocument for Catalog {
 ///     {
 ///       "version": "1.4.2",
 ///       "digest": "sha256:9f86d081884c7d65…",
-///       "source": "oci://ghcr.io/acme/plugins/formatter:1.4.2",
+///       "source": "https://plugins.acme.test/v1/blobs/sha256:9f86d081884c7d65…",
 ///       "signer": "repo:acme/plugins",
 ///       "capabilities": ["network"]
 ///     }
@@ -334,7 +334,7 @@ pub struct Release {
     /// This is the value that gets pinned, and the only field here with any weight:
     /// everything else the index says is checked against the package once it arrives.
     pub digest: String,
-    /// Where to fetch the package, as an `oci://` reference.
+    /// Where to fetch the package, as a URL.
     ///
     /// A hint. Fetching from anywhere else and getting the same digest is equally
     /// acceptable, which is what lets a host mirror without re-signing anything.

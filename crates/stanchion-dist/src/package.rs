@@ -2,11 +2,10 @@
 //!
 //! # Why the archive is not the pin
 //!
-//! OCI content-addresses the *tarball*; stanchion content-addresses the *directory*.
-//! Repacking a plugin — different mtimes, different entry order, a different gzip
-//! level — changes the OCI digest and leaves the
-//! [`DirectoryDigest`](stanchion_registry::DirectoryDigest) alone, because that digest
-//! is taken over paths and file contents and nothing else.
+//! A pin is a [`DirectoryDigest`](stanchion_registry::DirectoryDigest) over the
+//! *unpacked directory* — paths and file contents, nothing else — not a hash of the
+//! archive bytes. Repacking a plugin with different mtimes, a different entry order or
+//! a different gzip level produces different bytes and the same pin.
 //!
 //! That is deliberate, and it cuts both ways:
 //!
@@ -51,23 +50,8 @@ use std::path::PathBuf;
 
 use stanchion_registry::DirectoryDigest;
 
-/// Media type of the layer holding a plugin directory.
-pub const LAYER_MEDIA_TYPE: &str = "application/vnd.stanchion.plugin.layer.v1.tar+gzip";
-
-/// Media type of the artifact's config blob.
-pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.stanchion.plugin.config.v1+json";
-
-/// `artifactType` of a stanchion plugin artifact.
-pub const ARTIFACT_TYPE: &str = "application/vnd.stanchion.plugin.v1+json";
-
-/// Annotation carrying the plugin's root directory digest.
-pub const DIGEST_ANNOTATION: &str = "dev.stanchion.plugin.digest";
-
-/// Annotation carrying the plugin's name.
-pub const NAME_ANNOTATION: &str = "dev.stanchion.plugin.name";
-
-/// Annotation carrying the plugin's version.
-pub const VERSION_ANNOTATION: &str = "dev.stanchion.plugin.version";
+/// Media type of a plugin package, for servers that want to label one.
+pub const PACKAGE_MEDIA_TYPE: &str = "application/vnd.stanchion.plugin.v1.tar+gzip";
 
 /// Why a package could not be produced or unpacked.
 #[derive(Debug)]

@@ -19,7 +19,7 @@ valid signature**, and the last two work with the author's real key and no compr
 of anything.
 
 ```text
-  index (untrusted)          OCI registry (untrusted)
+  index (untrusted)          package source (untrusted)
         │ name + requirement         │ tar.gz
         ▼                            ▼
   ┌────────────────────────────────────────────┐
@@ -44,7 +44,7 @@ version = 1
 version = "1.4.2"
 digest = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 signer = "repo:acme/plugins"
-source = "oci://ghcr.io/acme/plugins/formatter:1.4.2"
+source = "https://plugins.acme.test/v1/blobs/sha256:9f86d081884c7d65…"
 ```
 
 ```rust
@@ -73,30 +73,33 @@ exactly the event worth refusing.
 Pinning works with **no signing infrastructure at all** — a digest is a digest.
 Signatures add attributable authorship on top; they are not a prerequisite.
 
-## Packages are OCI artifacts
+## Packages are plain archives
+
+A package is a `tar.gz` of the plugin directory. There is no manifest, no config blob
+and no media-type negotiation, because there is nothing for them to do: the
+[index](#running-an-index) already maps a name and a version to a digest, so a package
+needs only to be fetchable and to unpack to the content that digest describes.
+
+That makes a package URL an ordinary immutable file. Anything that serves bytes can
+host one — a bucket, a CDN, `nginx`, or the index server itself:
 
 ```text
-manifest  artifactType: application/vnd.stanchion.plugin.v1+json
-  config  application/vnd.stanchion.plugin.config.v1+json    the manifest's metadata
-  layer   application/vnd.stanchion.plugin.layer.v1.tar+gzip  the plugin directory
+GET https://plugins.acme.test/v1/blobs/sha256:<hex>
 ```
 
-An OCI registry is a content-addressed blob store with authentication, mirroring,
-retention and access control already solved, available from every cloud and runnable
-locally in one command. Using one means a host running a plugin ecosystem does not
-also have to run a package server.
-
-One layer holds the plugin directory, including its `plugin.sigstore.json` — the
+The archive carries the plugin directory including its `plugin.sigstore.json` — the
 directory digest [excludes the signature artifact](signatures.md#what-is-signed) from
 itself precisely so a package can carry its own signature.
 
-**The registry's digest is not the pin.** OCI addresses the compressed tarball;
-stanchion addresses the directory. Repacking changes the first and leaves the second
-alone, which is what makes mirroring safe: a mirror can recompress and re-tag and
-still cannot alter a file without breaking the signature. The flip side is that **tar
-metadata is covered by nothing** — modes, owners, mtimes and entry types are
-attacker-controlled even in a correctly signed package, so unpacking ignores all of
-them.
+**The archive's own bytes are not the pin.** A pin is a digest over the *unpacked
+directory*: paths and file contents, nothing else. Repacking with different mtimes, a
+different entry order or a different gzip level produces different bytes and the same
+pin, which is what makes mirroring safe — a mirror can recompress and still cannot
+alter a file without breaking the digest.
+
+The flip side is that **tar metadata is covered by nothing**. Modes, owners, mtimes and
+entry types are attacker-controlled even in a correctly signed package, so unpacking
+ignores all of them.
 
 ## Unpacking refuses more than it accepts
 
@@ -135,7 +138,7 @@ no API, because an index holds no authority worth protecting.
     {
       "version": "1.4.2",
       "digest": "sha256:9f86d081884c7d65…",
-      "source": "oci://ghcr.io/acme/plugins/formatter:1.4.2",
+      "source": "https://plugins.acme.test/v1/blobs/sha256:9f86d081884c7d65…",
       "signer": "repo:acme/plugins",
       "issuer": "https://token.actions.githubusercontent.com",
       "capabilities": ["network"],
@@ -192,9 +195,8 @@ depend on `stanchion-dist` for the document types alone, without an HTTP or TLS 
 | --- | --- |
 | *(none)* | index documents, `PluginIndex`, `DirectoryIndex` |
 | `package` | packing and unpacking packages, `Installer` |
-| `oci` | `OciSource`: fetching and publishing to an OCI registry |
-| `http` | `HttpIndex` |
-| `client` | `oci` plus `http` |
+| `http` | `HttpIndex` and `HttpSource`: an index and packages over HTTPS |
+| `client` | everything a host needs to install from a remote index |
 
 TLS authenticates the *server*, not what it said. An index reached over a flawless TLS
 connection to a compromised bucket is a compromised index; HTTPS here keeps a passive
@@ -207,11 +209,9 @@ bad one.
 let mut archive = Vec::new();
 let digest = package::pack(Path::new("plugins/formatter"), &mut archive)?;
 
-OciSource::authenticated(auth).publish(
-    "oci://ghcr.io/acme/plugins/formatter:1.4.2",
-    archive,
-    &ArtifactConfig { /* name, version, digest, capabilities */ },
-)?;
+// Publishing is: put the archive somewhere fetchable, then add a release to the
+// index naming that digest. Both halves are ordinary file writes.
+upload(&format!("blobs/sha256:{}", digest.hex()), &archive)?;
 ```
 
 Then add a release entry naming that digest and re-publish the index document. Sign

@@ -127,25 +127,21 @@ The plugin sources they load are beside them, under
 | `lua54`, `lua53`, `luajit`, `luau`, `vendored` | forwarded to `mlua`                                                                                                                |
 
 Async methods return a boxed future rather than using `async fn` in traits, which keeps
-them dyn-compatible.
+them dyn-compatible. Methods may return `Result<T, E>` for any `E: From<mlua::Error>`,
+so a host error enum needs no wrapping at the call site.
 
 ## Limitations
 
-- Generic traits are rejected — a Lua class has no type parameters.
-- A registry holds one class type. Mixing native Rust implementations into the same
-  registry would need it to store `Box<dyn Trait>`, which cannot be reached generically
-  from `C::Instance` on stable (the unsizing coercion is not expressible as a bound).
 - Per-plugin isolation and `[dependencies]` are mutually exclusive: Lua values cannot
   cross states, so a plugin chain needs shared isolation.
 - In-process isolation bounds CPU and memory, but cannot survive a crash inside the
   interpreter; use the `remote` feature when that matters.
 - Capabilities bound what a plugin can reach, not what it does with what it got, and
   they are only as strong as the providers that enforce their grants.
-- A revocation list is consulted at load, so a plugin already running when an entry is
-  added keeps running until it is reloaded.
+- Nothing fetches a revocation list for you: you decide when to re-read it and call
+  `Registry::apply_revocations`, which unloads what it now names.
 - `SigstoreVerifier` reports the identity your policy enforced, because sigstore's
   verification API answers conformance rather than returning the certificate subject.
-  different implementation.
 
 ## Panic policy
 

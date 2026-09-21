@@ -1,1 +1,4 @@
 target/
+
+# Local agent tooling: symlinks into a machine-specific npx cache.
+.agents/

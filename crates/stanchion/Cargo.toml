@@ -51,7 +51,7 @@ remote = ["registry", "dep:stanchion-remote"]
 # Packaging and installing plugins with a pinned lockfile. Adds tar and gzip, and no
 # network stack: an install from a directory of packages needs nothing more.
 distribution = ["signatures", "dep:stanchion-dist", "stanchion-dist/package"]
-# Fetching from an OCI registry and reading an index over HTTPS. Quarantined behind
+# Reading an index and fetching packages over HTTPS. Quarantined behind
 # its own feature because it is where the HTTP and TLS dependencies arrive.
 distribution-client = ["distribution", "stanchion-dist/client"]
 

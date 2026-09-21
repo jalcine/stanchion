@@ -1,0 +1,83 @@
+# Toolchains for working on stanchion.
+#
+# The Rust crates need only Rust. Everything else here exists because
+# `bindings/*` targets a language with its own toolchain, and a version drift
+# between what a developer runs and what CI runs shows up as a binding that
+# builds for one of them and not the other.
+#
+#   mise install        # fetch everything below
+#   mise run test       # the Rust suite
+#   mise run smoke      # the generated bindings, end to end
+#
+# Lua is not here: `mlua`'s `vendored` feature builds it from source, which is
+# what lets a published wheel or gem need nothing present on the system. See
+# docs/bindings.md for linking an interpreter the application already has.
+
+[tools]
+# Edition 2024, and the workspace lints deny enough that a version bump can
+# start failing a build. Pinned rather than floating for that reason.
+rust = "1.97.0"
+"cargo:cargo-nextest" = "0.9.115"
+
+# bindings/python: `uv` drives everything, and builds the extension through
+# maturin, which it installs itself from pyproject.toml's build-system.
+python = "3.14.2"
+uv = "0.11.21"
+
+# bindings/uniffi: Kotlin compiles the generated bindings, Java runs them under
+# JNA, and uniffi-bindgen shells out to ktlint to format what it generates —
+# without it, generation warns and emits unformatted Kotlin.
+java = "20.0.2"
+kotlin = "2.2.20"
+"aqua:ktlint" = "1.8.0"
+
+# bindings/ruby and bindings/node, both still to be written. Pinned now so the
+# versions those bindings get built against are a decision rather than whatever
+# happened to be on the machine that day.
+#
+# Ruby is 3.3 rather than 4.0: `magnus` and `rb-sys` target the 3.x line, and a
+# native extension is exactly the kind of thing a major release breaks.
+ruby = "3.3.12"
+node = "26.3.0"
+
+# Swift is deliberately absent. The bindings generate on any platform but can
+# only be compiled and run where a Swift toolchain exists, which for this
+# project means macOS; mise would install one here and then have nothing to do.
+
+[tasks.test]
+description = "Run the Rust suite under nextest"
+run = """
+cargo nextest run --workspace \
+  --features stanchion/full,stanchion/lua54,stanchion/vendored,\
+stanchion-ffi/lua54,stanchion-ffi/vendored,stanchion-ffi/signatures,stanchion-ffi/async
+"""
+
+[tasks.lint]
+description = "Clippy across the workspace and the bindings"
+run = [
+    "cargo clippy --workspace --all-targets --features stanchion/full,stanchion/lua54,stanchion/vendored -- -D warnings",
+    "cargo clippy -p stanchion-python -p stanchion-uniffi --all-targets -- -D warnings",
+]
+
+[tasks."test:python"]
+description = "Build the Python extension and run its suite"
+dir = "bindings/python"
+run = [
+    "uv sync",
+    "uv run maturin develop --uv",
+    "uv run pytest",
+    "uv run ruff check .",
+    "uv run mypy",
+]
+
+[tasks."smoke:uniffi"]
+description = "Generate the bindings and run the boundary through Python"
+run = "./bindings/uniffi/smoke.sh"
+
+[tasks."smoke:kotlin"]
+description = "Compile the generated Kotlin and run it on the JVM"
+run = "./bindings/uniffi/smoke-kotlin.sh"
+
+[tasks.smoke]
+description = "Every binding, end to end"
+depends = ["smoke:uniffi", "smoke:kotlin", "test:python"]

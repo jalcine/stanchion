@@ -171,6 +171,16 @@ cargo nextest run --workspace --features lua54,vendored,full
 
 See [docs/testing.md](docs/testing.md) for profiles, doctests and the UI tests.
 
+The Rust crates need only Rust. The language bindings each bring their own
+toolchain, so `mise.toml` pins all of them and wraps the longer commands:
+
+```sh
+mise install        # Rust, Python, uv, Kotlin, Java, Ruby, Node, ktlint
+mise run test       # the Rust suite
+mise run smoke      # every binding, end to end
+mise tasks          # the rest
+```
+
 ## Licence
 
 Dual-licensed under either [MIT](LICENSE-MIT) or

@@ -122,6 +122,10 @@ Selecting none fails the build in `mlua`, which is the right error to get.
 ## Python
 
 ```sh
+mise run test:python           # all of the below
+```
+
+```sh
 cd bindings/python
 uv sync                        # installs the dev group and builds the extension
 uv run maturin develop --uv    # rebuild after a Rust change
@@ -177,9 +181,12 @@ so it always matches the `uniffi` the library was compiled against — a mismatc
 produces bindings that compile and then misbehave at the boundary.
 
 ```sh
-./bindings/uniffi/smoke.sh          # generates all three, runs the boundary
-./bindings/uniffi/smoke-kotlin.sh   # compiles and runs the Kotlin on the JVM
+mise run smoke:uniffi               # generates all three, runs the boundary
+mise run smoke:kotlin               # compiles and runs the Kotlin on the JVM
 ```
+
+Both are scripts under `bindings/uniffi/` and can be run directly. `mise.toml` pins
+the Kotlin, Java and ktlint versions they expect.
 
 ```kotlin
 class Store : CapabilityProvider {

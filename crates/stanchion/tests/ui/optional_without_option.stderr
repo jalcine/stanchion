@@ -1,4 +1,4 @@
-error: optional methods must return `mlua::Result<Option<..>>`: a missing Lua method yields `Ok(None)`
+error: optional methods must return `Result<Option<..>, _>`: a missing Lua method yields `Ok(None)`
   --> tests/ui/optional_without_option.rs:11:23
    |
 11 |     fn hook(&self) -> Result<String>;

@@ -1,4 +1,4 @@
-error: #[lua_class] methods need an explicit `-> mlua::Result<..>` return type
+error: #[lua_class] methods need an explicit `-> Result<..>` return type, over `mlua::Error` or any error type converting from it
  --> tests/ui/missing_return_type.rs:7:5
   |
 7 |     fn greet(&self);

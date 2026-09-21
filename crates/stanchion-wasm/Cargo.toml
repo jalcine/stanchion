@@ -1,9 +1,10 @@
 [package]
 name = "stanchion-wasm"
 version = "0.1.0"
+edition = "2024"
 
 [dependencies]
-wasmtime = "10.0"
+wasmtime = "48.0"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.7"
 stanchion-ffi = { path = "../stanchion-ffi" }

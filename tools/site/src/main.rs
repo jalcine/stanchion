@@ -19,7 +19,10 @@ use pulldown_cmark::{html, Options, Parser};
 const REPO: &str = "https://github.com/jalcine/stanchion";
 
 /// The domain the site is served from.
-const DOMAIN: &str = "stanchion.olamaelcu.net";
+///
+/// Written to `CNAME` in the generated output, which is where GitHub Pages reads the
+/// custom domain from — so this constant and the Pages setting stay in step.
+const DOMAIN: &str = "stanchion.jacky.wtf";
 
 /// Order the guides appear in, following the reading order a newcomer wants rather
 /// than the alphabetical order the filesystem gives.

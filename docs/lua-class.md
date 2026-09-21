@@ -39,6 +39,35 @@ key without the prefix (`set_greeting` → `greeting`).
 Lookups go through `ObjectLike`, which honours `__index`, so methods inherited from a
 base class resolve and validate correctly.
 
+## Error types
+
+A method returns `Result<T, E>` for any `E: From<mlua::Error>`, so a host with its own
+error enum does not wrap every call site:
+
+```rust
+enum HostError {
+    Lua(mlua::Error),
+    Policy(String),
+}
+
+impl From<mlua::Error> for HostError {
+    fn from(err: mlua::Error) -> Self {
+        HostError::Lua(err)
+    }
+}
+
+#[lua_class]
+pub trait Greeter {
+    fn new(greeting: String) -> Result<Self, HostError>;
+    fn greet(&self, who: String) -> Result<String, HostError>;
+}
+```
+
+`mlua::Result` still works unchanged: the conversion the macro emits is then the
+blanket `impl<T> From<T> for T`, which compiles away. The return type does have to be
+written as a `Result`-shaped path — the macro reads it syntactically rather than
+resolving it — so a `type HostResult<T> = Result<T, HostError>;` alias is fine, but a
+bare `-> String` is not.
 
 ## Validation
 

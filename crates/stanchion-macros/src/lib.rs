@@ -269,7 +269,8 @@ fn parse_method(func: &TraitItemFn, handle: &Ident) -> syn::Result<Method> {
         ReturnType::Default => {
             return Err(Error::new(
                 sig.span(),
-                "#[lua_class] methods need an explicit `-> mlua::Result<..>` return type",
+                "#[lua_class] methods need an explicit `-> Result<..>` return type, \
+                 over `mlua::Error` or any error type converting from it",
             ));
         }
     };
@@ -289,7 +290,7 @@ fn parse_method(func: &TraitItemFn, handle: &Ident) -> syn::Result<Method> {
     if opts.optional && !returns_option(&ret) {
         return Err(Error::new(
             ret.span(),
-            "optional methods must return `mlua::Result<Option<..>>`: \
+            "optional methods must return `Result<Option<..>, _>`: \
              a missing Lua method yields `Ok(None)`",
         ));
     }
@@ -429,8 +430,14 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
     let tuple = quote!((#(#arg_idents,)*));
 
     Ok(match method.kind {
+        // Every direct return converts its error, so a method may return any
+        // `Result<T, E>` with `E: From<mlua::Error>`. For `mlua::Result` itself the
+        // conversion is the blanket `impl<T> From<T> for T`, so it costs nothing.
         MethodKind::FieldGet => quote! {
-            ::stanchion::LuaHandle::get(#table, #name)
+            ::core::result::Result::map_err(
+                ::stanchion::LuaHandle::get(#table, #name),
+                ::core::convert::From::from,
+            )
         },
         MethodKind::FieldSet => {
             let Some(value) = arg_idents.first() else {
@@ -440,20 +447,35 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
                 ));
             };
             quote! {
-                ::stanchion::LuaHandle::set(#table, #name, #value)
+                ::core::result::Result::map_err(
+                    ::stanchion::LuaHandle::set(#table, #name, #value),
+                    ::core::convert::From::from,
+                )
             }
         }
         MethodKind::Method { optional: false } if method.is_async => quote! {
-            ::stanchion::LuaHandle::call_async_method(#table, #name, #tuple).await
+            ::core::result::Result::map_err(
+                ::stanchion::LuaHandle::call_async_method(#table, #name, #tuple).await,
+                ::core::convert::From::from,
+            )
         },
         MethodKind::Method { optional: false } => quote! {
-            ::stanchion::LuaHandle::call_method(#table, #name, #tuple)
+            ::core::result::Result::map_err(
+                ::stanchion::LuaHandle::call_method(#table, #name, #tuple),
+                ::core::convert::From::from,
+            )
         },
         MethodKind::Function { optional: false } if method.is_async => quote! {
-            ::stanchion::LuaHandle::call_async_function(#table, #name, #tuple).await
+            ::core::result::Result::map_err(
+                ::stanchion::LuaHandle::call_async_function(#table, #name, #tuple).await,
+                ::core::convert::From::from,
+            )
         },
         MethodKind::Function { optional: false } => quote! {
-            ::stanchion::LuaHandle::call_function(#table, #name, #tuple)
+            ::core::result::Result::map_err(
+                ::stanchion::LuaHandle::call_function(#table, #name, #tuple),
+                ::core::convert::From::from,
+            )
         },
         // Optional methods resolve the function by hand so a missing key is `Ok(None)`
         // rather than an error from `call_method`.

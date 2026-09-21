@@ -35,6 +35,7 @@ const GUIDE_ORDER: &[&str] = &[
     "dependencies",
     "luarocks",
     "remote",
+    "wasm",
     "distribution",
     "index-server",
     "bindings",

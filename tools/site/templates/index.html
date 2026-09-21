@@ -54,12 +54,14 @@
 
 <div class="split">
   <div>
-    <h2 style="margin-top:0">Describe the contract in <span class="word-rotator" data-words='["Rust","Python","Kotlin"]'>Rust</span></h2>
+    <h2 style="margin-top:0">Describe the contract in <span class="word-rotator" data-words='["Rust","Python","Kotlin","JavaScript","Go","Swift","Zig"]'>Rust</span></h2>
     <p style="color:var(--ink-soft)">
       Write a contract. In Rust the <code>#[lua_class]</code> macro generates the class
       handle, instance handle, and conversions — Python and Kotlin hosts hook in via
-      the <code>stanchion-ffi</code> crate with the same guarantees. Either way,
-      validation runs when a plugin <em>loads</em>, not when a method is finally called at 3am.
+      the <code>stanchion-ffi</code> crate with the same guarantees. Any language
+      that compiles to WASM can implement the plugin from the other side.
+      Either way, validation runs when a plugin <em>loads</em>, not when a method
+      is finally called at 3am.
     </p>
 <pre><code>#[lua_class]
 pub trait Greeter {
@@ -76,14 +78,16 @@ pub trait Greeter {
 }</code></pre>
   </div>
   <div>
-    <h2 style="margin-top:0">Implement it in Lua</h2>
+    <h2 style="margin-top:0">Implement it in Lua, or compile to WASM</h2>
     <p style="color:var(--ink-soft)">
-      An ordinary Lua class. Every method the contract expects is verified at
-      load time — missing fields surface before the first call. A native
-      implementation in any supported language lives alongside Lua in the same
-      <code>Vec</code>, and the dispatch layer resolves to whichever one you gave it.
+      An ordinary Lua class, or a binary compiled to WASM from any language —
+      JavaScript, Swift, Go, Zig, Rust itself. Every method the contract expects
+      is verified at load time. Native implementations in any supported runtime
+      live alongside each other in the same <code>Vec</code>, and the dispatch
+      layer resolves to whichever one you gave it.
     </p>
-<pre><code>local Greeter = {}
+<pre><code>-- Lua:
+local Greeter = {}
 Greeter.__index = Greeter
 
 function Greeter.new(greeting)
@@ -94,7 +98,15 @@ function Greeter:greet(who)
   return self.greeting .. ", " .. who
 end
 
-return Greeter</code></pre>
+return Greeter
+</code></pre>
+<pre class="no-lang"><code># manifest (any WASM language):
+name = "greeter"
+plugin_type = "wasm"
+entry = "greeter.wasm"
+
+# The .wasm exports greet(…) and greeting, exactly
+# like the Lua class — same calls, different runtime.</code></pre>
   </div>
 </div>
 

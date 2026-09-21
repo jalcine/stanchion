@@ -192,3 +192,11 @@ pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+/* ---------- word rotator ---------- */
+
+.word-rotator {
+  transition: opacity 0.3s ease;
+}
+.word-rotator.fade-out {
+  opacity: 0;
+}

@@ -31,7 +31,17 @@ pub enum RemoteError {
     ///
     /// This is the case the whole design exists for: a plugin that crashes the
     /// interpreter kills the host, not the application.
-    HostGone { status: Option<i32> },
+    ///
+    /// Exactly one of the two fields carries the answer. `signal` is the interesting
+    /// one: a segfault in a C rock, or an abort, kills the child rather than returning
+    /// from it, so there is no exit code to report — naming the signal is the only way
+    /// that crash is distinguishable from an orderly exit.
+    HostGone {
+        /// Exit code, when the host returned one.
+        status: Option<i32>,
+        /// Signal that killed the host, on platforms that have them.
+        signal: Option<i32>,
+    },
     /// The host answered, but with a failure.
     Host(String),
     /// The host answered with a reply that does not fit the request.
@@ -47,9 +57,13 @@ impl fmt::Display for RemoteError {
                 write!(f, "could not launch `{}`: {source}", program.display())
             }
             RemoteError::Transport(source) => write!(f, "host transport failed: {source}"),
-            RemoteError::HostGone { status } => match status {
-                Some(code) => write!(f, "the plugin host exited with status {code}"),
-                None => f.write_str("the plugin host exited"),
+            RemoteError::HostGone { status, signal } => match (status, signal) {
+                (_, Some(signal)) => match signal_name(*signal) {
+                    Some(name) => write!(f, "the plugin host was killed by {name}"),
+                    None => write!(f, "the plugin host was killed by signal {signal}"),
+                },
+                (Some(code), None) => write!(f, "the plugin host exited with status {code}"),
+                (None, None) => f.write_str("the plugin host exited"),
             },
             RemoteError::Host(message) => f.write_str(message),
             RemoteError::Protocol(message) => write!(f, "unexpected reply: {message}"),
@@ -60,6 +74,36 @@ impl fmt::Display for RemoteError {
                 )
             }
         }
+    }
+}
+
+/// The signal that killed a process, where the platform has signals.
+#[cfg(unix)]
+fn killing_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    std::os::unix::process::ExitStatusExt::signal(status)
+}
+
+/// Windows has no signals: an abnormal end arrives as an exit code.
+#[cfg(not(unix))]
+fn killing_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
+}
+
+/// Names the signals worth naming, which is fewer than one would like.
+///
+/// Signal numbers are not uniform across Unix — `SIGBUS` is 7 on Linux and 10 on
+/// macOS, for instance — so only the ones POSIX fixes to the same number everywhere
+/// are named here, and anything else is reported by number rather than mislabelled.
+fn signal_name(signal: i32) -> Option<&'static str> {
+    match signal {
+        4 => Some("SIGILL"),
+        6 => Some("SIGABRT"),
+        8 => Some("SIGFPE"),
+        9 => Some("SIGKILL"),
+        11 => Some("SIGSEGV"),
+        13 => Some("SIGPIPE"),
+        15 => Some("SIGTERM"),
+        _ => None,
     }
 }
 
@@ -353,8 +397,16 @@ impl RemoteRegistry {
     }
 
     fn gone(&mut self) -> RemoteError {
-        let status = self.child.wait().ok().and_then(|status| status.code());
-        RemoteError::HostGone { status }
+        let Ok(status) = self.child.wait() else {
+            return RemoteError::HostGone {
+                status: None,
+                signal: None,
+            };
+        };
+        RemoteError::HostGone {
+            status: status.code(),
+            signal: killing_signal(&status),
+        }
     }
 }
 

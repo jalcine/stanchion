@@ -113,13 +113,32 @@ your application can keep sending while a plugin is mid-call.
 | `while true do end` | instruction limit | instruction limit |
 | allocation storm | memory limit | memory limit |
 | `os.exit`, or a segfault in a C rock | **your application dies** | `RemoteError::HostGone` |
-| interpreter panic | unwinds into your stack | child dies, you keep serving |
+| a panic in a host callback | reported as `Panicked` | child dies, you keep serving |
 
-`RemoteError::HostGone { status }` is the interesting one: the client distinguishes a
-dead child from an ordinary transport error by reaping it, so a plugin that kills its
-process becomes one error value rather than an outage. Dropping a `RemoteRegistry`
-closes the host's stdin and kills anything that ignores it, so a dropped client never
-leaks a process.
+A panic is the one row that is survivable in-process, because a panic unwinds. A panic
+raised in one of your callbacks never crosses the interpreter's C frames — mlua catches
+it at the boundary and carries it out as a Lua error — and `Registry::dispatch` catches
+the resumption, so it arrives as a
+[`Panicked`](https://docs.rs/stanchion/latest/stanchion/registry/struct.Panicked.html)
+error rather than on your stack. Nothing equivalent is possible for the row above it:
+`os.exit` and a segfault are an exit and a signal, and neither unwinds. That is the
+whole reason this crate exists.
+
+`RemoteError::HostGone` says which of the two happened:
+
+| Field | Means |
+| --- | --- |
+| `status: Some(code)` | the host returned, with that exit code |
+| `signal: Some(11)` | the host was killed — `SIGSEGV` here, so a crash inside the interpreter |
+| both `None` | the host ended and the platform reported neither |
+
+The client distinguishes a dead child from an ordinary transport error by reaping it, so
+a plugin that kills its process becomes one error value rather than an outage. Signals
+are named where POSIX fixes the number (`SIGSEGV`, `SIGABRT`, `SIGKILL` and friends) and
+reported numerically otherwise, because numbers like `SIGBUS` differ between Linux and
+macOS and a wrong name is worse than a number. Dropping a `RemoteRegistry` closes the
+host's stdin and kills anything that ignores it, so a dropped client never leaks a
+process.
 
 ## Host configuration
 

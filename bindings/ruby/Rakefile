@@ -1,0 +1,20 @@
+# frozen_string_literal: true
+
+# Ruby devs reach for `rake` first, so the usual two tasks are here. Packaging the
+# gem — `extconf.rb`, rake-compiler, cross-compiled native gems — waits for the
+# release pass; see docs/bindings.md.
+
+require "rake/testtask"
+
+desc "Build the extension and stage it where Ruby looks for it"
+task :compile do
+  sh File.expand_path("build.sh", __dir__)
+end
+
+Rake::TestTask.new(test: :compile) do |t|
+  t.libs = %w[lib test]
+  t.test_files = FileList["test/**/test_*.rb"]
+  t.warning = false
+end
+
+task default: :test

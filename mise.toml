@@ -31,12 +31,13 @@ java = "20.0.2"
 kotlin = "2.2.20"
 "aqua:ktlint" = "1.8.0"
 
-# bindings/ruby and bindings/node, both still to be written. Pinned now so the
-# versions those bindings get built against are a decision rather than whatever
-# happened to be on the machine that day.
+# bindings/ruby, and bindings/node once it is written. Pinned so the versions a
+# binding is built against are a decision rather than whatever happened to be on the
+# machine that day.
 #
-# Ruby is 3.3 rather than 4.0: `magnus` and `rb-sys` target the 3.x line, and a
-# native extension is exactly the kind of thing a major release breaks.
+# Ruby is 3.3 rather than 4.0 because `magnus` and `rb-sys` target the 3.x line and a
+# native extension is what a major release breaks. 4.0 does in fact build and pass,
+# so this is a floor for what is tested, not a ceiling on what works.
 ruby = "3.3.12"
 node = "26.3.0"
 
@@ -56,7 +57,7 @@ stanchion-ffi/lua54,stanchion-ffi/vendored,stanchion-ffi/signatures,stanchion-ff
 description = "Clippy across the workspace and the bindings"
 run = [
     "cargo clippy --workspace --all-targets --features stanchion/full,stanchion/lua54,stanchion/vendored -- -D warnings",
-    "cargo clippy -p stanchion-python -p stanchion-uniffi --all-targets -- -D warnings",
+    "cargo clippy -p stanchion-python -p stanchion-uniffi -p stanchion-ruby --all-targets -- -D warnings",
 ]
 
 [tasks."test:python"]
@@ -70,6 +71,11 @@ run = [
     "uv run mypy",
 ]
 
+[tasks."test:ruby"]
+description = "Build the Ruby extension and run its suite"
+dir = "bindings/ruby"
+run = "rake"
+
 [tasks."smoke:uniffi"]
 description = "Generate the bindings and run the boundary through Python"
 run = "./bindings/uniffi/smoke.sh"
@@ -80,4 +86,4 @@ run = "./bindings/uniffi/smoke-kotlin.sh"
 
 [tasks.smoke]
 description = "Every binding, end to end"
-depends = ["smoke:uniffi", "smoke:kotlin", "test:python"]
+depends = ["smoke:uniffi", "smoke:kotlin", "test:python", "test:ruby"]

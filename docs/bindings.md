@@ -14,7 +14,7 @@ other four see.
 ```
                         ┌─ bindings/python  (pyo3 + maturin)     ── shipped
                         ├─ bindings/uniffi  (Kotlin, Swift)      ── Kotlin runs; packaging pending
-stanchion-ffi ──────────┼─ bindings/ruby    (magnus)             ── planned
+stanchion-ffi ──────────┼─ bindings/ruby    (magnus)             ── runs; packaging pending
   Stanchion             └─ bindings/node    (neon)               ── planned
   Value
   Policy / CapabilityProvider
@@ -217,6 +217,58 @@ Two things are worth knowing about the shape, both forced by Kotlin:
 The Swift bindings generate alongside the Kotlin but have not been run — this is a
 Linux checkout with no Swift toolchain. Packaging for both (XCFramework and Swift
 Package, AAR with per-ABI libraries) is still to come.
+
+## Ruby
+
+```sh
+mise run test:ruby     # or `rake` from bindings/ruby
+```
+
+```ruby
+require "stanchion"
+
+host = Stanchion::Registry.new(
+  capabilities: { "kv" => ->(call) { STORE.fetch(call[:args].first) } },
+  policy: ->(request) {
+    next Stanchion::Decision.deny("unsigned") if request[:signer] == "unsigned"
+    Stanchion::Decision.grant_with({ "keys" => ["public:*"] })
+  },
+)
+
+report = host.load("plugins/")
+report[:failures].each { |f| warn "#{f[:plugin]}: #{f[:reason]}" }
+
+host.call("greeter", "greet", "world")
+```
+
+A provider is anything responding to `call` — a lambda, or an object with the method
+— handed a Hash with `:plugin`, `:capability`, `:grant` and `:args`. A policy is the
+same shape and must return a `Stanchion::Decision`. Reports come back as Hashes with
+symbol keys, so `report[:loaded]` and `outcome[:error]` read the way Ruby usually
+does.
+
+Failures raise under a `Stanchion::Error` base: `UnknownPluginError`, `PluginError`,
+`LuaError`, `IOError`, `ConfigError`, `CapabilityError`, `ReentrantError`. A provider
+that raises becomes an ordinary Lua error the plugin can `pcall`; a policy that raises
+denies rather than crashing the host.
+
+Symbols cross as strings, in arguments and as Hash keys, since Lua has nothing else to
+call them. `{ a: 1 }` therefore comes back as `{ "a" => 1 }`.
+
+**The GVL is held for the whole call**, so a plugin call blocks the Ruby VM. A
+capability provider is Ruby code and may only run on a thread holding the GVL;
+releasing it would mean the callback arrived on a thread that must not touch the VM.
+That is the same trade the JavaScript binding makes, and the instruction and memory
+limits are what bound it.
+
+`call_async` and `dispatch_async` therefore do **not** free the VM either. What they
+buy is that the plugin may `coroutine.yield`, which the plain call cannot drive — a
+real difference, just not a concurrency one. Ruby has no fiber-scheduler bridge in
+`magnus` to offer anything better yet.
+
+Packaging is still to come: `extconf.rb`, rake-compiler and cross-compiled native
+gems belong to the release pass. `build.sh` stages the extension for development,
+which is what `rake compile` runs.
 
 ## Configuration
 

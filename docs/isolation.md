@@ -67,6 +67,31 @@ accept that. What you get is that the blast radius is the group rather than the 
 and that groups are as separated from each other as plugins are under per-plugin
 isolation.
 
+## Panics, and what cannot be caught
+
+A Rust panic raised inside one of your callbacks is survivable, because a panic
+unwinds. It never crosses the interpreter's C frames — mlua wraps every callback in
+`catch_unwind` and carries the payload out as a Lua error, resuming it once control is
+back in Rust — and `dispatch`, `dispatch_async`, `load_dir` and `reload` catch that
+resumption, so it arrives as a `Panicked` error or a `FailureReason::Panicked` rather
+than on the caller's stack. Recover it by type with `mlua::Error::downcast_ref`, not
+with a `source()` walk.
+
+Being catchable is not the same as being harmless. mlua makes no promise about a state's
+invariants after a caught panic, so treat the plugin as suspect and unload it with
+`Registry::remove` rather than dispatching to it again. Two further limits: a profile
+built with `panic = "abort"` ends the process before any of this runs, and
+`Sandbox::catch_rust_panics` is left at Lua's default, which means a plugin that wraps a
+host call in `pcall` can swallow your panic before you ever see it — pass `false` if
+that matters more than compatibility with plugins already relying on it.
+
+Nothing in-process helps with a failure that does not unwind. `os.exit` calls `exit()`;
+a segfault in a C rock, LuaJIT `ffi` misuse, or a Rust stack overflow raises a signal. A
+handler could log one but cannot resume: the allocator, the VM's invariants and any held
+locks are undefined afterwards, and signal handlers are process-global, so a plugin
+library installing one would hijack the host's own crash reporting. The process boundary
+is the only real answer — see [out-of-process hosting](remote.md).
+
 Each plugin's directory is prepended to its state's `package.path`, so a plugin can
 `require` its own files without knowing where it was installed. That `require` is
 per-plugin: submodules load into the **same environment** as the plugin's own chunk, so

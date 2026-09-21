@@ -136,6 +136,8 @@ pub enum FailureReason {
     DependencyFailed(String),
     /// This plugin is part of a dependency cycle.
     DependencyCycle(Vec<String>),
+    /// Loading the plugin panicked rather than returning an error.
+    Panicked(crate::Panicked),
 }
 
 impl fmt::Display for FailureReason {
@@ -196,6 +198,7 @@ impl fmt::Display for FailureReason {
             FailureReason::DependencyFailed(name) => {
                 write!(f, "skipped because `{name}` failed to load")
             }
+            FailureReason::Panicked(source) => write!(f, "{source}"),
             FailureReason::DependencyCycle(names) => {
                 write!(f, "dependency cycle: {}", names.join(" -> "))
             }
@@ -210,6 +213,7 @@ impl Error for FailureReason {
             FailureReason::Lua(source) => Some(source),
             #[cfg(feature = "signatures")]
             FailureReason::Lock(source) => Some(source),
+            FailureReason::Panicked(source) => Some(source),
             _ => None,
         }
     }

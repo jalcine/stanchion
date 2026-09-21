@@ -1,0 +1,194 @@
+/* Styling on top of Web Awesome: typography, code, and the landing layout.
+   Web Awesome supplies the components and the colour tokens; everything here is
+   about making long-form technical copy and code samples legible. */
+
+:root {
+  --ink: light-dark(#18181b, #ecedee);
+  --ink-soft: light-dark(#52525b, #a1a1aa);
+  --page: light-dark(#fbfbfc, #101012);
+  --panel: light-dark(#ffffff, #18181b);
+  --edge: light-dark(#e4e4e7, #27272a);
+  --accent: light-dark(#1d4ed8, #7ea2ff);
+  --code-bg: light-dark(#f5f5f7, #1c1c20);
+  --measure: 46rem;
+}
+
+html { color-scheme: light dark; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: "Fira Sans", system-ui, sans-serif;
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+code, pre, kbd, .mono { font-family: "Fira Code", ui-monospace, monospace; }
+
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+
+/* ---------- chrome ---------- */
+
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem clamp(1rem, 4vw, 3rem);
+  border-bottom: 1px solid var(--edge);
+  background: color-mix(in oklab, var(--page) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.masthead .wordmark {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 1.05rem;
+  text-decoration: none;
+  color: var(--ink);
+}
+.masthead .wordmark svg { width: 1.4rem; height: 1.4rem; color: var(--accent); }
+.masthead .spacer { flex: 1 1 auto; }
+
+.guides {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  font-size: 0.9rem;
+}
+.guides a { color: var(--ink-soft); text-decoration: none; }
+.guides a:hover { color: var(--accent); }
+.guides a[aria-current="page"] { color: var(--accent); font-weight: 600; }
+
+main { padding: 0 clamp(1rem, 4vw, 3rem) 5rem; }
+
+footer {
+  border-top: 1px solid var(--edge);
+  padding: 2rem clamp(1rem, 4vw, 3rem);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+/* ---------- landing ---------- */
+
+.hero {
+  max-width: 54rem;
+  margin: clamp(2.5rem, 8vw, 5.5rem) auto clamp(2rem, 5vw, 3.5rem);
+}
+.hero h1 {
+  margin: 0 0 0.5rem;
+  font-size: clamp(2.5rem, 7vw, 4rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+.hero .lede { font-size: clamp(1.1rem, 2.4vw, 1.35rem); color: var(--ink-soft); margin: 0 0 1.75rem; }
+.hero .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+
+.split {
+  max-width: 68rem;
+  margin: 0 auto clamp(2.5rem, 6vw, 4rem);
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  align-items: start;
+}
+
+section.band { max-width: 68rem; margin: 0 auto clamp(3rem, 7vw, 4.5rem); }
+section.band > h2 { font-size: clamp(1.5rem, 3.5vw, 2rem); letter-spacing: -0.01em; margin: 0 0 0.5rem; }
+section.band > p.sub { color: var(--ink-soft); margin: 0 0 1.5rem; max-width: var(--measure); }
+
+.cards {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+.cards h3 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+.cards p { margin: 0; color: var(--ink-soft); font-size: 0.95rem; }
+
+/* ---------- prose ---------- */
+
+.prose { max-width: var(--measure); margin: clamp(2rem, 5vw, 3rem) auto 0; }
+.prose h1 { font-size: clamp(2rem, 5vw, 2.75rem); letter-spacing: -0.02em; margin: 0 0 1.5rem; }
+.prose h2 {
+  margin: 2.75rem 0 0.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--edge);
+  font-size: 1.45rem;
+  letter-spacing: -0.01em;
+}
+.prose h3 { margin: 2rem 0 0.5rem; font-size: 1.15rem; }
+.prose h4 { margin: 1.5rem 0 0.4rem; font-size: 1rem; color: var(--ink-soft); }
+.prose p, .prose li { overflow-wrap: break-word; }
+.prose ul, .prose ol { padding-left: 1.25rem; }
+.prose li { margin: 0.35rem 0; }
+.prose strong { font-weight: 600; }
+
+.prose blockquote {
+  margin: 1.5rem 0;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 3px solid var(--accent);
+  color: var(--ink-soft);
+}
+
+/* Code: the centrepiece of these docs, so it gets room and never overflows. */
+.prose :not(pre) > code,
+.split :not(pre) > code {
+  background: var(--code-bg);
+  border: 1px solid var(--edge);
+  border-radius: 0.3rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.875em;
+}
+
+pre {
+  margin: 1.25rem 0;
+  padding: 1rem 1.1rem;
+  background: var(--code-bg);
+  border: 1px solid var(--edge);
+  border-radius: 0.6rem;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* Tables carry a lot of the meaning in these guides. */
+.prose table, .band table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.25rem 0;
+  font-size: 0.94rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose th, .prose td, .band th, .band td {
+  border-bottom: 1px solid var(--edge);
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+.prose th, .band th { font-weight: 600; white-space: nowrap; }
+
+.guide-index { list-style: none; padding: 0; }
+.guide-index li { margin: 0.6rem 0; }
+
+.pagefoot {
+  max-width: var(--measure);
+  margin: 3.5rem auto 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--edge);
+  font-size: 0.92rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

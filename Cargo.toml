@@ -4,8 +4,8 @@ resolver = "3"
 # lockfile and one `cargo clippy` cover them, but not default members: building
 # them needs a Python, Ruby or Node toolchain that a Rust-only checkout will not
 # have, and `cargo test` should not start demanding one.
-members = ["crates/*", "bindings/*"]
-default-members = ["crates/*"]
+members = ["crates/*", "bindings/*", "tools/*"]
+default-members = ["crates/*", "tools/*"]
 
 [workspace.package]
 version = "0.1.0"

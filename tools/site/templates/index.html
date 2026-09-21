@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>stanchion · Lua plugins for Rust applications</title>
+<meta name="description" content="Typed Lua plugin contracts for Rust: sandboxing, declared capabilities, signed packages, and out-of-process hosting.">
+<link rel="icon" href="assets/stanchion.svg" type="image/svg+xml">
+<meta property="og:title" content="stanchion">
+<meta property="og:description" content="Lua plugins for Rust applications. Typed contracts and dependency wiring on one side; sandboxing, capabilities and signatures on the other.">
+<meta property="og:type" content="website">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <wa-button size="small" appearance="plain" href="docs/index.html">Guides</wa-button>
+  <wa-button size="small" appearance="outlined" href="{{repo}}">GitHub</wa-button>
+</header>
+
+<main>
+
+<div class="hero">
+  <wa-badge variant="neutral" appearance="outlined">MIT or Apache-2.0</wa-badge>
+  <h1>stanchion</h1>
+  <p class="lede">
+    Lua plugins for Rust applications. A stanchion both bears load and marks a
+    boundary — which is what this does: typed contracts and dependency wiring on one
+    side, sandboxing, capabilities and signatures on the other.
+  </p>
+  <div class="actions">
+    <wa-button variant="brand" href="docs/lua-class.html">Read the guides</wa-button>
+    <wa-button appearance="outlined" href="{{repo}}">View on GitHub</wa-button>
+  </div>
+</div>
+
+<div class="split">
+  <div>
+    <h2 style="margin-top:0">Describe the contract in Rust</h2>
+    <p style="color:var(--ink-soft)">
+      Write a trait. <code>#[lua_class]</code> generates the class handle, the instance
+      handle, and the conversions — and validates the contract when a plugin
+      <em>loads</em>, not when a method is finally called at 3am.
+    </p>
+<pre><code>#[lua_class]
+pub trait Greeter {
+    fn new(greeting: String) -> Result&lt;Self&gt;;
+    fn greet(&amp;self, who: String) -> Result&lt;String&gt;;
+
+    #[lua(field)]
+    fn greeting(&amp;self) -> Result&lt;String&gt;;
+
+    #[lua(optional)]
+    fn on_unload(&amp;self) -> Result&lt;Option&lt;()&gt;&gt;;
+
+    async fn fetch(&amp;self, url: String) -> Result&lt;String&gt;;
+}</code></pre>
+  </div>
+  <div>
+    <h2 style="margin-top:0">Implement it in Lua</h2>
+    <p style="color:var(--ink-soft)">
+      An ordinary Lua class. The trait stays dyn-compatible, so a native Rust
+      implementation drops into the same <code>Vec&lt;Box&lt;dyn Greeter&gt;&gt;</code>.
+    </p>
+<pre><code>local Greeter = {}
+Greeter.__index = Greeter
+
+function Greeter.new(greeting)
+  return setmetatable({ greeting = greeting }, Greeter)
+end
+
+function Greeter:greet(who)
+  return self.greeting .. ", " .. who
+end
+
+return Greeter</code></pre>
+  </div>
+</div>
+
+<section class="band">
+  <h2>Seven layers, each optional</h2>
+  <p class="sub">
+    Every layer is a feature you turn on. Depend on the facade, take what you need,
+    and pay for nothing else — the sigstore verifier alone brings a large dependency
+    graph, so it lives in its own crate.
+  </p>
+  <div class="cards">
+    <wa-card><h3><a href="docs/lua-class.html">Typed contracts</a></h3>
+      <p>A Rust trait becomes a Lua class binding. Tables or userdata; sync or async.</p></wa-card>
+    <wa-card><h3><a href="docs/registry.html">A plugin registry</a></h3>
+      <p>Manifests, discovery, dependency order, hot reload, and per-plugin failure isolation.</p></wa-card>
+    <wa-card><h3><a href="docs/isolation.html">Isolation</a></h3>
+      <p>One shared state or one per plugin, with VM-enforced memory and per-call instruction limits.</p></wa-card>
+    <wa-card><h3><a href="docs/capabilities.html">Declared capabilities</a></h3>
+      <p>A plugin asks; your policy grants, <em>narrows</em>, or refuses. Deny by default.</p></wa-card>
+    <wa-card><h3><a href="docs/signatures.html">Signatures</a></h3>
+      <p>Sigstore-backed provenance over every file — and provenance can tier what a plugin may reach.</p></wa-card>
+    <wa-card><h3><a href="docs/distribution.html">Distribution</a></h3>
+      <p>Packages, an index anyone can host, lockfile pinning, and an upgrade review before you trust it.</p></wa-card>
+    <wa-card><h3><a href="docs/remote.html">Out of process</a></h3>
+      <p>Run plugins in a child over JSON-RPC, so a crash inside the interpreter is survivable.</p></wa-card>
+  </div>
+</section>
+
+<section class="band">
+  <h2>What a crash costs you</h2>
+  <p class="sub">
+    In-process limits stop a runaway plugin. They cannot stop a segfault in a C rock,
+    or rescue a state whose allocator already failed.
+  </p>
+  <table>
+    <thead><tr><th>The plugin does</th><th>In process</th><th>Out of process</th></tr></thead>
+    <tbody>
+      <tr><td><code>while true do end</code></td><td>instruction limit</td><td>instruction limit</td></tr>
+      <tr><td>allocation storm</td><td>memory limit</td><td>memory limit</td></tr>
+      <tr><td><code>os.exit</code>, or a C-rock segfault</td><td><strong>your application dies</strong></td><td><code>RemoteError::HostGone</code></td></tr>
+      <tr><td>interpreter panic</td><td>unwinds into your stack</td><td>the child dies; you keep serving</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="band">
+  <h2>Built for</h2>
+  <p class="sub">
+    Semi-trusted authors: your team, your customers under contract, a curated
+    community. See the limits below before you take code from strangers.
+  </p>
+  <div class="cards">
+    <wa-card><h3>Editors and developer tools</h3>
+      <p>Plugins depending on a shared utilities plugin, reloaded on save without a restart.</p></wa-card>
+    <wa-card><h3>Games with mod support</h3>
+      <p>Load-ordered mods, one broken mod reported rather than fatal, and a per-mod instruction budget.</p></wa-card>
+    <wa-card><h3>Programmable gateways</h3>
+      <p>Per-route transforms authored outside the binary, dispatched asynchronously.</p></wa-card>
+    <wa-card><h3>Rules and alerting</h3>
+      <p>Customer-authored detection logic, where a first-party signature earns network access.</p></wa-card>
+    <wa-card><h3>Multi-tenant business rules</h3>
+      <p>Pricing and eligibility per tenant, in their own state, without a deploy.</p></wa-card>
+    <wa-card><h3>Data pipelines</h3>
+      <p>Analysts write transforms and get real libraries from LuaRocks, not a bare interpreter.</p></wa-card>
+  </div>
+</section>
+
+<section class="band">
+  <h2>Honest limits</h2>
+  <p class="sub">A project page that omits these is marketing. The README does not omit them.</p>
+  <wa-callout variant="warning">
+    <strong>Not yet safe for code from strangers.</strong>
+    Per-plugin isolation bounds CPU and memory, but a plugin still runs in your
+    process unless you host it out of process. Capabilities bound what a plugin can
+    <em>reach</em>, not what it does with what it got — and they are only as strong as
+    the providers that enforce their grants. Manifests are self-asserted until
+    signatures make them attributable.
+  </wa-callout>
+  <ul>
+    <li>Methods must return <code>mlua::Result</code>; other error types are not unwrapped.</li>
+    <li>Generic traits are rejected — a Lua class has no type parameters.</li>
+    <li>Per-plugin isolation and <code>[dependencies]</code> are mutually exclusive: Lua values cannot cross states.</li>
+    <li>A revocation list is consulted at load, so a running plugin keeps running until it is reloaded.</li>
+  </ul>
+</section>
+
+<section class="band">
+  <h2>The crates</h2>
+  <p class="sub">A facade plus the layers behind it, so heavy dependencies stay optional.</p>
+  <table>
+    <thead><tr><th>Crate</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion"><code>stanchion</code></a></td><td>the facade, and the <code>plugin-host</code> binary</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-core"><code>stanchion-core</code></a></td><td>the <code>#[lua_class]</code> contract</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-macros"><code>stanchion-macros</code></a></td><td>the attribute macro</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-registry"><code>stanchion-registry</code></a></td><td>manifests, sandboxing, capabilities, signatures, reload</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-rocks"><code>stanchion-rocks</code></a></td><td>LuaRocks trees and version constraints</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-sigstore"><code>stanchion-sigstore</code></a></td><td>keyless verification, quarantining a large graph</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-remote"><code>stanchion-remote</code></a></td><td>out-of-process hosting over JSON-RPC 2.0</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-dist"><code>stanchion-dist</code></a></td><td>packages, the index protocol, pinned installs</td></tr>
+      <tr><td><a href="{{repo}}/tree/main/crates/stanchion-index"><code>stanchion-index</code></a></td><td>serving an index, framework-neutral</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="band" id="documentation">
+  <h2>Guides</h2>
+  <p class="sub">Rendered from the repository's own documentation, so they cannot drift from it.</p>
+  {{nav}}
+</section>
+
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="{{repo}}/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="{{repo}}/blob/main/LICENSE-APACHE">Apache-2.0</a>
+  · <a href="{{repo}}">source</a>
+</footer>
+
+</body>
+</html>

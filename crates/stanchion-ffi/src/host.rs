@@ -356,6 +356,7 @@ impl Stanchion {
         Ok(match registry.isolation() {
             Isolation::Shared => "shared",
             Isolation::PerPlugin(_) => "per-plugin",
+            Isolation::PerGroup(_) => "per-group",
         })
     }
 

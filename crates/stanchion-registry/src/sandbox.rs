@@ -49,6 +49,14 @@ impl Budget {
         self.limit
     }
 
+    /// Instructions charged against the allowance since the last [`Budget::reset`].
+    ///
+    /// Counted per *state*, so under [`crate::Isolation::PerGroup`] every member of a
+    /// dependency group reads the same number: the group is the accounting unit.
+    pub fn used(&self) -> u64 {
+        self.used.load(Ordering::Relaxed)
+    }
+
     fn consume(&self, amount: u64) -> mlua::Result<mlua::VmState> {
         let used = self
             .used

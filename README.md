@@ -77,7 +77,7 @@ assert_eq!(greeter.greet("world".to_string())?, "hello, world");
 | ----------------------------------------- | ------------------------------------------------------------------------- |
 | [Typed class bindings](docs/lua-class.md) | what `#[lua_class]` generates, its attributes, what it validates          |
 | [Plugin registry](docs/registry.md)       | manifests, discovery, dispatch, reload, failure isolation                 |
-| [Isolation](docs/isolation.md)            | shared vs per-plugin states, sandbox policy, resource limits              |
+| [Isolation](docs/isolation.md)            | shared, per-group and per-plugin states, sandbox policy, resource limits |
 | [Capabilities](docs/capabilities.md)      | declared authority, policy, narrowing, audit, revocation                  |
 | [Signatures](docs/signatures.md)          | directory digests, sigstore, provenance-tiered capabilities               |
 | [Distribution](docs/distribution.md)      | packages, an index anyone can run, lockfile pinning, upgrade review       |
@@ -132,8 +132,9 @@ so a host error enum needs no wrapping at the call site.
 
 ## Limitations
 
-- Per-plugin isolation and `[dependencies]` are mutually exclusive: Lua values cannot
-  cross states, so a plugin chain needs shared isolation.
+- Plugins that exchange exports have to share a Lua state, because Lua values cannot
+  cross states. `Registry::grouped` makes that grouping automatic — one state per
+  dependency component — but members of a group share a heap and a budget.
 - In-process isolation bounds CPU and memory, but cannot survive a crash inside the
   interpreter; use the `remote` feature when that matters.
 - Capabilities bound what a plugin can reach, not what it does with what it got, and

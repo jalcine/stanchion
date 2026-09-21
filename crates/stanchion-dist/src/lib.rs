@@ -70,7 +70,7 @@ pub mod http;
 
 pub use index::{
     Catalog, DirectoryIndex, Freshness, IndexDocument, IndexError, PluginIndex, PluginReleases,
-    Release, CATALOG_PATH, INDEX_SCHEMA,
+    Release, CATALOG_PATH, INDEX_SCHEMA, releases_path, validate_name,
 };
 pub use package::{Limits, PackageError, PACKAGE_MEDIA_TYPE};
 

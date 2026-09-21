@@ -33,6 +33,7 @@ required-features = ["remote"]
 mlua.workspace = true
 stanchion-core.workspace = true
 stanchion-dist = { workspace = true, optional = true }
+stanchion-index = { workspace = true, optional = true }
 stanchion-registry = { workspace = true, optional = true }
 stanchion-remote = { workspace = true, optional = true }
 stanchion-rocks = { workspace = true, optional = true }
@@ -54,6 +55,9 @@ distribution = ["signatures", "dep:stanchion-dist", "stanchion-dist/package"]
 # Reading an index and fetching packages over HTTPS. Quarantined behind
 # its own feature because it is where the HTTP and TLS dependencies arrive.
 distribution-client = ["distribution", "stanchion-dist/client"]
+# Serving an index: the framework-neutral core. Adapters are their own crates
+# (`stanchion-index-poem`) or a feature of the core (`tower`).
+index-server = ["distribution", "dep:stanchion-index"]
 
 # Everything testable without the sigstore dependency graph. Integration tests are
 # gated per feature, so a run without this silently covers almost nothing.

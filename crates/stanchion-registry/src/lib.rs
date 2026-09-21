@@ -99,6 +99,10 @@ pub struct Plugin<C: LuaClass> {
     granted: Vec<String>,
     #[cfg(feature = "signatures")]
     signer: Signer,
+    // Kept so a revocation list arriving after load can be applied without going back
+    // to the filesystem, where the bytes may no longer be the ones that were verified.
+    #[cfg(feature = "signatures")]
+    digest: Option<DirectoryDigest>,
     manifest: Manifest,
     instance: C::Instance,
     exports: Option<Exports>,
@@ -137,6 +141,15 @@ impl<C: LuaClass> Plugin<C> {
     #[cfg(feature = "signatures")]
     pub fn signer(&self) -> &Signer {
         &self.signer
+    }
+
+    /// The digest of the bytes this plugin was loaded from, when one was computed.
+    ///
+    /// `None` when nothing needed it: no verifier, no lockfile and no revocation list
+    /// were configured, so the directory was never hashed.
+    #[cfg(feature = "signatures")]
+    pub fn digest(&self) -> Option<&DirectoryDigest> {
+        self.digest.as_ref()
     }
 
     /// Capabilities this plugin was actually granted, after policy ran.
@@ -624,6 +637,8 @@ impl<C: LuaClass> Registry<C> {
                         granted,
                         #[cfg(feature = "signatures")]
                         signer,
+                        #[cfg(feature = "signatures")]
+                        digest,
                         manifest,
                         instance,
                         exports,
@@ -721,11 +736,101 @@ impl<C: LuaClass> Registry<C> {
             granted: built.granted,
             #[cfg(feature = "signatures")]
             signer,
+            #[cfg(feature = "signatures")]
+            digest,
             manifest,
             instance,
             exports,
         };
         Ok(())
+    }
+
+    /// Unloads one plugin, returning it so the caller decides when it is dropped.
+    ///
+    /// Dropping it releases the plugin's Lua state under per-plugin isolation, and its
+    /// exports proxy stops resolving, so dependents see the table empty rather than
+    /// stale. Handles the caller still holds keep working until then.
+    pub fn remove(&mut self, name: &str) -> Result<Plugin<C>, RegistryError> {
+        let position = *self
+            .index
+            .get(name)
+            .ok_or_else(|| RegistryError::UnknownPlugin(name.to_string()))?;
+        if position >= self.plugins.len() {
+            return Err(RegistryError::UnknownPlugin(name.to_string()));
+        }
+        let plugin = self.plugins.remove(position);
+
+        // Removal shifts every later plugin down, so the name index is rebuilt rather
+        // than patched: an off-by-one here would hand a caller another plugin.
+        self.index.clear();
+        for (position, plugin) in self.plugins.iter().enumerate() {
+            self.index.insert(plugin.manifest.name.clone(), position);
+        }
+        Ok(plugin)
+    }
+
+    /// Replaces the revocation list and unloads every loaded plugin it now names.
+    ///
+    /// A revocation list is the mutable half of provenance: it changes while your
+    /// process is running, which is precisely when it matters. Consulting it only at
+    /// load would mean a plugin withdrawn at noon keeps running until something else
+    /// happens to reload it. This applies a new list to what is already loaded, and
+    /// to every later load.
+    ///
+    /// Each returned [`LoadFailure`] names a plugin that was unloaded and why. The
+    /// plugins themselves are dropped here, so a caller holding an instance across
+    /// this call keeps talking to a plugin the host has just refused — take the
+    /// unloaded names as the signal to release those handles.
+    ///
+    /// A digest-bearing list needs a digest to compare against. Plugins loaded with
+    /// one recorded are checked against that, not against the directory as it stands
+    /// now. For a plugin loaded without one — nothing at load needed it — the
+    /// directory is hashed here; if that read fails the plugin is unloaded with the
+    /// I/O error as its reason, because a trust decision that cannot be made is not
+    /// one to resolve in the plugin's favour.
+    #[cfg(feature = "signatures")]
+    pub fn apply_revocations(&mut self, revocations: Revocations) -> Vec<LoadFailure> {
+        let mut refused: Vec<LoadFailure> = Vec::new();
+
+        if !revocations.is_empty() {
+            let needs_digest = revocations.needs_digest();
+            for plugin in &self.plugins {
+                let digest = match (&plugin.digest, needs_digest) {
+                    (Some(digest), _) => Some(::std::borrow::Cow::Borrowed(digest)),
+                    (None, false) => None,
+                    (None, true) => match DirectoryDigest::compute(&plugin.manifest.dir) {
+                        Ok(digest) => Some(::std::borrow::Cow::Owned(digest)),
+                        Err(source) => {
+                            refused.push(LoadFailure {
+                                name: plugin.manifest.name.clone(),
+                                dir: plugin.manifest.dir.clone(),
+                                reason: FailureReason::Io(source),
+                            });
+                            continue;
+                        }
+                    },
+                };
+                if let Some(reason) = revocations.check(digest.as_deref(), &plugin.signer) {
+                    refused.push(LoadFailure {
+                        name: plugin.manifest.name.clone(),
+                        dir: plugin.manifest.dir.clone(),
+                        reason: FailureReason::Revoked(reason),
+                    });
+                }
+            }
+        }
+
+        // Stored before the removals so a later load is judged by the same list, and
+        // after the loop so the loop reads the list it was handed.
+        self.revocations = Some(revocations);
+
+        for failure in &refused {
+            // The name came from the plugin list a moment ago, so a failure to find it
+            // is not something a caller can act on: the unload has already happened
+            // for every other name.
+            let _ = self.remove(&failure.name);
+        }
+        refused
     }
 
     /// Calls every plugin, collecting one result each.

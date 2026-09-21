@@ -102,15 +102,44 @@ matches, and an entry naming neither is a configuration error rather than one th
 silently matches nothing.
 
 Revocation works **without any verifier**: a digest denylist refuses a known-bad build
-with no signing infrastructure at all. The list is consulted at load, so a plugin
-already running when an entry is added keeps running until it is reloaded.
+with no signing infrastructure at all.
+
+### Applying a list to plugins already running
+
+A revocation list changes while your process is running, which is exactly when it
+matters. `apply_revocations` replaces the list and unloads every loaded plugin it now
+names, returning one `LoadFailure` per plugin dropped:
+
+```rust
+for refused in registry.apply_revocations(Revocations::load(&path)?) {
+    tracing::warn!("unloaded {}: {}", refused.name, refused.reason);
+}
+```
+
+The new list also governs later loads, so re-running discovery does not resurrect what
+it refused.
+
+Checks run against the digest each plugin was **loaded from**, recorded at load and
+readable as `plugin.digest()` — not against the directory as it stands now, which may
+have changed underneath a running plugin. An identity-only list needs no digest at all;
+it is answered from the recorded signer without touching the filesystem. For a plugin
+loaded without a digest — nothing at load needed one — the directory is hashed at this
+point, and if that read fails the plugin is unloaded with the I/O error as its reason:
+a trust decision that cannot be made is not one to resolve in the plugin's favour.
+
+Unloading drops the `Plugin`, which releases its Lua state under per-plugin isolation
+and leaves its exports proxy resolving to nothing. A caller still holding an instance
+keeps talking to a plugin the host has just refused, so take the returned names as the
+signal to release those handles. `Registry::remove` does the same thing for one plugin
+by name, and hands it back so the caller chooses when it is dropped.
 
 ## What signatures do not buy
 
 - **Origin and integrity, not safety.** A verified plugin from a trusted author can
   still be hostile. A signature says whom to hold responsible.
 - **Revocation is a separate list you maintain.** A withdrawn plugin's signature stays
-  valid; nothing but the list says otherwise.
+  valid; nothing but the list says otherwise, and nothing fetches it for you — you
+  decide when to re-read it and call `apply_revocations`.
 
 ---
 

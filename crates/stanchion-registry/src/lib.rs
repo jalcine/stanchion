@@ -40,7 +40,10 @@ pub use stanchion_rocks as rocks;
 
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
-pub use manifest::{DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType};
+pub use stanchion_abi::manifest::{
+    DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType,
+};
+pub use manifest::{discover, read_manifest, resolve_order};
 pub use panics::Panicked;
 /// Re-exported because [`Decision::GrantWith`] takes a `toml::Table`: a public API
 /// that names a foreign type has to hand you that type.
@@ -855,7 +858,7 @@ impl<C: LuaClass> Registry<C> {
             }))
         };
 
-        let manifest = Manifest::read(&dir).map_err(&fail)?;
+        let manifest = manifest::read_manifest(&dir).map_err(&fail)?;
         if manifest.name != name {
             return Err(fail(FailureReason::Manifest(format!(
                 "manifest renamed the plugin to `{}`; remove and load it again instead",

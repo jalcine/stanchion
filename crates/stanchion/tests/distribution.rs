@@ -450,7 +450,7 @@ fn a_lockfile_round_trips_and_refuses_a_different_signer() -> TestResult {
     let dir = temp.path().join("greeter");
     write_plugin(&dir, "name = \"greeter\"\nversion = \"1.0.0\"\n", GREETER)?;
     let digest = DirectoryDigest::compute(&dir)?;
-    let manifest = stanchion::registry::Manifest::read(&dir)?;
+    let manifest = stanchion::registry::read_manifest(&dir)?;
 
     let mut lockfile = Lockfile::new();
     lockfile.pin(

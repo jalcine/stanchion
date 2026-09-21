@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 mlua = { workspace = true, features = ["serde"] }
+stanchion-abi.workspace = true
 stanchion-core.workspace = true
 semver.workspace = true
 serde.workspace = true

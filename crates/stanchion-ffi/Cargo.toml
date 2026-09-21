@@ -10,6 +10,7 @@ repository.workspace = true
 # `send` is not optional here. Every foreign runtime calls in from threads it chooses,
 # so the registry has to be `Send + Sync` before a binding can hold one.
 stanchion-registry = { workspace = true, features = ["config", "send"] }
+stanchion-abi = { workspace = true, features = ["lua"] }
 mlua = { workspace = true, features = ["send"] }
 serde.workspace = true
 toml.workspace = true

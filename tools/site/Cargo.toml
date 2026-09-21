@@ -1,0 +1,18 @@
+[package]
+name = "stanchion-site"
+description = "Generates the stanchion project site from the repository's own documentation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "stanchion-site"
+path = "src/main.rs"
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+[lints]
+workspace = true

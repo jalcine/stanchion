@@ -1,8 +1,8 @@
 # WASM plugins
 
 Stanchion supports WASM-based plugins alongside Lua plugins. Both run in the same
-registry and are callable through the same [`Stanchion`] API, with the manifest's
-`plugin_type` field selecting the runtime.
+registry and are callable through the same [`Stanchion`](../bindings.md) API, with
+the manifest's `plugin_type` field selecting the runtime.
 
 ## Quick start
 

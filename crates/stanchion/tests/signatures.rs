@@ -507,3 +507,154 @@ fn a_revocation_entry_naming_nothing_is_a_configuration_error() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_revocation_arriving_after_load_unloads_the_running_plugin() -> TestResult {
+    let root = tempfile::tempdir()?;
+    write_plugin(
+        root.path(),
+        "probe",
+        "name = \"probe\"\n",
+        &probe_source(r#"return "ok""#),
+    )?;
+    write_plugin(
+        root.path(),
+        "other",
+        "name = \"other\"\n",
+        &probe_source(r#"return "fine""#),
+    )?;
+    sign(&root.path().join("probe"))?;
+    sign(&root.path().join("other"))?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(StubVerifier::new("repo:acme/plugins"));
+    assert!(registry.load_dir(root.path())?.is_clean());
+    assert_eq!(registry.len(), 2);
+
+    // The digest is the one the plugin was loaded from, recorded at load.
+    let denied = registry
+        .get("probe")
+        .and_then(|plugin| plugin.digest())
+        .ok_or("the plugin should carry the digest it was verified against")?
+        .hex();
+
+    let refused = registry.apply_revocations(Revocations::new().deny_digest(denied, "withdrawn"));
+    assert_eq!(refused.len(), 1, "got: {refused:?}");
+    let failure = refused.first().ok_or("a refusal was reported")?;
+    assert_eq!(failure.name, "probe");
+    assert!(
+        matches!(&failure.reason, FailureReason::Revoked(_)),
+        "got: {}",
+        failure.reason
+    );
+    assert!(failure.reason.to_string().contains("withdrawn"));
+
+    // The revoked plugin is gone; the untouched one is still addressable, which is
+    // what proves the name index was rebuilt rather than left pointing at a shifted
+    // slot.
+    assert_eq!(registry.len(), 1);
+    assert!(registry.get("probe").is_none());
+    let other = registry.get("other").ok_or("`other` should still be loaded")?;
+    assert_eq!(other.name(), "other");
+    assert_eq!(other.instance().run(String::new())?, "fine");
+    Ok(())
+}
+
+#[test]
+fn an_identity_revocation_after_load_needs_no_digest() -> TestResult {
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    sign(&root.path().join("probe"))?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(StubVerifier::new("repo:acme/plugins"));
+    assert!(registry.load_dir(root.path())?.is_clean());
+
+    // Delete the directory the plugin came from: an identity-only list is answered
+    // from the recorded signer, so it must not go looking for the bytes.
+    fs::remove_dir_all(root.path().join("probe"))?;
+
+    let refused = registry
+        .apply_revocations(Revocations::new().deny_identity("repo:acme/plugins", "key compromise"));
+    assert_eq!(refused.len(), 1, "got: {refused:?}");
+    assert!(
+        refused
+            .first()
+            .is_some_and(|failure| failure.reason.to_string().contains("key compromise")),
+        "got: {refused:?}"
+    );
+    assert_eq!(registry.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn an_unrelated_revocation_leaves_a_loaded_plugin_alone() -> TestResult {
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    sign(&root.path().join("probe"))?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(StubVerifier::new("repo:acme/plugins"));
+    assert!(registry.load_dir(root.path())?.is_clean());
+
+    let refused = registry.apply_revocations(
+        Revocations::new()
+            .deny_digest("0".repeat(64), "another build")
+            .deny_identity("repo:someone/else", "not us"),
+    );
+    assert!(refused.is_empty(), "got: {refused:?}");
+    assert_eq!(registry.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn the_new_list_also_governs_later_loads() -> TestResult {
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    sign(&root.path().join("probe"))?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_verifier(StubVerifier::new("repo:acme/plugins"));
+    assert!(registry.load_dir(root.path())?.is_clean());
+    assert_eq!(
+        registry
+            .apply_revocations(
+                Revocations::new().deny_identity("repo:acme/plugins", "key compromise")
+            )
+            .len(),
+        1
+    );
+
+    // Loading it again must not resurrect it: the list the recheck installed stays.
+    let report = registry.load_dir(root.path())?;
+    assert!(report.loaded.is_empty(), "got: {:?}", report.loaded);
+    assert!(
+        first_failure(&report)?
+            .to_string()
+            .contains("key compromise")
+    );
+    Ok(())
+}
+
+#[test]
+fn removing_a_plugin_keeps_the_rest_addressable() -> TestResult {
+    let root = tempfile::tempdir()?;
+    for name in ["a", "b", "c"] {
+        write_plugin(
+            root.path(),
+            name,
+            &format!("name = \"{name}\"\n"),
+            &probe_source(&format!(r#"return "{name}""#)),
+        )?;
+    }
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
+    assert!(registry.load_dir(root.path())?.is_clean());
+
+    let removed = registry.remove("a")?;
+    assert_eq!(removed.name(), "a");
+    assert_eq!(registry.len(), 2);
+    for name in ["b", "c"] {
+        let plugin = registry.get(name).ok_or("the plugin should remain")?;
+        assert_eq!(plugin.instance().run(String::new())?, name);
+    }
+    assert!(registry.remove("a").is_err());
+    Ok(())
+}

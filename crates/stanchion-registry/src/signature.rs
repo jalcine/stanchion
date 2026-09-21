@@ -383,6 +383,14 @@ impl Revocations {
         self.revoked.is_empty()
     }
 
+    /// Whether any entry names a digest, and so needs one to be checked against.
+    ///
+    /// A list of identities alone can be applied to an already-loaded plugin from its
+    /// recorded signer, without going back to the filesystem for its bytes.
+    pub fn needs_digest(&self) -> bool {
+        self.revoked.iter().any(|entry| entry.digest.is_some())
+    }
+
     /// Returns why this plugin is refused, or `None` if it is not.
     ///
     /// Digests are compared case-insensitively so a list written by hand still matches.

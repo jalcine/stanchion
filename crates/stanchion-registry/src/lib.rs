@@ -58,6 +58,7 @@ pub use signature::{
 };
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
@@ -67,6 +68,65 @@ use stanchion_core::{LuaClass, LuaObject};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";
+
+/// Which plugins have to share a Lua state.
+///
+/// Two plugins must share one exactly when a chain of `[dependencies]` connects them,
+/// because that chain is what carries Lua values between them. So the grouping is the
+/// connected components of the dependency graph, read as undirected: a dependency binds
+/// both ends.
+///
+/// Returns a component representative per plugin name. A dependency has to be present
+/// in the same load for the plugin to load at all, so a component is always resolved
+/// within one call and never has to join a state that is already running.
+fn dependency_components(manifests: &[Manifest]) -> HashMap<String, usize> {
+    // Union-find over manifest positions, with path halving. Plugin counts are small,
+    // so this is written to be obviously correct rather than to be fast.
+    let mut parent: Vec<usize> = (0..manifests.len()).collect();
+
+    fn find(parent: &mut [usize], mut node: usize) -> usize {
+        while let Some(&up) = parent.get(node) {
+            if up == node {
+                return node;
+            }
+            // Halve the path on the way up so repeated lookups stay cheap.
+            if let Some(&grand) = parent.get(up)
+                && let Some(slot) = parent.get_mut(node)
+            {
+                *slot = grand;
+            }
+            node = up;
+        }
+        node
+    }
+
+    let position: HashMap<&str, usize> = manifests
+        .iter()
+        .enumerate()
+        .map(|(at, manifest)| (manifest.name.as_str(), at))
+        .collect();
+
+    for (at, manifest) in manifests.iter().enumerate() {
+        for name in manifest.dependencies.keys() {
+            if let Some(&other) = position.get(name.as_str()) {
+                let (left, right) = (find(&mut parent, at), find(&mut parent, other));
+                if left != right
+                    && let Some(slot) = parent.get_mut(left)
+                {
+                    *slot = right;
+                }
+            }
+        }
+    }
+
+    // A representative only means anything once every union is done.
+    let mut root = HashMap::with_capacity(manifests.len());
+    for (at, manifest) in manifests.iter().enumerate() {
+        let representative = find(&mut parent, at);
+        root.insert(manifest.name.clone(), representative);
+    }
+    root
+}
 
 /// Key a plugin publishes its public surface under.
 pub const EXPORTS_KEY: &str = "exports";
@@ -97,6 +157,7 @@ pub struct Plugin<C: LuaClass> {
     budget: Option<Budget>,
     environment: Table,
     granted: Vec<String>,
+    group: Group,
     #[cfg(feature = "signatures")]
     signer: Signer,
     // Kept so a revocation list arriving after load can be applied without going back
@@ -133,8 +194,19 @@ impl<C: LuaClass> Plugin<C> {
     }
 
     /// This plugin's instruction allowance, when one is configured.
+    ///
+    /// Under [`Isolation::PerGroup`] the allowance belongs to the group, so every
+    /// member of a dependency chain reports the same one.
     pub fn budget(&self) -> Option<&Budget> {
         self.budget.as_ref()
+    }
+
+    /// Which state this plugin runs in.
+    ///
+    /// Meaningful under [`Isolation::PerGroup`], where two plugins reporting the same
+    /// [`Group`] share a state; the other modes report group `0` for everything.
+    pub fn group(&self) -> Group {
+        self.group
     }
 
     /// Who signed this plugin.
@@ -263,6 +335,27 @@ pub enum Isolation {
     /// only mode in which they can be enforced per plugin. The cost is that Lua
     /// values cannot cross states, so `[dependencies]` exports cannot be injected.
     PerPlugin(Box<Sandbox>),
+    /// One state per dependency group, built under a [`Sandbox`] policy.
+    ///
+    /// Plugins wired together by `[dependencies]` share a state, because that is what
+    /// lets exports cross between them; plugins with nothing between them are kept
+    /// apart. The group, not the plugin, is then the accounting unit: memory and
+    /// instruction limits apply to the whole group.
+    PerGroup(Box<Sandbox>),
+}
+
+/// Which state a plugin runs in, when the registry is the one deciding.
+///
+/// Two plugins reporting the same group share a Lua state, and so share a heap, a
+/// memory limit and an instruction budget. Under the other isolation modes every plugin
+/// reports group `0`, which is the truth: one state for all of them, or one each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Group(u64);
+
+impl fmt::Display for Group {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 /// A policy decision, boxed for storage.
@@ -284,6 +377,7 @@ pub struct Registry<C: LuaClass> {
     constructor: String,
     plugins: Vec<Plugin<C>>,
     index: HashMap<String, usize>,
+    next_group: u64,
     #[cfg(feature = "signatures")]
     verifier: Option<Box<dyn PluginVerifier>>,
     #[cfg(feature = "signatures")]
@@ -314,6 +408,7 @@ impl<C: LuaClass> Registry<C> {
             constructor: DEFAULT_CONSTRUCTOR.to_string(),
             plugins: Vec::new(),
             index: HashMap::new(),
+            next_group: 0,
             #[cfg(feature = "signatures")]
             verifier: None,
             #[cfg(feature = "signatures")]
@@ -340,6 +435,26 @@ impl<C: LuaClass> Registry<C> {
     pub fn isolated(host: Lua, sandbox: Sandbox) -> Self {
         let mut registry = Registry::new(host);
         registry.isolation = Isolation::PerPlugin(Box::new(sandbox));
+        registry
+    }
+
+    /// Gives every *dependency group* its own Lua state, built under `sandbox`.
+    ///
+    /// This is [`Registry::isolated`] without the trade-off that `[dependencies]` stops
+    /// working. A Lua value still cannot cross states, so the registry puts the plugins
+    /// that need to exchange values in the same one: each connected component of the
+    /// dependency graph gets a state, and a plugin depending on nothing gets one to
+    /// itself.
+    ///
+    /// What that buys is bounded rather than free. Group members share a heap, a memory
+    /// limit and an instruction budget, and they see each other's globals — declaring a
+    /// dependency is declaring that you accept that. Plugins in different groups are as
+    /// separated as they are under per-plugin isolation.
+    ///
+    /// `host` is the state the registry itself keeps; plugins never see it.
+    pub fn grouped(host: Lua, sandbox: Sandbox) -> Self {
+        let mut registry = Registry::new(host);
+        registry.isolation = Isolation::PerGroup(Box::new(sandbox));
         registry
     }
 
@@ -476,9 +591,12 @@ impl<C: LuaClass> Registry<C> {
         &self.host
     }
 
-    /// Produces the state the next plugin will run in, applying setup and rock paths.
+    /// Produces a state to run plugins in, applying setup and rock paths.
+    ///
+    /// Under [`Isolation::PerGroup`] this makes a state for *one* group; `load_dir`
+    /// decides which plugins share it.
     fn acquire_state(&mut self) -> Result<(Lua, Option<Budget>), RegistryError> {
-        if let Isolation::PerPlugin(sandbox) = &self.isolation {
+        if let Isolation::PerPlugin(sandbox) | Isolation::PerGroup(sandbox) = &self.isolation {
             let sandbox = sandbox.clone();
             let (lua, budget) = sandbox.build().map_err(RegistryError::Lua)?;
             self.configure(&lua)?;
@@ -491,6 +609,38 @@ impl<C: LuaClass> Registry<C> {
             self.shared_configured = true;
         }
         Ok((lua, None))
+    }
+
+    /// Decides which state one plugin runs in, creating it on the group's first member.
+    fn group_state(
+        &mut self,
+        components: Option<&HashMap<String, usize>>,
+        states: &mut HashMap<usize, (Lua, Option<Budget>, Group)>,
+        manifest: &Manifest,
+    ) -> Result<(Lua, Option<Budget>, Group), RegistryError> {
+        // Not grouping, or a manifest that somehow was not partitioned: either way the
+        // plugin gets whatever the isolation mode hands out, on its own.
+        let Some(representative) = components.and_then(|root| root.get(&manifest.name)).copied()
+        else {
+            let (lua, budget) = self.acquire_state()?;
+            return Ok((lua, budget, Group(0)));
+        };
+
+        if let Some((lua, budget, group)) = states.get(&representative) {
+            return Ok((lua.clone(), budget.clone(), *group));
+        }
+
+        let (lua, budget) = self.acquire_state()?;
+        let state = (lua, budget, self.fresh_group());
+        states.insert(representative, state.clone());
+        Ok(state)
+    }
+
+    /// Hands out the next group identifier.
+    fn fresh_group(&mut self) -> Group {
+        let group = Group(self.next_group);
+        self.next_group = self.next_group.saturating_add(1);
+        group
     }
 
     /// Surfaces a failure from the `with_setup` closure, which ran at build time.
@@ -526,6 +676,17 @@ impl<C: LuaClass> Registry<C> {
 
         #[cfg(feature = "luarocks")]
         let installed_rocks = self.prepare_rocks()?;
+
+        // Under grouped isolation the partition is decided before anything is built, so
+        // a plugin's state is a property of the whole dependency graph rather than of
+        // whichever member happened to load first.
+        let components = if matches!(self.isolation, Isolation::PerGroup(_)) {
+            Some(dependency_components(&ordered))
+        } else {
+            None
+        };
+        // The state each component runs in, made on its first member.
+        let mut group_states: HashMap<usize, (Lua, Option<Budget>, Group)> = HashMap::new();
 
         let mut failed: HashSet<String> = failures.iter().map(|f| f.name.clone()).collect();
         let mut loaded = Vec::new();
@@ -610,7 +771,8 @@ impl<C: LuaClass> Registry<C> {
                 }
             };
 
-            let (lua, budget) = self.acquire_state()?;
+            let (lua, budget, group) =
+                self.group_state(components.as_ref(), &mut group_states, &manifest)?;
             let built = self.instantiate(
                 &lua,
                 budget.as_ref(),
@@ -635,6 +797,7 @@ impl<C: LuaClass> Registry<C> {
                         budget,
                         environment,
                         granted,
+                        group,
                         #[cfg(feature = "signatures")]
                         signer,
                         #[cfg(feature = "signatures")]
@@ -675,6 +838,7 @@ impl<C: LuaClass> Registry<C> {
         let existing = current.exports.clone();
         let lua = current.lua.clone();
         let budget = current.budget.clone();
+        let group = current.group;
 
         let fail = |reason: FailureReason| {
             RegistryError::Reload(Box::new(LoadFailure {
@@ -734,6 +898,7 @@ impl<C: LuaClass> Registry<C> {
             budget,
             environment: built.environment,
             granted: built.granted,
+            group,
             #[cfg(feature = "signatures")]
             signer,
             #[cfg(feature = "signatures")]

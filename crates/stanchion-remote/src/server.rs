@@ -331,6 +331,7 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
             isolation: match registry.isolation() {
                 stanchion_registry::Isolation::Shared => "shared".to_string(),
                 stanchion_registry::Isolation::PerPlugin(_) => "per-plugin".to_string(),
+                stanchion_registry::Isolation::PerGroup(_) => "per-group".to_string(),
             },
             signatures_required: false,
         }),

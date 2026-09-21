@@ -89,6 +89,27 @@ the group’s allowance for all of them. Declaring a dependency is declaring tha
 accept that. What you get is that the blast radius is the group rather than the process,
 and that groups are as separated from each other as plugins are under per-plugin
 isolation.</p>
+<h2 id="panics-and-what-cannot-be-caught">Panics, and what cannot be caught</h2>
+<p>A Rust panic raised inside one of your callbacks is survivable, because a panic
+unwinds. It never crosses the interpreter’s C frames — mlua wraps every callback in
+<code>catch_unwind</code> and carries the payload out as a Lua error, resuming it once control is
+back in Rust — and <code>dispatch</code>, <code>dispatch_async</code>, <code>load_dir</code> and <code>reload</code> catch that
+resumption, so it arrives as a <code>Panicked</code> error or a <code>FailureReason::Panicked</code> rather
+than on the caller’s stack. Recover it by type with <code>mlua::Error::downcast_ref</code>, not
+with a <code>source()</code> walk.</p>
+<p>Being catchable is not the same as being harmless. mlua makes no promise about a state’s
+invariants after a caught panic, so treat the plugin as suspect and unload it with
+<code>Registry::remove</code> rather than dispatching to it again. Two further limits: a profile
+built with <code>panic = "abort"</code> ends the process before any of this runs, and
+<code>Sandbox::catch_rust_panics</code> is left at Lua’s default, which means a plugin that wraps a
+host call in <code>pcall</code> can swallow your panic before you ever see it — pass <code>false</code> if
+that matters more than compatibility with plugins already relying on it.</p>
+<p>Nothing in-process helps with a failure that does not unwind. <code>os.exit</code> calls <code>exit()</code>;
+a segfault in a C rock, LuaJIT <code>ffi</code> misuse, or a Rust stack overflow raises a signal. A
+handler could log one but cannot resume: the allocator, the VM’s invariants and any held
+locks are undefined afterwards, and signal handlers are process-global, so a plugin
+library installing one would hijack the host’s own crash reporting. The process boundary
+is the only real answer — see <a href="remote.html">out-of-process hosting</a>.</p>
 <p>Each plugin’s directory is prepended to its state’s <code>package.path</code>, so a plugin can
 <code>require</code> its own files without knowing where it was installed. That <code>require</code> is
 per-plugin: submodules load into the <strong>same environment</strong> as the plugin’s own chunk, so

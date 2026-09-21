@@ -127,13 +127,29 @@ your application can keep sending while a plugin is mid-call.</p>
 <tr><td><code>while true do end</code></td><td>instruction limit</td><td>instruction limit</td></tr>
 <tr><td>allocation storm</td><td>memory limit</td><td>memory limit</td></tr>
 <tr><td><code>os.exit</code>, or a segfault in a C rock</td><td><strong>your application dies</strong></td><td><code>RemoteError::HostGone</code></td></tr>
-<tr><td>interpreter panic</td><td>unwinds into your stack</td><td>child dies, you keep serving</td></tr>
+<tr><td>a panic in a host callback</td><td>reported as <code>Panicked</code></td><td>child dies, you keep serving</td></tr>
 </tbody></table>
-<p><code>RemoteError::HostGone { status }</code> is the interesting one: the client distinguishes a
-dead child from an ordinary transport error by reaping it, so a plugin that kills its
-process becomes one error value rather than an outage. Dropping a <code>RemoteRegistry</code>
-closes the host’s stdin and kills anything that ignores it, so a dropped client never
-leaks a process.</p>
+<p>A panic is the one row that is survivable in-process, because a panic unwinds. A panic
+raised in one of your callbacks never crosses the interpreter’s C frames — mlua catches
+it at the boundary and carries it out as a Lua error — and <code>Registry::dispatch</code> catches
+the resumption, so it arrives as a
+<a href="https://docs.rs/stanchion/latest/stanchion/registry/struct.Panicked.html"><code>Panicked</code></a>
+error rather than on your stack. Nothing equivalent is possible for the row above it:
+<code>os.exit</code> and a segfault are an exit and a signal, and neither unwinds. That is the
+whole reason this crate exists.</p>
+<p><code>RemoteError::HostGone</code> says which of the two happened:</p>
+<table><thead><tr><th>Field</th><th>Means</th></tr></thead><tbody>
+<tr><td><code>status: Some(code)</code></td><td>the host returned, with that exit code</td></tr>
+<tr><td><code>signal: Some(11)</code></td><td>the host was killed — <code>SIGSEGV</code> here, so a crash inside the interpreter</td></tr>
+<tr><td>both <code>None</code></td><td>the host ended and the platform reported neither</td></tr>
+</tbody></table>
+<p>The client distinguishes a dead child from an ordinary transport error by reaping it, so
+a plugin that kills its process becomes one error value rather than an outage. Signals
+are named where POSIX fixes the number (<code>SIGSEGV</code>, <code>SIGABRT</code>, <code>SIGKILL</code> and friends) and
+reported numerically otherwise, because numbers like <code>SIGBUS</code> differ between Linux and
+macOS and a wrong name is worse than a number. Dropping a <code>RemoteRegistry</code> closes the
+host’s stdin and kills anything that ignores it, so a dropped client never leaks a
+process.</p>
 <h2 id="host-configuration">Host configuration</h2>
 <p>Policy comes from a file the operator controls, never from plugin manifests:</p>
 <pre><code class="language-toml">plugins = "plugins/"

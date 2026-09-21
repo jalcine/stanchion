@@ -65,12 +65,16 @@
 //! embedded in an application that already has its own VM, so the choice stays with
 //! whoever builds the artifact.
 
+mod backend;
 mod callback;
 mod error;
 mod guard;
 mod host;
 mod value;
 
+pub use backend::{
+    BackendRegistry, LuaBackend, PluginBackend, PluginInstance,
+};
 pub use callback::{
     CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Policy,
 };

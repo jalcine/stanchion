@@ -16,11 +16,23 @@ fn default_entry() -> String {
     "init.lua".to_string()
 }
 
+/// Which runtime backend a plugin uses.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginType {
+    /// A Lua plugin (the default), loaded via `mlua`.
+    #[default]
+    Lua,
+    /// A WASM plugin, loaded via `wasmtime`.
+    Wasm,
+}
+
 /// A plugin's `plugin.toml`.
 ///
 /// ```toml
 /// name = "greeter"
 /// version = "1.2.0"
+/// plugin_type = "lua"
 /// entry = "init.lua"
 ///
 /// [dependencies]
@@ -40,7 +52,11 @@ pub struct Manifest {
     /// A plugin without one is treated as `0.0.0`, so it satisfies only `*`.
     #[serde(default)]
     pub version: Option<Version>,
-    /// Lua file to evaluate, relative to the plugin directory.
+    /// Which runtime backend this plugin uses.
+    #[serde(default)]
+    pub plugin_type: PluginType,
+    /// File to evaluate, relative to the plugin directory.
+    /// For Lua plugins this is a `.lua` file; for WASM plugins, a `.wasm` binary.
     #[serde(default = "default_entry")]
     pub entry: String,
     /// Plugins this one is wired to, by name.
@@ -106,6 +122,21 @@ impl DependencySpec {
 }
 
 impl Manifest {
+    /// Validates that the manifest's entry file matches its plugin type.
+    pub fn validate(&self) -> Result<(), String> {
+        match &self.plugin_type {
+            PluginType::Lua if !self.entry.ends_with(".lua") => Err(format!(
+                "Lua plugin entry must end with '.lua', got '{}'",
+                self.entry
+            )),
+            PluginType::Wasm if !self.entry.ends_with(".wasm") => Err(format!(
+                "WASM plugin entry must end with '.wasm', got '{}'",
+                self.entry
+            )),
+            _ => Ok(()),
+        }
+    }
+
     /// Reads and parses `<dir>/plugin.toml`.
     pub fn read(dir: &Path) -> Result<Self, FailureReason> {
         let path = dir.join(MANIFEST_FILE);

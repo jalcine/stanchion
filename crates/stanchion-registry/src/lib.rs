@@ -40,7 +40,7 @@ pub use stanchion_rocks as rocks;
 
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
-pub use manifest::{DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest};
+pub use manifest::{DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType};
 pub use panics::Panicked;
 /// Re-exported because [`Decision::GrantWith`] takes a `toml::Table`: a public API
 /// that names a foreign type has to hand you that type.

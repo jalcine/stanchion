@@ -1,5 +1,5 @@
-//! Secure distribution of stanchion plugins: OCI artifacts, an index anyone can run,
-//! and installs that are pinned before they are trusted.
+//! Secure distribution of stanchion plugins: packages, an index anyone can run, and
+//! installs that are pinned before they are trusted.
 //!
 //! [Signatures](stanchion_registry::signature) answer "who produced these bytes?".
 //! Distribution has to answer three more questions that a signature does not touch:
@@ -18,7 +18,7 @@
 //! # The shape of it
 //!
 //! ```text
-//!   index (untrusted)          OCI registry (untrusted)
+//!   index (untrusted)          package source (untrusted)
 //!         │ name + requirement         │ tar.gz
 //!         ▼                            ▼
 //!   ┌───────────────────────────────────────────┐
@@ -43,9 +43,8 @@
 //! | --- | --- |
 //! | *(none)* | index documents, [`PluginIndex`], [`DirectoryIndex`] |
 //! | `package` | packing and unpacking `tar.gz` plugin packages, [`Installer`] |
-//! | `oci` | `package` plus [`OciSource`], fetching from an OCI registry |
-//! | `http` | reading an index over HTTPS |
-//! | `client` | `oci` plus `http`: everything a host needs |
+//! | `http` | `package` plus [`HttpIndex`] and [`HttpSource`]: an index and packages over HTTPS |
+//! | `client` | `http`: everything a host needs to install from a remote index |
 //!
 //! # What this does not buy
 //!
@@ -66,9 +65,6 @@ pub mod package;
 #[cfg(feature = "package")]
 pub mod install;
 
-#[cfg(feature = "oci")]
-pub mod oci;
-
 #[cfg(feature = "http")]
 pub mod http;
 
@@ -76,13 +72,10 @@ pub use index::{
     Catalog, DirectoryIndex, Freshness, IndexDocument, IndexError, PluginIndex, PluginReleases,
     Release, CATALOG_PATH, INDEX_SCHEMA,
 };
-pub use package::{Limits, PackageError, ARTIFACT_TYPE, CONFIG_MEDIA_TYPE, LAYER_MEDIA_TYPE};
+pub use package::{Limits, PackageError, PACKAGE_MEDIA_TYPE};
 
 #[cfg(feature = "package")]
 pub use install::{InstallError, Installer, PluginSource, SourceError, Staged};
 
-#[cfg(feature = "oci")]
-pub use oci::OciSource;
-
 #[cfg(feature = "http")]
-pub use http::HttpIndex;
+pub use http::{HttpIndex, HttpSource, DEFAULT_PACKAGE_LIMIT};

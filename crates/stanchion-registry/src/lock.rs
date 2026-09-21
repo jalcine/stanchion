@@ -192,7 +192,7 @@ impl LockedPlugin {
 /// version = "1.4.2"
 /// digest = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 /// signer = "repo:acme/plugins"
-/// source = "oci://ghcr.io/acme/plugins/formatter:1.4.2"
+/// source = "https://plugins.acme.test/v1/blobs/sha256:9f86d081884c7d65…"
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

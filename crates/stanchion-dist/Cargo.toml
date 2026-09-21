@@ -1,6 +1,6 @@
 [package]
 name = "stanchion-dist"
-description = "Secure plugin distribution for stanchion: OCI artifacts, a signed index, and pinned installs"
+description = "Secure plugin distribution for stanchion: packages, a signed index, and pinned installs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,20 +17,16 @@ time = { version = "0.3", features = ["parsing", "formatting"] }
 
 flate2 = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
-oci-client = { version = "0.18", default-features = false, features = ["rustls-tls"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"], optional = true }
-tokio = { version = "1", default-features = false, features = ["rt", "net", "time"], optional = true }
 
 [features]
 default = []
 # Reading and writing the on-the-wire plugin package (a tar.gz of the directory).
 package = ["dep:tar", "dep:flate2"]
-# Fetching packages from an OCI registry.
-oci = ["package", "dep:oci-client", "dep:tokio"]
-# Reading an index over HTTPS.
-http = ["dep:reqwest", "dep:tokio"]
+# Reading an index and fetching packages over HTTPS.
+http = ["package", "dep:reqwest"]
 # Everything a host needs to install from a remote index.
-client = ["oci", "http"]
+client = ["http"]
 
 # Forwarded so this crate can be built on its own; the Lua runtime reaches it only
 # through stanchion-registry.

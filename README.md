@@ -14,7 +14,7 @@ capabilities and signatures on the other.
 | [`stanchion-registry`](crates/stanchion-registry) | manifests, sandboxing, capabilities, signatures, reload                         |
 | [`stanchion-rocks`](crates/stanchion-rocks)       | LuaRocks tree queries and version constraints                                   |
 | [`stanchion-sigstore`](crates/stanchion-sigstore) | sigstore verification — quarantines a large dependency graph                    |
-| [`stanchion-dist`](crates/stanchion-dist)         | packaging, the index protocol, OCI transport, pinned installs                   |
+| [`stanchion-dist`](crates/stanchion-dist)         | packaging, the index protocol, HTTPS transport, pinned installs                 |
 | [`stanchion-remote`](crates/stanchion-remote)     | out-of-process hosting: JSON-RPC protocol, client, host                         |
 | [`stanchion-ffi`](crates/stanchion-ffi)           | the seam the language bindings sit on: dynamic calls, values, capabilities      |
 
@@ -77,7 +77,7 @@ assert_eq!(greeter.greet("world".to_string())?, "hello, world");
 | [Isolation](docs/isolation.md)            | shared vs per-plugin states, sandbox policy, resource limits              |
 | [Capabilities](docs/capabilities.md)      | declared authority, policy, narrowing, audit, revocation                  |
 | [Signatures](docs/signatures.md)          | directory digests, sigstore, provenance-tiered capabilities               |
-| [Distribution](docs/distribution.md)      | OCI packages, an index anyone can run, lockfile pinning, upgrade review   |
+| [Distribution](docs/distribution.md)      | packages, an index anyone can run, lockfile pinning, upgrade review       |
 | [Dependency chains](docs/dependencies.md) | published exports, semver requirements, reload propagation                |
 | [LuaRocks](docs/luarocks.md)              | declaring external Lua libraries, C-module hazards                        |
 | [Out-of-process hosting](docs/remote.md)  | the `plugin-host` binary, JSON-RPC protocol, callbacks, crash containment |

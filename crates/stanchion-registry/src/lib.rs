@@ -411,7 +411,7 @@ impl<C: LuaClass> Registry<C> {
 
     /// Refuses any plugin whose bytes are not the ones this lockfile pins.
     ///
-    /// This is the control that makes a transport untrusted: an OCI registry, mirror
+    /// This is the control that makes a transport untrusted: a package source, mirror
     /// or index can serve whatever it likes, and anything other than the pinned digest
     /// fails to load. It needs no signing infrastructure — a lockfile alone already
     /// refuses substitution and downgrade, neither of which a signature stops.

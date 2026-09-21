@@ -92,7 +92,9 @@ impl Sandbox {
     /// String, table, math, coroutine and package — no `io`, `os` or `debug` — with
     /// [`RESTRICTED_DENY_LIST`] removed on top.
     ///
-    /// Rust panics inside callbacks are caught rather than unwinding through the VM.
+    /// Leaves `pcall` and `xpcall` as Lua defines them, which means a plugin can catch
+    /// a panic raised in one of your callbacks. See
+    /// [`Sandbox::catch_rust_panics`] for why that is a choice rather than a detail.
     pub fn restricted() -> Self {
         Sandbox {
             libs: core_libs(),
@@ -109,7 +111,8 @@ impl Sandbox {
     /// Adds `io` and `os`, and removes the deny list.
     ///
     /// Appropriate for first-party plugins that legitimately touch the filesystem;
-    /// not for code you did not write.
+    /// not for code you did not write. Note that `os.exit` is reachable here, and it
+    /// ends the process without unwinding — nothing in-process can intercept it.
     pub fn permissive() -> Self {
         Sandbox {
             libs: core_libs() | StdLib::IO | StdLib::OS,
@@ -153,7 +156,22 @@ impl Sandbox {
         self
     }
 
-    /// Whether Rust panics in callbacks are caught instead of unwinding into Lua.
+    /// Whether *Lua* may catch a Rust panic raised inside one of your callbacks.
+    ///
+    /// The name reads backwards. A panic in a callback is never able to unwind through
+    /// the VM: mlua wraps every callback in `catch_unwind` and carries the payload out
+    /// as a Lua error object, resuming the panic once it reaches Rust again. What this
+    /// option decides is whether Lua's own `pcall`/`xpcall` get to intercept that
+    /// object on the way.
+    ///
+    /// - `true` (the default, and what both presets use): stock `pcall`/`xpcall`, so a
+    ///   plugin wrapping a host call in `pcall` **swallows the panic** and carries on.
+    /// - `false`: mlua substitutes handlers that rethrow a panic past the plugin's
+    ///   handler, so it always reaches the host.
+    ///
+    /// For plugins you did not write, `false` is the defensible setting: a panic in
+    /// your code is not a plugin's to discard. It is not the default here because
+    /// changing it changes what already-working plugins observe.
     pub fn catch_rust_panics(mut self, enabled: bool) -> Self {
         self.options = self.options.catch_rust_panics(enabled);
         self

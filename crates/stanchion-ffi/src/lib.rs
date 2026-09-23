@@ -66,12 +66,14 @@
 //! whoever builds the artifact.
 
 mod backend;
+mod budget;
 mod callback;
 mod error;
 mod guard;
 mod host;
 mod value;
 
+pub use budget::CallBudget;
 pub use backend::{
     BackendRegistry, LuaBackend, PluginBackend, PluginInstance,
 };

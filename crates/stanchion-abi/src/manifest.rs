@@ -75,11 +75,29 @@ pub struct Manifest {
     #[serde(default)]
     pub rocks: std::collections::BTreeMap<String, String>,
     /// Passed to the plugin's constructor as a Lua table.
+    ///
+    /// Also holds the optional `[budget]` table when the manifest carries one:
+    /// `budget.max_instructions` is enforced at each call boundary for
+    /// runtimes that support it (WASM, Lua sandbox).
     #[serde(default)]
     pub config: toml::Table,
+    /// Optional per-plugin instruction/memory budget.
+    ///
+    /// Declared as `budget.max_instructions` in `plugin.toml`. Parsed into
+    /// [`Manifest::budget`] at load time and enforced at call boundaries.
+    #[serde(default)]
+    pub budget: Option<Budget>,
     /// Directory the manifest was read from. Filled in by discovery.
     #[serde(skip)]
     pub dir: PathBuf,
+}
+
+/// Static budget declared in a plugin manifest.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Budget {
+    /// Hard cap on VM instructions per plugin call.
+    pub max_instructions: u64,
 }
 
 /// A dependency entry: either a bare requirement or the table form.

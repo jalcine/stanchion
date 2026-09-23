@@ -79,13 +79,24 @@ impl WasmRuntime {
 }
 
 /// Converts stanchion values to WASM values using the function's parameter types.
+///
+/// Narrowing conversions are checked and fail closed: an `Int` outside `i32`
+/// range or a finite `Float` outside `f32` range is rejected rather than
+/// silently truncated or saturated to infinity.
 fn values_to_wasm(args: &[Value], param_types: &[ValType]) -> Result<Vec<Val>, String> {
     args.iter()
         .zip(param_types)
         .map(|(arg, ty)| match (arg, ty) {
-            (Value::Int(n), ValType::I32) => Ok(Val::I32(*n as i32)),
+            (Value::Int(n), ValType::I32) => i32::try_from(*n)
+                .map(Val::I32)
+                .map_err(|_| format!("value {n} does not fit in an i32")),
             (Value::Int(n), ValType::I64) => Ok(Val::I64(*n)),
-            (Value::Float(f), ValType::F32) => Ok(Val::F32((*f as f32).to_bits())),
+            (Value::Float(f), ValType::F32) => {
+                if f.is_finite() && (*f > f32::MAX as f64 || *f < f32::MIN as f64) {
+                    return Err(format!("value {f} does not fit in an f32"));
+                }
+                Ok(Val::F32((*f as f32).to_bits()))
+            }
             (Value::Float(f), ValType::F64) => Ok(Val::F64((*f).to_bits())),
             (Value::Str(s), ValType::I32) | (Value::Str(s), ValType::I64) => {
                 // String pointers passed as integers require writing into WASM memory
@@ -142,6 +153,116 @@ impl WasmInstance {
     /// Calls the plugin's entry-point export with the given arguments.
     pub fn call(&mut self, args: &[Value]) -> Result<Value, String> {
         self.runtime.call(&self.entry_point, args)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+mod tests {
+    use super::*;
+    use stanchion_abi::Value;
+
+    fn i32_ok(n: i64) {
+        let val = Value::Int(n);
+        let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::I32]);
+        assert!(res.is_ok(), "expected {n} to fit in i32, got {:?}", res.err());
+        let vals = res.unwrap();
+        assert_eq!(vals.len(), 1, "expected one val");
+        match vals.first().unwrap() {
+            Val::I32(v) => assert_eq!(*v, n as i32),
+            other => panic!("expected I32, got {other:?}"),
+        }
+        // round-trip via wasm_to_value
+        let back = wasm_to_value(&vals).unwrap();
+        assert_eq!(back, Value::Int(n));
+    }
+
+    fn i32_err(n: i64) {
+        let val = Value::Int(n);
+        let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::I32]);
+        assert!(res.is_err(), "expected {n} to be rejected for i32");
+        let msg = res.unwrap_err();
+        assert!(msg.contains("does not fit in an i32"), "msg: {msg}");
+    }
+
+    fn f32_ok(f: f64) {
+        let val = Value::Float(f);
+        let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::F32]);
+        assert!(res.is_ok(), "expected {f} to fit in f32, got {:?}", res.err());
+    }
+
+    fn f32_err(f: f64) {
+        let val = Value::Float(f);
+        let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::F32]);
+        assert!(res.is_err(), "expected {f} to be rejected for f32");
+        let msg = res.unwrap_err();
+        assert!(msg.contains("does not fit in an f32"), "msg: {msg}");
+    }
+
+    #[test]
+    fn int_to_i32_boundaries() {
+        i32_ok(0);
+        i32_ok(1);
+        i32_ok(-1);
+        i32_ok(i32::MAX as i64);
+        i32_ok(i32::MIN as i64);
+        // issue table
+        i32_err(0x1_0000_0000); // 4294967296 -> 0 if truncated
+        i32_err(0x1_0000_0001);
+        i32_err(0xFFFF_FFFF); // 4294967295 -> -1 if truncated
+        i32_err(0x1_FFFF_FFFF);
+        i32_err(i32::MAX as i64 + 1);
+        i32_err(i32::MIN as i64 - 1);
+        i32_err(u32::MAX as i64);
+    }
+
+    #[test]
+    fn int_to_i64_always_ok() {
+        for n in [i64::MAX, i64::MIN, 0x1_0000_0000, 0xFFFF_FFFF] {
+            let val = Value::Int(n);
+            let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::I64]);
+            assert!(res.is_ok(), "i64 should accept {n}");
+        }
+    }
+
+    #[test]
+    fn float_to_f32_boundaries() {
+        f32_ok(0.0);
+        f32_ok(1.0);
+        f32_ok(-1.0);
+        f32_ok(f32::MAX as f64);
+        f32_ok(f32::MIN as f64);
+        f32_ok(0.1); // precision loss but in range -> allowed
+        f32_ok(f64::INFINITY);
+        f32_ok(f64::NEG_INFINITY);
+        f32_ok(f64::NAN);
+        // finite out of range -> rejected
+        f32_err(f32::MAX as f64 * 2.0);
+        f32_err(f32::MIN as f64 * 2.0);
+        f32_err(1e40);
+        f32_err(-1e40);
+    }
+
+    #[test]
+    fn float_to_f64_always_ok() {
+        for f in [0.0, 1e40, f64::MAX, f64::MIN, f64::INFINITY, f64::NAN] {
+            let val = Value::Float(f);
+            let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::F64]);
+            assert!(res.is_ok(), "f64 should accept {f}");
+        }
+    }
+
+    #[test]
+    fn wasm_runtime_rejects_truncated_int() {
+        // Minimal WAT: (module (func (export "id") (param i32) (result i32) local.get 0))
+        let wat = br#"(module (func (export "id") (param i32) (result i32) local.get 0))"#;
+        let mut rt = WasmRuntime::new(wat).expect("wat");
+        // in-range succeeds and round-trips
+        let ok = rt.call("id", &[Value::Int(42)]).expect("call ok");
+        assert_eq!(ok, Value::Int(42));
+        // out-of-range is rejected before the call
+        let err = rt.call("id", &[Value::Int(0x1_0000_0000)]).expect_err("should reject");
+        assert!(err.contains("does not fit in an i32"), "err: {err}");
     }
 }
 

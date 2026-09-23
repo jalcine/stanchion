@@ -1310,7 +1310,7 @@ impl<C: LuaClass> Registry<C> {
     /// A missing signature is not fraud: it becomes [`Signer::Unsigned`] unless the
     /// registry requires signatures, so hosts can adopt signing incrementally.
     #[cfg(feature = "signatures")]
-    fn verify_plugin(
+    pub fn verify_plugin(
         &self,
         manifest: &Manifest,
     ) -> Result<(Signer, Option<DirectoryDigest>), FailureReason> {
@@ -1424,6 +1424,35 @@ impl<C: LuaClass> Registry<C> {
         Ok(granted)
     }
 
+    /// Evaluates policy for a plugin's declared capabilities (non-Lua path).
+    pub fn evaluate_policy(
+        &self,
+        manifest: &Manifest,
+        #[cfg(feature = "signatures")] signer: &Signer,
+    ) -> Vec<String> {
+        let mut granted = Vec::new();
+        for (name, declared) in &manifest.capabilities {
+            let (params, optional) = capability::split_optional(declared);
+            let request = CapabilityRequest {
+                plugin: manifest.name.clone(),
+                #[cfg(feature = "signatures")]
+                signer: signer.clone(),
+                name: name.clone(),
+                params,
+                optional,
+            };
+            let Some(_) = self.host_setup.provider(name) else { continue };
+            let decision = match &self.policy {
+                Some(p) => p.decide(&request),
+                None => Decision::Deny("no policy".to_string()),
+            };
+            if matches!(decision, Decision::Grant | Decision::GrantWith(_)) {
+                granted.push(name.clone());
+            }
+        }
+        granted
+    }
+
     /// Builds the `deps` table handed to a constructor: dependency name to proxy.
     ///
     /// Load order guarantees every required dependency is already present.
@@ -1471,6 +1500,8 @@ impl<C: LuaClass> Registry<C> {
         Ok(exports)
     }
 }
+
+
 
 /// Checks one plugin's `[rocks]` against what the tree holds.
 #[cfg(feature = "luarocks")]

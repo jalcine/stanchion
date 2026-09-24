@@ -25,6 +25,7 @@ stanchion-registry = { path = "crates/stanchion-registry", version = "0.1.0" }
 stanchion-remote = { path = "crates/stanchion-remote", version = "0.1.0" }
 stanchion-rocks = { path = "crates/stanchion-rocks", version = "0.1.0" }
 stanchion-sigstore = { path = "crates/stanchion-sigstore", version = "0.1.0" }
+stanchion-wasm = { path = "crates/stanchion-wasm", version = "0.1.0" }
 
 mlua = { version = "0.12", default-features = false }
 serde = { version = "1", features = ["derive"] }

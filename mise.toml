@@ -18,6 +18,7 @@
 # start failing a build. Pinned rather than floating for that reason.
 rust = "1.97.0"
 "cargo:cargo-nextest" = "0.9.115"
+"cargo:cargo-tarpaulin" = "0.30"
 
 # bindings/python: `uv` drives everything, and builds the extension through
 # maturin, which it installs itself from pyproject.toml's build-system.
@@ -61,6 +62,14 @@ run = "cargo nextest run --workspace --features $STANCHION_FEATURES"
 [tasks."test:doc"]
 description = "Doctests, which nextest does not run"
 run = "cargo test --doc --workspace --features $STANCHION_FEATURES"
+
+[tasks."test:coverage"]
+description = "Run test suite with coverage via cargo-tarpaulin"
+run = "cargo tarpaulin --workspace --features $STANCHION_FEATURES --out Html --out Lcov --output-dir target/coverage --timeout 300"
+
+[tasks."test:coverage:quick"]
+description = "Quick coverage (excludes slow suites)"
+run = "cargo tarpaulin --workspace --features $STANCHION_FEATURES --exclude-files '*/rocks/*' --exclude-files '*/ui/*' --out Html --out Lcov --output-dir target/coverage --timeout 180"
 
 [tasks.lint]
 description = "Clippy across the workspace and the bindings"

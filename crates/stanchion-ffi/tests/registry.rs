@@ -18,7 +18,7 @@ impl PluginInstance for MockPluginInstance {
 struct MockBackend;
 impl PluginBackend for MockBackend {
     fn plugin_type(&self) -> PluginType {
-        PluginType::Mock
+        PluginType::Lua
     }
 
     fn load(&self, _manifest: &stanchion_abi::manifest::Manifest, _dir: &Path) -> Result<Box<dyn PluginInstance>> {
@@ -67,7 +67,7 @@ fn backend_registry_iter() {
 
     let backends: Vec<_> = registry.iter().collect();
     assert_eq!(backends.len(), 1);
-    assert_eq!(backends[0].plugin_type(), PluginType::Mock);
+    assert_eq!(backends[0].plugin_type(), PluginType::Lua);
 }
 
 #[test]

@@ -66,6 +66,31 @@ jobs:
           path: target/nextest/ci/junit.xml
           if-no-files-found: ignore
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: rust cargo:cargo-nextest cargo:cargo-tarpaulin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+
+      - name: Coverage
+        run: mise run test:coverage
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: target/coverage/
+          if-no-files-found: ignore
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

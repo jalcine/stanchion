@@ -64,6 +64,26 @@ cargo build -p stanchion --features lua54,vendored,full --examples
 Each declares `required-features`, so a build with a narrower feature set skips
 the ones it cannot compile rather than failing.
 
+## Coverage
+
+Code coverage can be generated using [cargo-tarpaulin](https://github.com/xd009642/tarpaulin):
+
+```sh
+mise run test:coverage
+```
+
+This runs the full test suite and generates:
+- HTML report: `target/coverage/index.html`
+- Lcov report: `target/coverage/lcov.info` (for tools like Codecov)
+
+For faster iteration (excludes slow tests like luarocks and UI tests):
+
+```sh
+mise run test:coverage:quick
+```
+
+The coverage job runs automatically in CI and produces an artifact named `coverage`.
+
 ---
 
 [← Documentation index](../README.md#documentation)

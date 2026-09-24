@@ -1,11 +1,11 @@
 //! The out-of-process host, driven end to end against the real binary.
 #![cfg(feature = "remote")]
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value as Json, json};
 use stanchion::remote::{CallbackCall, RemoteOptions, RemoteRegistry};
+use stanchion::tests::common::write_plugin;
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -15,14 +15,6 @@ type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 /// so there is no pre-build step and no guessing where it landed.
 fn host_binary() -> Fallible<PathBuf> {
     Ok(PathBuf::from(env!("CARGO_BIN_EXE_plugin-host")))
-}
-
-fn write_plugin(root: &Path, name: &str, manifest: &str, source: &str) -> TestResult {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join("plugin.toml"), manifest)?;
-    fs::write(dir.join("init.lua"), source)?;
-    Ok(())
 }
 
 /// A plugin whose methods exercise the JSON boundary and the failure paths.

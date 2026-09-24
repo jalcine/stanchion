@@ -6,8 +6,7 @@ use std::path::Path;
 
 use stanchion::lua_class;
 use stanchion::mlua::{Lua, Result, StdLib, Table};
-use stanchion::registry::{FailureReason, Isolation, Registry, Sandbox};
-use tempfile::TempDir;
+use stanchion::tests::common::{first_failure, probe_source, write_plugin};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -49,14 +48,6 @@ fn single_plugin(body: &str) -> Fallible<TempDir> {
         &probe_source(body),
     )?;
     Ok(root)
-}
-
-fn first_failure(report: &stanchion::registry::LoadReport) -> Fallible<&FailureReason> {
-    report
-        .failures
-        .first()
-        .map(|failure| &failure.reason)
-        .ok_or_else(|| "expected the plugin to fail".into())
 }
 
 #[test]

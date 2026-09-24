@@ -7,9 +7,7 @@ use std::path::Path;
 
 use stanchion::lua_class;
 use stanchion::mlua::{Lua, Result, Table, Value};
-use stanchion::registry::{
-    CapabilityRequest, Decision, FailureReason, Registry, Rules, Sandbox, toml,
-};
+use stanchion::tests::common::{first_failure, probe_source, write_plugin};
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -19,22 +17,6 @@ type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub trait Probe {
     fn new(config: Table, deps: Table) -> Result<Self>;
     fn run(&self, input: String) -> Result<String>;
-}
-
-fn probe_source(body: &str) -> String {
-    format!(
-        "local P = {{}}\nP.__index = P\n\
-         function P.new(config, deps) return setmetatable({{}}, P) end\n\
-         function P:run(input)\n  {body}\nend\nreturn P\n"
-    )
-}
-
-fn write_plugin(root: &Path, name: &str, manifest: &str, source: &str) -> TestResult {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join("plugin.toml"), manifest)?;
-    fs::write(dir.join("init.lua"), source)?;
-    Ok(())
 }
 
 fn single(manifest: &str, body: &str) -> Fallible<TempDir> {
@@ -67,14 +49,6 @@ fn registry() -> Registry<ProbeClass> {
         });
         Ok(())
     })
-}
-
-fn first_failure(report: &stanchion::registry::LoadReport) -> Fallible<&FailureReason> {
-    report
-        .failures
-        .first()
-        .map(|failure| &failure.reason)
-        .ok_or_else(|| "expected the plugin to fail".into())
 }
 
 #[test]

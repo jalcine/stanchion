@@ -1,5 +1,6 @@
 //! Tests for the registry interface in stanchion-ffi.
 
+use stanchion_abi::manifest::PluginType;
 use stanchion_ffi::{BackendRegistry, PluginBackend, PluginInstance, Error, Result, Value};
 use std::path::Path;
 
@@ -16,11 +17,11 @@ impl PluginInstance for MockPluginInstance {
 
 struct MockBackend;
 impl PluginBackend for MockBackend {
-    fn plugin_type(&self) -> &'static str {
-        "mock"
+    fn plugin_type(&self) -> PluginType {
+        PluginType::Mock
     }
 
-    fn load(&self, _manifest: &serde_json::Value, _dir: &Path) -> Result<Box<dyn PluginInstance>> {
+    fn load(&self, _manifest: &stanchion_abi::manifest::Manifest, _dir: &Path) -> Result<Box<dyn PluginInstance>> {
         Ok(Box::new(MockPluginInstance))
     }
 }
@@ -66,7 +67,7 @@ fn backend_registry_iter() {
 
     let backends: Vec<_> = registry.iter().collect();
     assert_eq!(backends.len(), 1);
-    assert_eq!(backends[0].plugin_type(), "mock");
+    assert_eq!(backends[0].plugin_type(), PluginType::Mock);
 }
 
 #[test]

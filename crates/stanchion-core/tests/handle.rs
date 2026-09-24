@@ -96,10 +96,11 @@ fn set_writes_key_to_table() {
 fn call_method_invokes_table_method() {
     let lua = Lua::new();
     let table = lua.create_table().unwrap();
+    // Set up the "greet" function
     let func = lua.create_function(|_, name: String| Ok(format!("hello, {name}"))).unwrap();
     table.set("greet", func).unwrap();
     let handle = LuaHandle::Table(table);
-    let result: String = handle.call_method("greet", ("world",)).unwrap();
+    let result: String = handle.call_method("greet", "world").unwrap();
     assert_eq!(result, "hello, world");
 }
 

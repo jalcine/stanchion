@@ -20,6 +20,7 @@ stanchion-dist = { path = "crates/stanchion-dist", version = "0.1.0" }
 stanchion-ffi = { path = "crates/stanchion-ffi", version = "0.1.0" }
 stanchion-index = { path = "crates/stanchion-index", version = "0.1.0" }
 stanchion-index-poem = { path = "crates/stanchion-index-poem", version = "0.1.0" }
+stanchion-lua = { path = "crates/stanchion-lua", version = "0.1.0" }
 stanchion-macros = { path = "crates/stanchion-macros", version = "0.1.0" }
 stanchion-registry = { path = "crates/stanchion-registry", version = "0.1.0" }
 stanchion-remote = { path = "crates/stanchion-remote", version = "0.1.0" }

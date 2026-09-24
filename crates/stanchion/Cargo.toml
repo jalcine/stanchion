@@ -30,7 +30,6 @@ name = "remote_host"
 required-features = ["remote"]
 
 [dependencies]
-stanchion-core.workspace = true
 stanchion-dist = { workspace = true, optional = true }
 stanchion-index = { workspace = true, optional = true }
 stanchion-registry = { workspace = true, optional = true }
@@ -61,11 +60,6 @@ index-server = ["distribution", "dep:stanchion-index"]
 # Everything testable without the sigstore dependency graph. Integration tests are
 # gated per feature, so a run without this silently covers almost nothing.
 full = ["async", "send", "registry", "luarocks", "signatures", "remote", "distribution"]
-lua54 = ["mlua/lua54"]
-lua53 = ["mlua/lua53"]
-luajit = ["mlua/luajit"]
-luau = ["mlua/luau"]
-vendored = ["mlua/vendored"]
 
 [dev-dependencies]
 mlua = { workspace = true, features = ["serde"] }
@@ -77,7 +71,7 @@ tar = "0.4"
 flate2 = "1"
 
 [package.metadata.docs.rs]
-features = ["lua54", "vendored", "async", "send", "registry", "luarocks", "signatures", "remote"]
+features = ["async", "send", "registry", "luarocks", "signatures", "remote"]
 
 [lints]
 workspace = true

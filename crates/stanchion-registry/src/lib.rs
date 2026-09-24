@@ -69,7 +69,7 @@ use std::path::Path;
 
 use mlua::{Lua, LuaSerdeExt, Table, Value};
 
-use stanchion_core::{LuaClass, LuaObject};
+use stanchion_lua::{LuaClass, LuaObject};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";
@@ -1475,7 +1475,7 @@ impl<C: LuaClass> Registry<C> {
     /// Reads a plugin's `exports`, accepting either a table or a function returning one.
     fn extract_exports(
         &self,
-        instance: &stanchion_core::LuaHandle,
+        instance: &stanchion_lua::LuaHandle,
     ) -> Result<Option<Table>, FailureReason> {
         match instance.get::<Value>(EXPORTS_KEY)? {
             Value::Nil => Ok(None),

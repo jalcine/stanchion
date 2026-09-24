@@ -30,7 +30,6 @@ name = "remote_host"
 required-features = ["remote"]
 
 [dependencies]
-mlua.workspace = true
 stanchion-core.workspace = true
 stanchion-dist = { workspace = true, optional = true }
 stanchion-index = { workspace = true, optional = true }
@@ -41,8 +40,8 @@ stanchion-sigstore = { workspace = true, optional = true }
 
 [features]
 default = []
-async = ["stanchion-core/async", "stanchion-registry?/async", "stanchion-remote?/async"]
-send = ["stanchion-core/send", "stanchion-registry?/send", "stanchion-remote?/send"]
+async = ["stanchion-registry?/async", "stanchion-remote?/async"]
+send = ["stanchion-registry?/send", "stanchion-remote?/send"]
 registry = ["dep:stanchion-registry"]
 luarocks = ["registry", "dep:stanchion-rocks", "stanchion-registry/luarocks"]
 signatures = ["registry", "stanchion-registry/signatures"]
@@ -62,11 +61,11 @@ index-server = ["distribution", "dep:stanchion-index"]
 # Everything testable without the sigstore dependency graph. Integration tests are
 # gated per feature, so a run without this silently covers almost nothing.
 full = ["async", "send", "registry", "luarocks", "signatures", "remote", "distribution"]
-lua54 = ["mlua/lua54", "stanchion-core/lua54"]
-lua53 = ["mlua/lua53", "stanchion-core/lua53"]
-luajit = ["mlua/luajit", "stanchion-core/luajit"]
-luau = ["mlua/luau", "stanchion-core/luau"]
-vendored = ["mlua/vendored", "stanchion-core/vendored"]
+lua54 = ["mlua/lua54"]
+lua53 = ["mlua/lua53"]
+luajit = ["mlua/luajit"]
+luau = ["mlua/luau"]
+vendored = ["mlua/vendored"]
 
 [dev-dependencies]
 mlua = { workspace = true, features = ["serde"] }

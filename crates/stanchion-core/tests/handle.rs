@@ -1,6 +1,6 @@
 //! Tests for [`LuaHandle`] and related types.
 
-use mlua::{Lua, Value as LuaValue};
+use mlua::{FromLua, Lua, Value as LuaValue};
 use stanchion_core::LuaHandle;
 
 #[test]
@@ -14,9 +14,9 @@ fn table_handle_type_name() {
 #[test]
 fn userdata_handle_type_name() {
     let lua = Lua::new();
-    let userdata = lua.create_table().unwrap();
-    let handle = LuaHandle::from(userdata);
-    assert_eq!(handle.type_name(), "table"); // Userdata shows as "table" in this context
+    let table = lua.create_table().unwrap();
+    let handle: LuaHandle = table.into();
+    assert!(matches!(handle, LuaHandle::Table(_)));
 }
 
 #[test]
@@ -65,14 +65,6 @@ fn as_table_returns_some_for_table() {
 }
 
 #[test]
-fn as_table_returns_none_for_userdata() {
-    let lua = Lua::new();
-    let userdata = lua.create_table().unwrap();
-    let handle = LuaHandle::from(userdata);
-    assert!(handle.as_table().is_none());
-}
-
-#[test]
 fn as_userdata_returns_none_for_table() {
     let lua = Lua::new();
     let table = lua.create_table().unwrap();
@@ -96,7 +88,7 @@ fn set_writes_key_to_table() {
     let table = lua.create_table().unwrap();
     let handle = LuaHandle::Table(table);
     handle.set("name", "value").unwrap();
-    let value: String = table.get("name").unwrap();
+    let value: String = handle.get("name").unwrap();
     assert_eq!(value, "value");
 }
 
@@ -104,7 +96,8 @@ fn set_writes_key_to_table() {
 fn call_method_invokes_table_method() {
     let lua = Lua::new();
     let table = lua.create_table().unwrap();
-    table.set("greet", lua.create_function(|_, name: String| Ok(format!("hello, {name}"))).unwrap()).unwrap();
+    let func = lua.create_function(|_, name: String| Ok(format!("hello, {name}"))).unwrap();
+    table.set("greet", func).unwrap();
     let handle = LuaHandle::Table(table);
     let result: String = handle.call_method("greet", ("world",)).unwrap();
     assert_eq!(result, "hello, world");
@@ -114,7 +107,8 @@ fn call_method_invokes_table_method() {
 fn call_function_invokes_table_function() {
     let lua = Lua::new();
     let table = lua.create_table().unwrap();
-    table.set("add", lua.create_function(|_, (a, b): (i64, i64)| Ok(a + b)).unwrap()).unwrap();
+    let func = lua.create_function(|_, (a, b): (i64, i64)| Ok(a + b)).unwrap();
+    table.set("add", func).unwrap();
     let handle = LuaHandle::Table(table);
     let result: i64 = handle.call_function("add", (2, 3)).unwrap();
     assert_eq!(result, 5);

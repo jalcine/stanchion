@@ -53,7 +53,7 @@ fn expect_table_with_string_fails() {
 fn optional_function_finds_existing() {
     let lua = Lua::new();
     let table = lua.create_table().unwrap();
-    table.set("greet", lua.create_function(|_, _| Ok(())).unwrap()).unwrap();
+    table.set("greet", lua.create_function(|_, _: ()| Ok(())).unwrap());
     let handle = stanchion_core::LuaHandle::Table(table);
     let result = optional_function(&handle, "greet").unwrap();
     assert!(result.is_some());
@@ -72,7 +72,7 @@ fn optional_function_returns_none_for_missing() {
 fn require_functions_succeeds_for_valid_table() {
     let lua = Lua::new();
     let table = lua.create_table().unwrap();
-    table.set("greet", lua.create_function(|_, _| Ok(())).unwrap()).unwrap();
+    table.set("greet", lua.create_function(|_, _: ()| Ok(())).unwrap());
     let result = require_functions(&table, "test", &["greet"]);
     assert!(result.is_ok());
 }
@@ -98,7 +98,7 @@ fn require_functions_fails_for_non_function() {
 fn require_handle_functions_succeeds_for_valid_handle() {
     let lua = Lua::new();
     let table = lua.create_table().unwrap();
-    table.set("greet", lua.create_function(|_, _| Ok(())).unwrap()).unwrap();
+    table.set("greet", lua.create_function(|_, _: ()| Ok(())).unwrap());
     let handle = stanchion_core::LuaHandle::Table(table);
     let result = require_handle_functions(&handle, "test", &["greet"]);
     assert!(result.is_ok());

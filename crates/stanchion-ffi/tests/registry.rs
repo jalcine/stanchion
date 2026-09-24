@@ -45,8 +45,8 @@ fn backend_registry_register_adds_backend() {
 fn backend_registry_get_finds_registered_backend() {
     let mut registry = BackendRegistry::new();
     registry.register(Box::new(MockBackend));
-    assert!(registry.get("mock").is_some());
-    assert!(registry.get("missing").is_none());
+    assert!(registry.get(&PluginType::Lua).is_some());
+    assert!(registry.get(&PluginType::Wasm).is_none());
 }
 
 #[test]

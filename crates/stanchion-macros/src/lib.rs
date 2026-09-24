@@ -349,36 +349,29 @@ fn trait_signature(method: &Method) -> TokenStream2 {
     }
 }
 
-/// The trait impl body for an instance method.
-fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
-    let Method {
-        cfg_attrs,
-        ident,
-        args,
-        ret,
-        is_async,
-        ..
-    } = method;
+/// Shared body generator used by instance_body and class_body.
+fn method_body_core(
+    method: &Method,
+    attrs: &[syn::Attribute],
+    is_pub: bool,
+) -> syn::Result<TokenStream2> {
+    let Method { ident, args, ret, is_async, .. } = method;
     let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
-    let table_expr = if *is_async {
-        quote!(&__handle)
-    } else {
-        quote!(__handle)
-    };
+    let table_expr = if *is_async { quote!(&__handle) } else { quote!(__handle) };
     let body = call_expr(method, table_expr)?;
-
+    let pub_prefix = if is_pub { quote!(pub) } else { quote!() };
     Ok(if *is_async {
         quote! {
-            #(#cfg_attrs)*
-            fn #ident(&self #(, #params)*) -> ::stanchion::BoxFuture<'_, #ret> {
+            #(#attrs)*
+            #pub_prefix fn #ident(&self #(, #params)*) -> ::stanchion::BoxFuture<'_, #ret> {
                 let __handle = ::core::clone::Clone::clone(&self.handle);
                 ::std::boxed::Box::pin(async move { #body })
             }
         }
     } else {
         quote! {
-            #(#cfg_attrs)*
-            fn #ident(&self #(, #params)*) -> #ret {
+            #(#attrs)*
+            #pub_prefix fn #ident(&self #(, #params)*) -> #ret {
                 let __handle = &self.handle;
                 #body
             }
@@ -386,41 +379,14 @@ fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
     })
 }
 
+/// The trait impl body for an instance method.
+fn instance_body(method: &Method) -> syn::Result<TokenStream2> {
+    method_body_core(method, &method.cfg_attrs, false)
+}
+
 /// The inherent impl body for a class-level function.
 fn class_body(method: &Method) -> syn::Result<TokenStream2> {
-    let Method {
-        sig_attrs,
-        ident,
-        args,
-        ret,
-        is_async,
-        ..
-    } = method;
-    let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
-    let table_expr = if *is_async {
-        quote!(&__handle)
-    } else {
-        quote!(__handle)
-    };
-    let body = call_expr(method, table_expr)?;
-
-    Ok(if *is_async {
-        quote! {
-            #(#sig_attrs)*
-            pub fn #ident(&self #(, #params)*) -> ::stanchion::BoxFuture<'_, #ret> {
-                let __handle = ::core::clone::Clone::clone(&self.handle);
-                ::std::boxed::Box::pin(async move { #body })
-            }
-        }
-    } else {
-        quote! {
-            #(#sig_attrs)*
-            pub fn #ident(&self #(, #params)*) -> #ret {
-                let __handle = &self.handle;
-                #body
-            }
-        }
-    })
+    method_body_core(method, &method.sig_attrs, true)
 }
 
 /// The delegation expression, given an expression naming the backing table.

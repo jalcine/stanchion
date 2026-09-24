@@ -18,7 +18,7 @@
 # start failing a build. Pinned rather than floating for that reason.
 rust = "1.97.0"
 "cargo:cargo-nextest" = "0.9.115"
-"cargo:cargo-tarpaulin" = "0.30"
+"cargo:cargo-tarpaulin" = "0.37"
 
 # bindings/python: `uv` drives everything, and builds the extension through
 # maturin, which it installs itself from pyproject.toml's build-system.

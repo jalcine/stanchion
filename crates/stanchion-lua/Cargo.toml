@@ -1,0 +1,22 @@
+[package]
+name = "stanchion-lua"
+version = "0.1.0"
+edition = "2024"
+description = "Lua-specific implementation of the stanchion plugin system"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jalcine/stanchion"
+
+[dependencies]
+stanchion-abi = { path = "crates/stanchion-abi", version = "0.1.0" }
+mlua = { workspace = true, default-features = false, features = ["serde"] }
+stanchion-macros = { path = "crates/stanchion-macros", version = "0.1.0" }
+
+[features]
+default = []
+async = ["mlua/async"]
+send = ["mlua/send"]
+lua54 = ["mlua/lua54"]
+lua53 = ["mlua/lua53"]
+luajit = ["mlua/luajit"]
+luau = ["mlua/luau"]
+vendored = ["mlua/vendored"]

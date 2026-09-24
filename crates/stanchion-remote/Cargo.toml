@@ -8,15 +8,27 @@ repository.workspace = true
 
 [dependencies]
 mlua = { workspace = true, features = ["serde"] }
-stanchion-core.workspace = true
+stanchion-abi.workspace = true
 stanchion-registry = { workspace = true, features = ["config"] }
 serde.workspace = true
 serde_json.workspace = true
 jsonrpsee-types.workspace = true
 toml.workspace = true
 
+[[bin]]
+name = "plugin-host-lua"
+path = "src/bin/plugin_host_lua.rs"
+required-features = ["lua-backend"]
+
+[[bin]]
+name = "plugin-host-wasm"
+path = "src/bin/plugin_host_wasm.rs"
+required-features = ["wasm-backend"]
+
 [features]
 default = []
+lua-backend = ["mlua/lua54", "stanchion-registry/lua54"]
+wasm-backend = ["stanchion-abi/wasm"]
 async = ["stanchion-registry/async"]
 send = ["stanchion-registry/send"]
 luarocks = ["stanchion-registry/luarocks"]

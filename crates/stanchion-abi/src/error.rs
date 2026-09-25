@@ -18,8 +18,8 @@ use std::fmt;
 pub struct RuntimeError {
     /// The runtime that produced the error, e.g. `"lua"` or `"wasm"`.
     pub runtime_name: String,
-    /// The underlying error.
-    pub error: Box<dyn std::error::Error + Send + Sync>,
+    /// The underlying error message.
+    pub error: String,
 }
 
 impl fmt::Display for RuntimeError {
@@ -30,7 +30,7 @@ impl fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&*self.error)
+        None
     }
 }
 

@@ -16,7 +16,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use mlua::{Lua, Value};
+use stanchion_abi::runtime::Runtime;
+use stanchion_abi::Value;
 
 /// Manifest key reserved by the registry rather than passed to a provider.
 pub const OPTIONAL_KEY: &str = "optional";
@@ -122,14 +123,14 @@ impl Decision {
 ///
 /// The registry denies by default: a capability with a registered provider is still
 /// refused unless a policy grants it.
-pub trait Policy: mlua::MaybeSend + mlua::MaybeSync {
+pub trait Policy: Send + Sync {
     /// Rules on one request.
     fn decide(&self, request: &CapabilityRequest) -> Decision;
 }
 
 impl<F> Policy for F
 where
-    F: Fn(&CapabilityRequest) -> Decision + mlua::MaybeSend + mlua::MaybeSync,
+    F: Fn(&CapabilityRequest) -> Decision + Send + Sync + 'static,
 {
     fn decide(&self, request: &CapabilityRequest) -> Decision {
         self(request)
@@ -170,7 +171,7 @@ impl Rules {
     pub fn allow_with(
         mut self,
         name: impl Into<String>,
-        rule: impl Fn(&CapabilityRequest) -> Decision + mlua::MaybeSend + mlua::MaybeSync + 'static,
+        rule: impl Fn(&CapabilityRequest) -> Decision + Send + Sync + 'static,
     ) -> Self {
         self.rules.insert(name.into(), Box::new(rule));
         self
@@ -194,19 +195,18 @@ impl fmt::Debug for Rules {
     }
 }
 
-/// Builds the Lua value a granted capability binds to.
 #[cfg(feature = "send")]
-pub type ProviderFn = Box<dyn Fn(&Lua, &Grant) -> mlua::Result<Value> + Send + Sync>;
-/// Builds the Lua value a granted capability binds to.
+pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> mlua::Result<mlua::Value> + Send + Sync>;
+/// Builds the stanchion value a granted capability binds to.
 #[cfg(not(feature = "send"))]
-pub type ProviderFn = Box<dyn Fn(&Lua, &Grant) -> mlua::Result<Value>>;
+pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> mlua::Result<mlua::Value>>;
 
 /// Installs a value into every plugin state, ungated.
 #[cfg(feature = "send")]
-pub type AmbientFn = Box<dyn Fn(&Lua) -> mlua::Result<()> + Send + Sync>;
+pub type AmbientFn = Box<dyn Fn(&dyn Runtime) -> mlua::Result<()> + Send + Sync>;
 /// Installs a value into every plugin state, ungated.
 #[cfg(not(feature = "send"))]
-pub type AmbientFn = Box<dyn Fn(&Lua) -> mlua::Result<()>>;
+pub type AmbientFn = Box<dyn Fn(&dyn Runtime) -> mlua::Result<()>>;
 
 /// What the host offers plugins.
 ///
@@ -229,9 +229,8 @@ impl HostSetup {
     pub fn capability(
         &mut self,
         name: impl Into<String>,
-        provider: impl Fn(&Lua, &Grant) -> mlua::Result<Value>
-        + mlua::MaybeSend
-        + mlua::MaybeSync
+        provider: impl Fn(&dyn Runtime, &Grant) -> mlua::Result<mlua::Value>
+        + Send + Sync
         + 'static,
     ) -> &mut Self {
         self.providers.insert(name.into(), Box::new(provider));
@@ -246,7 +245,7 @@ impl HostSetup {
     pub fn ambient(
         &mut self,
         label: impl Into<String>,
-        install: impl Fn(&Lua) -> mlua::Result<()> + mlua::MaybeSend + mlua::MaybeSync + 'static,
+        install: impl Fn(&dyn Runtime) -> mlua::Result<()> + Send + Sync + 'static,
     ) -> &mut Self {
         self.ambient.push((label.into(), Box::new(install)));
         self
@@ -266,9 +265,9 @@ impl HostSetup {
         self.providers.get(name)
     }
 
-    pub(crate) fn install_ambient(&self, lua: &Lua) -> mlua::Result<()> {
+    pub(crate) fn install_ambient(&self, runtime: &dyn Runtime) -> mlua::Result<()> {
         for (_, install) in &self.ambient {
-            install(lua)?;
+            install(runtime)?;
         }
         Ok(())
     }

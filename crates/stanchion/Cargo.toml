@@ -34,7 +34,6 @@ stanchion-dist = { workspace = true, optional = true }
 stanchion-index = { workspace = true, optional = true }
 stanchion-registry = { workspace = true, optional = true }
 stanchion-remote = { workspace = true, optional = true }
-stanchion-rocks = { workspace = true, optional = true }
 stanchion-sigstore = { workspace = true, optional = true }
 
 [features]
@@ -46,7 +45,7 @@ lua53 = ["stanchion-registry/lua53"]
 luajit = ["stanchion-registry/luajit"]
 luau = ["stanchion-registry/luau"]
 vendored = ["stanchion-registry/vendored"]
-luarocks = ["registry", "dep:stanchion-rocks", "stanchion-registry/luarocks"]
+luarocks = ["registry", "stanchion-registry/luarocks"]
 signatures = ["registry", "stanchion-registry/signatures"]
 sigstore-verify = ["signatures", "dep:stanchion-sigstore"]
 remote = ["registry", "dep:stanchion-remote"]

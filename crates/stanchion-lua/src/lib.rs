@@ -24,6 +24,9 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub use mlua;
 pub use mlua::{MaybeSend, MaybeSync};
 
+/// LuaRocks tree queries and version constraints (moved from `stanchion-rocks`).
+pub mod rocks;
+
 /// A Lua object a handle can wrap: a table, or userdata.
 ///
 /// `mlua`'s `ObjectLike` covers both but is sealed, so this enum re-dispatches

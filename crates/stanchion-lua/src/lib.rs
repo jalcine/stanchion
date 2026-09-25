@@ -10,19 +10,15 @@ use std::pin::Pin;
 use std::path::Path;
 
 use mlua::chunk::AsChunk;
-use mlua::{FromLua, Lua, ObjectLike, Result, Table, Value};
+use mlua::{FromLua, Lua, ObjectLike, Result as LuaResult, Table, Value};
+use std::sync::{Arc, Mutex};
+use stanchion_abi::{Result as AbiResult, Value as AbiValue};
 
 pub use stanchion_macros::lua_class;
 
 /// A boxed future returned by `async` methods of a `#[lua_class]` trait.
-/// Requires `Send` when the `send` feature is enabled, matching `mlua`'s
-/// `MaybeSend` convention.
-#[cfg(feature = "send")]
+/// Since `mlua/send` is always enabled, we always use `Send` version.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-/// A boxed future returned by `async` methods of a `#[lua_class]` trait.
-#[cfg(not(feature = "send"))]
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 /// Re-export mlua types used by the Lua trait stack.
 pub use mlua;
@@ -42,7 +38,7 @@ pub enum LuaHandle {
 
 impl LuaHandle {
     /// Reads a key, honouring `__index`.
-    pub fn get<V: FromLua>(&self, key: impl mlua::IntoLua) -> Result<V> {
+    pub fn get<V: FromLua>(&self, key: impl mlua::IntoLua) -> LuaResult<V> {
         match self {
             LuaHandle::Table(table) => table.get(key),
             LuaHandle::UserData(data) => data.get(key),
@@ -50,7 +46,7 @@ impl LuaHandle {
     }
 
     /// Writes a key, honouring `__newindex`.
-    pub fn set(&self, key: impl mlua::IntoLua, value: impl mlua::IntoLua) -> Result<()> {
+    pub fn set(&self, key: impl mlua::IntoLua, value: impl mlua::IntoLua) -> LuaResult<()> {
         match self {
             LuaHandle::Table(table) => table.set(key, value),
             LuaHandle::UserData(data) => data.set(key, value),
@@ -62,7 +58,7 @@ impl LuaHandle {
         &self,
         name: &str,
         args: impl mlua::IntoLuaMulti,
-    ) -> Result<R> {
+    ) -> LuaResult<R> {
         match self {
             LuaHandle::Table(table) => table.call_method(name, args),
             LuaHandle::UserData(data) => data.call_method(name, args),
@@ -74,7 +70,7 @@ impl LuaHandle {
         &self,
         name: &str,
         args: impl mlua::IntoLuaMulti,
-    ) -> Result<R> {
+    ) -> LuaResult<R> {
         match self {
             LuaHandle::Table(table) => table.call_function(name, args),
             LuaHandle::UserData(data) => data.call_function(name, args),
@@ -87,7 +83,7 @@ impl LuaHandle {
         &self,
         name: &str,
         args: impl mlua::IntoLuaMulti,
-    ) -> Result<R> {
+    ) -> LuaResult<R> {
         match self {
             LuaHandle::Table(table) => table.call_async_method(name, args).await,
             LuaHandle::UserData(data) => data.call_async_method(name, args).await,
@@ -100,7 +96,7 @@ impl LuaHandle {
         &self,
         name: &str,
         args: impl mlua::IntoLuaMulti,
-    ) -> Result<R> {
+    ) -> LuaResult<R> {
         match self {
             LuaHandle::Table(table) => table.call_async_function(name, args).await,
             LuaHandle::UserData(data) => data.call_async_function(name, args).await,
@@ -153,7 +149,7 @@ impl From<mlua::AnyUserData> for LuaHandle {
 }
 
 impl FromLua for LuaHandle {
-    fn from_lua(value: Value, _lua: &Lua) -> Result<Self> {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         let from = value.type_name();
         match value {
             Value::Table(table) => Ok(LuaHandle::Table(table)),
@@ -173,7 +169,7 @@ pub trait LuaObject: FromLua + Sized {
     fn required_methods() -> Vec<&'static str>;
 
     /// Wraps a table or userdata, checking [`Self::required_methods`].
-    fn from_handle(handle: LuaHandle) -> Result<Self>;
+    fn from_handle(handle: LuaHandle) -> LuaResult<Self>;
 
     /// The underlying Lua object.
     fn handle(&self) -> &LuaHandle;
@@ -182,7 +178,7 @@ pub trait LuaObject: FromLua + Sized {
     fn into_handle(self) -> LuaHandle;
 
     /// Wraps a table, checking [`Self::required_methods`].
-    fn from_table(table: Table) -> Result<Self> {
+    fn from_table(table: Table) -> LuaResult<Self> {
         Self::from_handle(LuaHandle::Table(table))
     }
 
@@ -204,13 +200,13 @@ pub trait LuaClass: FromLua + Sized {
     type Instance: LuaObject;
 
     /// Wraps a table or userdata, checking [`Self::required_functions`].
-    fn from_handle(handle: LuaHandle) -> Result<Self>;
+    fn from_handle(handle: LuaHandle) -> LuaResult<Self>;
 
     /// The underlying Lua object.
     fn handle(&self) -> &LuaHandle;
 
     /// Wraps a table, checking [`Self::required_functions`].
-    fn from_table(table: Table) -> Result<Self> {
+    fn from_table(table: Table) -> LuaResult<Self> {
         Self::from_handle(LuaHandle::Table(table))
     }
 
@@ -226,7 +222,7 @@ pub trait LuaClass: FromLua + Sized {
 /// let class: GreeterClass = load_class(&lua, &source, "greeter.lua")?;
 /// let greeter = class.new("hello".to_string())?;
 /// ```
-pub fn load_class<'a, C: LuaClass>(lua: &Lua, chunk: impl AsChunk + 'a, name: &str) -> Result<C> {
+pub fn load_class<'a, C: LuaClass>(lua: &Lua, chunk: impl AsChunk + 'a, name: &str) -> LuaResult<C> {
     lua.load(chunk).set_name(name).eval()
 }
 
@@ -234,10 +230,10 @@ pub fn load_class<'a, C: LuaClass>(lua: &Lua, chunk: impl AsChunk + 'a, name: &s
 #[doc(hidden)]
 pub mod __private {
     pub use mlua;
-    use mlua::{Error, Result, Table, Value};
+    use mlua::{Error, Result as LuaResult, Table, Value};
 
     /// Unwraps a `Value` that is a table or userdata, or reports a typed error.
-    pub fn expect_handle(value: Value, target: &'static str) -> Result<super::LuaHandle> {
+    pub fn expect_handle(value: Value, target: &'static str) -> LuaResult<super::LuaHandle> {
         let from = value.type_name();
         match value {
             Value::Table(table) => Ok(super::LuaHandle::Table(table)),
@@ -255,7 +251,7 @@ pub mod __private {
         handle: &super::LuaHandle,
         target: &'static str,
         names: &[&str],
-    ) -> Result<()> {
+    ) -> LuaResult<()> {
         for name in names {
             let message = match handle.get::<Value>(*name) {
                 Ok(Value::Function(_)) => continue,
@@ -275,7 +271,7 @@ pub mod __private {
     }
 
     /// Unwraps a `Value` known to be a table, or reports a typed conversion error.
-    pub fn expect_table(value: Value, target: &'static str) -> Result<Table> {
+    pub fn expect_table(value: Value, target: &'static str) -> LuaResult<Table> {
         let from = value.type_name();
         match value {
             Value::Table(table) => Ok(table),
@@ -288,7 +284,7 @@ pub mod __private {
     }
 
     /// Checks that every name resolves to a function, honouring `__index`.
-    pub fn require_functions(table: &Table, target: &'static str, names: &[&str]) -> Result<()> {
+    pub fn require_functions(table: &Table, target: &'static str, names: &[&str]) -> LuaResult<()> {
         for name in names {
             let value: Value = table.get(*name)?;
             if !value.is_function() {
@@ -311,7 +307,7 @@ pub mod __private {
     pub fn optional_function(
         handle: &super::LuaHandle,
         name: &str,
-    ) -> Result<Option<mlua::Function>> {
+    ) -> LuaResult<Option<mlua::Function>> {
         handle.get(name)
     }
 }
@@ -334,12 +330,11 @@ impl stanchion_abi::PluginBackend for LuaBackend {
         stanchion_abi::PluginType::Lua
     }
 
-    fn load(&self, manifest: &stanchion_abi::Manifest, dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
+    fn load(&self, _manifest: &stanchion_abi::Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
         // Implementation uses mlua to load and instantiate the plugin class.
         // This is a placeholder - the full implementation would:
         // 1. Create a Lua state
         // 2. Load the plugin chunk using load_class
-        // 3. Call the constructor with config and dependencies
         // 4. Return a LuaInstance wrapping the result
         unimplemented!("LuaBackend::load - requires full mlua integration with registry pattern")
     }
@@ -350,13 +345,13 @@ impl stanchion_abi::PluginBackend for LuaBackend {
 /// Wraps a constructed Lua class instance and delegates method calls through
 /// the full Lua trait stack.
 pub struct LuaInstance {
-    lua: Lua,
+    lua: Arc<Mutex<Lua>>,
     instance: LuaHandle,
     exports: Option<Table>,
 }
 
-impl PluginInstance for LuaInstance {
-    fn call(&self, method: &str, args: &[stanchion_abi::Value]) -> stanchion_abi::Result<stanchion_abi::Value> {
+impl stanchion_abi::PluginInstance for LuaInstance {
+    fn call(&self, _method: &str, _args: &[AbiValue]) -> AbiResult<AbiValue> {
         // Convert args to mlua values, call the method, convert result back
         unimplemented!("LuaInstance::call")
     }
@@ -369,6 +364,10 @@ impl PluginInstance for LuaInstance {
 impl LuaInstance {
     /// Creates a new LuaInstance from a constructed Lua class.
     pub fn new(lua: Lua, instance: LuaHandle, exports: Option<Table>) -> Self {
-        Self { lua, instance, exports }
+        Self {
+            lua: Arc::new(Mutex::new(lua)),
+            instance,
+            exports,
+        }
     }
 }

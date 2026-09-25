@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mlua = { workspace = true, features = ["serde"] }
+mlua = { workspace = true, default-features = false, features = ["serde", "send"] }
 stanchion-abi.workspace = true
 stanchion-lua = { workspace = true }
 semver.workspace = true
@@ -18,10 +18,9 @@ stanchion-rocks = { workspace = true, optional = true }
 
 [features]
 default = []
-# Declarative host configuration, for callers that cannot pass closures.
 config = []
 async = ["mlua/async", "stanchion-lua/async"]
-send = ["mlua/send", "stanchion-lua/send"]
+send = []  # mlua/send is always on, this is a no-op feature for compatibility
 luarocks = ["dep:stanchion-rocks"]
 signatures = ["dep:sha2"]
 lua54 = ["mlua/lua54"]

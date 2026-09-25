@@ -15,7 +15,6 @@ repository = "https://github.com/jalcine/stanchion"
 
 [workspace.dependencies]
 stanchion-abi = { path = "crates/stanchion-abi", version = "0.1.0" }
-stanchion-core = { path = "crates/stanchion-core", version = "0.1.0" }
 stanchion-dist = { path = "crates/stanchion-dist", version = "0.1.0" }
 stanchion-ffi = { path = "crates/stanchion-ffi", version = "0.1.0" }
 stanchion-index = { path = "crates/stanchion-index", version = "0.1.0" }

@@ -5,14 +5,17 @@
 //! [`LuaBackend`] and [`LuaInstance`] implementations that satisfy
 //! [`stanchion_abi::PluginBackend`] and [`stanchion_abi::PluginInstance`].
 
+use std::collections::HashMap;
 use std::future::Future;
-use std::pin::Pin;
+use std::io::Write;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use mlua::chunk::AsChunk;
 use mlua::{FromLua, Lua, ObjectLike, Result as LuaResult, Table, Value};
-use std::sync::{Arc, Mutex};
 use stanchion_abi::{Result as AbiResult, Value as AbiValue};
+use stanchion_abi::runtime::Runtime;
 
 pub use stanchion_macros::lua_class;
 
@@ -319,12 +322,17 @@ pub mod __private {
 ///
 /// Loads and instantiates Lua plugins using the full Lua trait stack defined
 /// in this crate.
-pub struct LuaBackend;
+pub struct LuaBackend {
+    /// The Lua state this backend uses.
+    lua: Arc<Mutex<Lua>>,
+}
 
 impl LuaBackend {
-    /// Creates a new Lua backend instance.
-    pub fn new() -> Self {
-        Self
+    /// Creates a new Lua backend instance with the given Lua state.
+    pub fn new(lua: Lua) -> Self {
+        Self {
+            lua: Arc::new(Mutex::new(lua)),
+        }
     }
 }
 
@@ -340,6 +348,45 @@ impl stanchion_abi::PluginBackend for LuaBackend {
         // 2. Load the plugin chunk using load_class
         // 4. Return a LuaInstance wrapping the result
         unimplemented!("LuaBackend::load - requires full mlua integration with registry pattern")
+    }
+}
+
+impl Runtime for LuaBackend {
+    fn load(&self, manifest: &stanchion_abi::Manifest, dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
+        <Self as stanchion_abi::PluginBackend>::load(self, manifest, dir)
+    }
+
+    fn verify(&self, _manifest: &stanchion_abi::Manifest, _dir: &Path) -> stanchion_abi::Result<()> {
+        Ok(())
+    }
+
+    fn audit(&self, _log: &mut dyn Write) -> stanchion_abi::Result<()> {
+        Ok(())
+    }
+
+    fn call(
+        &self,
+        instance: &dyn stanchion_abi::PluginInstance,
+        method: &str,
+        args: &[stanchion_abi::Value],
+    ) -> stanchion_abi::Result<stanchion_abi::Value> {
+        instance.call(method, args)
+    }
+
+    fn budget(&self, _plugin_name: &str) -> stanchion_abi::Result<u64> {
+        Ok(u64::MAX)
+    }
+
+    fn reset_budget(&self, _plugin_name: &str) -> stanchion_abi::Result<()> {
+        Ok(())
+    }
+
+    fn runtime_name(&self) -> &'static str {
+        "lua"
+    }
+
+    fn plugin_type(&self) -> stanchion_abi::PluginType {
+        stanchion_abi::PluginType::Lua
     }
 }
 

@@ -8,7 +8,6 @@ use mlua::{Lua, MultiValue};
 use stanchion_registry::config::HostConfig;
 #[allow(unused_imports)]
 use stanchion_registry::{DynClass, DynInstance, Isolation, Plugin, PluginType, Registry};
-#[cfg(feature = "signatures")]
 #[allow(unused_imports)]
 use stanchion_registry::DirectoryDigest;
 #[allow(unused_imports)]

@@ -27,7 +27,7 @@ required-features = ["wasm-backend"]
 
 [features]
 default = []
-lua-backend = ["mlua/lua54", "stanchion-abi/lua"]
+lua-backend = ["mlua/lua54"]
 wasm-backend = []
 async = ["stanchion-registry/async"]
 luarocks = ["stanchion-registry/luarocks"]

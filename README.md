@@ -9,10 +9,9 @@ capabilities and signatures on the other.
 | Crate                                             | Contains                                                                        |
 | ------------------------------------------------- | ------------------------------------------------------------------------------- |
 | [`stanchion`](crates/stanchion)                   | facade; re-exports the rest behind features, and ships the `plugin-host` binary |
-| [`stanchion-core`](crates/stanchion-core)         | `#[lua_class]` contract: `LuaClass`, `LuaObject`, `BoxFuture`                   |
 | [`stanchion-macros`](crates/stanchion-macros)     | the attribute macro                                                             |
 | [`stanchion-registry`](crates/stanchion-registry) | manifests, sandboxing, capabilities, signatures, reload                         |
-| [`stanchion-rocks`](crates/stanchion-rocks)       | LuaRocks tree queries and version constraints                                   |
+| [`stanchion-lua`](crates/stanchion-lua)         | Lua trait stack (`LuaClass`, `LuaObject`, `LuaHandle`, `load_class`), LuaRocks tree queries and version constraints, `LuaBackend`/`LuaInstance` |
 | [`stanchion-sigstore`](crates/stanchion-sigstore) | sigstore verification — quarantines a large dependency graph                    |
 | [`stanchion-dist`](crates/stanchion-dist)         | packaging, the index protocol, HTTPS transport, pinned installs                 |
 | [`stanchion-index`](crates/stanchion-index)       | serving an index over HTTP, framework-neutral, with a Tower adapter             |

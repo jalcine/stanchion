@@ -36,7 +36,7 @@ mod sandbox;
 pub mod signature;
 pub mod upgrade;
 #[cfg(feature = "luarocks")]
-pub use stanchion_rocks as rocks;
+pub use stanchion_lua::rocks;
 
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};

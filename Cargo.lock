@@ -4388,7 +4388,6 @@ dependencies = [
  "stanchion-index",
  "stanchion-registry",
  "stanchion-remote",
- "stanchion-rocks",
  "stanchion-sigstore",
  "tar",
  "tempfile",
@@ -4516,7 +4515,6 @@ dependencies = [
  "sha2 0.10.9",
  "stanchion-abi",
  "stanchion-lua",
- "stanchion-rocks",
  "toml 0.9.12+spec-1.1.0",
 ]
 
@@ -4532,10 +4530,6 @@ dependencies = [
  "stanchion-registry",
  "toml 0.9.12+spec-1.1.0",
 ]
-
-[[package]]
-name = "stanchion-rocks"
-version = "0.1.0"
 
 [[package]]
 name = "stanchion-ruby"

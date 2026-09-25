@@ -21,7 +21,7 @@ pub enum RegistryError {
     Lua(mlua::Error),
     /// The `luarocks` command could not be queried, so no plugin can be verified.
     #[cfg(feature = "luarocks")]
-    Rocks(stanchion_rocks::RocksError),
+    Rocks(stanchion_lua::rocks::RocksError),
 }
 
 impl fmt::Display for RegistryError {

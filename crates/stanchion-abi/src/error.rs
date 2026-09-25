@@ -1,7 +1,7 @@
 //! One error type, flat enough to survive any backend and any foreign type system.
 //!
 //! The Rust API distinguishes [`RegistryError`](stanchion_registry::RegistryError),
-//! [`LoadFailure`](stanchion_registry::LoadFailure) and `mlua::Error`, each with
+//! [`LoadFailure`](stanchion_registry::LoadFailure) and runtime errors, each with
 //! structured variants worth matching on. Almost none of that structure survives a
 //! binding generator or a WASM export: Kotlin sees a sealed class, Ruby sees an
 //! exception class, and a deeply nested enum turns into something nobody wants to
@@ -13,6 +13,27 @@
 
 use std::fmt;
 
+/// A runtime error from a foreign environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeError {
+    /// The runtime that produced the error, e.g. `"lua"` or `"wasm"`.
+    pub runtime_name: String,
+    /// The underlying error.
+    pub error: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} runtime error: {}", self.runtime_name, self.error)
+    }
+}
+
+impl std::error::Error for RuntimeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.error)
+    }
+}
+
 /// What went wrong.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -20,8 +41,8 @@ pub enum Error {
     UnknownPlugin(String),
     /// One plugin failed to load, reload, or verify.
     Plugin { plugin: String, reason: String },
-    /// A plugin's Lua raised, or a value could not cross the boundary.
-    Lua(String),
+    /// A runtime (Lua, WASM, etc.) raised, or a value could not cross a boundary.
+    Runtime(RuntimeError),
     /// A WASM plugin failed to load, run, or answer a call.
     Wasm(String),
     /// The plugin root could not be read.
@@ -51,7 +72,7 @@ impl Error {
         match self {
             Error::UnknownPlugin(_) => "unknown-plugin",
             Error::Plugin { .. } => "plugin",
-            Error::Lua(_) => "lua",
+            Error::Runtime(_) => "runtime",
             Error::Wasm(_) => "wasm",
             Error::Io(_) => "io",
             Error::Config(_) => "config",
@@ -66,7 +87,7 @@ impl fmt::Display for Error {
         match self {
             Error::UnknownPlugin(name) => write!(f, "no plugin named `{name}`"),
             Error::Plugin { plugin, reason } => write!(f, "plugin `{plugin}`: {reason}"),
-            Error::Lua(message) => write!(f, "{message}"),
+            Error::Runtime(err) => write!(f, "{}", err),
             Error::Wasm(message) => write!(f, "{message}"),
             Error::Io(message) => write!(f, "{message}"),
             Error::Config(message) => write!(f, "configuration: {message}"),
@@ -85,11 +106,3 @@ impl std::error::Error for Error {}
 
 /// The result of anything a foreign caller can ask for.
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// Conversion from the Lua runtime's own error, available only with the `lua` feature.
-#[cfg(feature = "lua")]
-impl From<mlua::Error> for Error {
-    fn from(err: mlua::Error) -> Self {
-        Error::Lua(err.to_string())
-    }
-}

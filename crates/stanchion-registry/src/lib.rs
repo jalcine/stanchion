@@ -1275,7 +1275,6 @@ impl<C: LuaClass> Registry<C> {
             }
         }
 
-        extend_package_path(lua, &manifest.dir)?;
         let environment = plugin_environment(lua)?;
         let granted = self.grant_capabilities(
             runtime,
@@ -1284,12 +1283,17 @@ impl<C: LuaClass> Registry<C> {
             #[cfg(feature = "signatures")]
             signer,
         )?;
+        // Search templates are fixed here, at load time, rather than read from the live
+        // (plugin-writable) `package.path` on each `require`. A plugin cannot steer
+        // `require` at a file the host never blessed. See #31.
+        let search_templates = self.plugin_search_templates(&manifest.dir);
         // Submodules must see the same environment, or a plugin split across files
         // would only half-see its capabilities.
         install_plugin_require(
             lua,
             &environment,
             true,
+            search_templates,
             #[cfg(feature = "signatures")]
             manifest.dir.clone(),
             #[cfg(feature = "signatures")]
@@ -1320,6 +1324,29 @@ impl<C: LuaClass> Registry<C> {
             environment,
             granted,
         })
+    }
+
+    /// The module search templates a plugin's `require` is allowed to consult.
+    ///
+    /// The plugin's own directory, plus any host-configured rock trees. Deliberately
+    /// not derived from the live `package.path`: that table is writable by the plugin,
+    /// and reading it per call let a plugin point `require` at any file the host could
+    /// read (see #31).
+    fn plugin_search_templates(&self, dir: &Path) -> Vec<String> {
+        let dir = dir.display();
+        #[cfg_attr(not(feature = "luarocks"), allow(unused_mut))]
+        let mut templates = vec![format!("{dir}/?.lua"), format!("{dir}/?/init.lua")];
+        #[cfg(feature = "luarocks")]
+        if let Some(paths) = &self.rock_paths {
+            templates.extend(
+                paths
+                    .path
+                    .split(';')
+                    .filter(|template| !template.is_empty())
+                    .map(str::to_string),
+            );
+        }
+        templates
     }
 
     /// Verifies a plugin directory and reports who signed it.
@@ -1599,49 +1626,89 @@ fn slash_path(path: impl AsRef<Path>) -> String {
         .join("/")
 }
 
+/// Largest module file `require` will read, in bytes.
+///
+/// A cap matters because the search is over host-readable paths: without it a file
+/// such as `/dev/zero` (were it ever reachable) would read without bound in Rust,
+/// outside the Lua memory limit. 8 MiB is far above any realistic Lua module.
+const MAX_MODULE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Gives a plugin a `require` that loads its modules into its own environment.
 ///
 /// Lua's stock `require` runs a module chunk in the global environment and caches it
 /// in the shared `package.loaded`. Both are wrong here: a submodule would not see the
 /// capabilities bound in its plugin's environment, and two plugins could not load
-/// different versions of the same module name. This replacement searches the same
-/// `package.path`, loads with the plugin's environment, and caches per plugin.
+/// different versions of the same module name. This replacement searches a fixed set of
+/// `search_templates` captured at load time (never the live, plugin-writable
+/// `package.path`), loads with the plugin's environment, and caches per plugin.
 ///
-/// Anything it cannot find on disk falls through to the original `require`, so
-/// preloaded and C modules still resolve.
+/// Each candidate is canonicalised and must be a regular file that stays within the
+/// directory its own template names; symlinks, devices and files reached via `..` are
+/// refused, as is anything larger than [`MAX_MODULE_BYTES`]. When a digest is present,
+/// a file inside the plugin's own directory must be covered by and match it.
+///
+/// Anything it cannot resolve falls through to the original `require`, so preloaded and
+/// C modules still resolve — but only when not `restricted`.
 fn install_plugin_require(
     lua: &Lua,
     environment: &Table,
     restricted: bool,
+    search_templates: Vec<String>,
     #[cfg(feature = "signatures")] plugin_dir: std::path::PathBuf,
     #[cfg(feature = "signatures")] digest: Option<DirectoryDigest>,
 ) -> mlua::Result<()> {
     let loaded = lua.create_table()?;
     let fallback: Option<mlua::Function> = lua.globals().get("require")?;
-    let package: Option<Table> = lua.globals().get("package")?;
     let plugin_env = environment.clone();
+
+    // Bound each template to the directory it names, resolved once up front. A candidate
+    // may only resolve to a real path beneath the root of the template that produced it.
+    let roots: Vec<Option<std::path::PathBuf>> = search_templates
+        .iter()
+        .map(|template| template_root(template))
+        .collect();
+
+    // The plugin directory, resolved to compare against canonicalised candidates.
+    #[cfg(feature = "signatures")]
+    let plugin_dir = fs::canonicalize(&plugin_dir).unwrap_or(plugin_dir);
 
     let require = lua.create_function(move |lua, name: String| {
         if let Some(cached) = loaded.get::<Option<Value>>(name.as_str())? {
             return Ok(cached);
         }
 
-        let search: String = match &package {
-            Some(package) => package.get("path").unwrap_or_default(),
-            None => String::new(),
-        };
         let relative = name.replace('.', std::path::MAIN_SEPARATOR_STR);
 
-        for template in search.split(';').filter(|template| !template.is_empty()) {
+        for (template, root) in search_templates.iter().zip(roots.iter()) {
             let candidate = template.replace('?', &relative);
-            let Ok(source) = fs::read_to_string(&candidate) else {
+
+            // Resolve symlinks and `..`, which also confirms the file exists.
+            let Ok(resolved) = fs::canonicalize(&candidate) else {
+                continue;
+            };
+            // Only regular files: never a FIFO, device or directory, whose reads could
+            // block forever or run unbounded.
+            let Ok(meta) = fs::metadata(&resolved) else {
+                continue;
+            };
+            if !meta.is_file() || meta.len() > MAX_MODULE_BYTES {
+                continue;
+            }
+            // The resolved target must stay under the template's own directory, so a
+            // name laced with `..` or a symlink out cannot reach elsewhere.
+            match root {
+                Some(root) if resolved.starts_with(root) => {}
+                _ => continue,
+            }
+
+            let Ok(source) = fs::read_to_string(&resolved) else {
                 continue;
             };
 
             // A submodule inside a verified plugin must match what was signed.
             #[cfg(feature = "signatures")]
             if let Some(digest) = &digest
-                && let Ok(relative) = Path::new(&candidate).strip_prefix(&plugin_dir)
+                && let Ok(relative) = resolved.strip_prefix(&plugin_dir)
             {
                 let relative = slash_path(relative);
                 if !digest.covers(&relative) {
@@ -1658,7 +1725,7 @@ fn install_plugin_require(
 
             let value: Value = lua
                 .load(source)
-                .set_name(candidate)
+                .set_name(resolved.display().to_string())
                 .set_environment(plugin_env.clone())
                 .eval()?;
             // Lua treats a module returning nothing as `true`.
@@ -1682,6 +1749,18 @@ fn install_plugin_require(
     environment.set("require", require)
 }
 
+/// The fixed directory a search template resolves within, canonicalised.
+///
+/// A template such as `/plugins/foo/?.lua` yields the resolved `/plugins/foo`. The
+/// portion before the first `?` is treated as a path; its directory is the root every
+/// candidate from this template must stay beneath. Returns `None` when that directory
+/// cannot be resolved (it does not exist), which makes the template match nothing.
+fn template_root(template: &str) -> Option<std::path::PathBuf> {
+    let prefix = template.split('?').next().unwrap_or("");
+    let dir = Path::new(prefix).parent().unwrap_or_else(|| Path::new(""));
+    fs::canonicalize(dir).ok()
+}
+
 /// A table that reads through to the real globals but keeps writes to itself.
 fn plugin_environment(lua: &Lua) -> mlua::Result<Table> {
     let environment = lua.create_table()?;
@@ -1691,15 +1770,3 @@ fn plugin_environment(lua: &Lua) -> mlua::Result<Table> {
     Ok(environment)
 }
 
-/// Lets a plugin `require` its own files without knowing where it was installed.
-fn extend_package_path(lua: &Lua, dir: &Path) -> mlua::Result<()> {
-    let Some(package) = lua.globals().get::<Option<Table>>("package")? else {
-        return Ok(());
-    };
-    let current: String = package.get("path").unwrap_or_default();
-    let addition = format!("{dir}/?.lua;{dir}/?/init.lua", dir = dir.display());
-    if !current.contains(&addition) {
-        package.set("path", format!("{addition};{current}"))?;
-    }
-    Ok(())
-}

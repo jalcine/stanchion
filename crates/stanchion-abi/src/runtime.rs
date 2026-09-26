@@ -47,4 +47,21 @@ pub trait Runtime: Send + Sync {
 
     /// The [`PluginType`] this runtime handles.
     fn plugin_type(&self) -> PluginType;
+
+    /// Installs a capability function into the plugin environment.
+    ///
+    /// The runtime creates the appropriate callable (e.g. a Lua
+    /// function) and binds it in each plugin's state.
+    fn install_capability(
+        &self,
+        name: &str,
+        provider: &dyn crate::callback::CapabilityProvider,
+        grant: &crate::callback::Grant,
+    ) -> Result<()>;
+
+    /// Returns the underlying Lua state for Lua backends.
+    /// Returns `None` for non-Lua backends.
+    fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
+        None
+    }
 }

@@ -82,3 +82,74 @@ pub fn toml_to_value(value: &toml::Value) -> Value {
 pub fn table_to_map(table: &toml::Table) -> Value {
     Value::Map(table.iter().map(|(key, value)| (key.clone(), toml_to_value(value))).collect())
 }
+
+#[cfg(feature = "lua")]
+pub mod lua {
+    use super::Value;
+    use mlua::{Lua, LuaString, Table, Value as LuaValue};
+    use std::collections::BTreeMap;
+
+    /// Converts a `stanchion_abi::Value` to an `mlua::Value`.
+    pub fn abi_to_lua(val: &Value, lua: &Lua) -> mlua::Result<LuaValue> {
+        match val {
+            Value::Nil => Ok(LuaValue::Nil),
+            Value::Bool(v) => Ok(LuaValue::Boolean(*v)),
+            Value::Int(v) => Ok(LuaValue::Integer(*v)),
+            Value::Float(v) => Ok(LuaValue::Number(*v)),
+            Value::Str(v) => Ok(LuaValue::String(lua.create_string(v)?)),
+            Value::List(items) => {
+                let table = lua.create_table()?;
+                for (i, item) in items.iter().enumerate() {
+                    table.set(i + 1, abi_to_lua(item, lua)?)?;
+                }
+                Ok(LuaValue::Table(table))
+            }
+            Value::Map(entries) => {
+                let table = lua.create_table()?;
+                for (k, v) in entries {
+                    table.set(k.clone(), abi_to_lua(v, lua)?)?;
+                }
+                Ok(LuaValue::Table(table))
+            }
+        }
+    }
+
+    /// Converts an `mlua::Value` to a `stanchion_abi::Value`.
+    pub fn lua_to_abi(lua: &Lua, val: &LuaValue) -> Value {
+        match val {
+            LuaValue::Nil => Value::Nil,
+            LuaValue::Boolean(v) => Value::Bool(*v),
+            LuaValue::Integer(v) => Value::Int(*v),
+            LuaValue::Number(v) => Value::Float(*v),
+            LuaValue::String(s) => Value::Str(lua_string_to_string(s.clone())),
+            LuaValue::Table(t) => Value::Map(lua_table_to_map(lua, t)),
+            LuaValue::UserData(_) | LuaValue::Thread(_) | LuaValue::Function(_) | LuaValue::LightUserData(_) | LuaValue::Error(_) | LuaValue::Other(_) => {
+                // FFI cannot represent these types, use Nil as fallback
+                Value::Nil
+            }
+        }
+    }
+
+    fn lua_string_to_string(lua_string: LuaString) -> String {
+        match lua_string.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => String::new(),
+        }
+    }
+
+    fn lua_table_to_map(lua: &Lua, lua_table: &Table) -> BTreeMap<String, Value> {
+        let mut result = BTreeMap::new();
+        for pair_result in lua_table.pairs::<mlua::Value, mlua::Value>() {
+            if let Ok((k, v)) = pair_result {
+                let key_str = match k {
+                    LuaValue::String(s) => Some(lua_string_to_string(s)),
+                    _ => None,
+                };
+                if let Some(key) = key_str {
+                    result.insert(key, lua_to_abi(lua, &v));
+                }
+            }
+        }
+        result
+    }
+}

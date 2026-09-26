@@ -128,5 +128,6 @@ pub fn to_ruby(ruby: &Ruby, value: &Value) -> Result<Rb, Error> {
             }
             hash.as_value()
         }
+        Value::Function => ruby.qnil().as_value(),
     })
 }

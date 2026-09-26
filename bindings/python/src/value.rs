@@ -94,5 +94,6 @@ pub fn to_py<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>>
             }
             dict.into_any()
         }
+        Value::Function => py.None().into_bound(py),
     })
 }

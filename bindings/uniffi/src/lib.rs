@@ -49,6 +49,7 @@ pub enum Value {
     Str { value: String },
     Seq { items: Vec<Value> },
     Table { entries: std::collections::HashMap<String, Value> },
+    Function,
 }
 
 impl From<&FfiValue> for Value {
@@ -70,6 +71,7 @@ impl From<&FfiValue> for Value {
                     .map(|(key, entry)| (key.clone(), Value::from(entry)))
                     .collect(),
             },
+            FfiValue::Function => Value::Function,
         }
     }
 }
@@ -89,6 +91,7 @@ impl From<&Value> for FfiValue {
                     .map(|(key, entry)| (key.clone(), FfiValue::from(entry)))
                     .collect(),
             ),
+            Value::Function => FfiValue::Function,
         }
     }
 }

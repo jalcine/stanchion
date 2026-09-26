@@ -241,6 +241,7 @@ pub fn unpack(archive: impl Read, into: &Path, limits: Limits) -> Result<(), Pac
 
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut total: u64 = 0;
+    let mut dirs: usize = 0;
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -250,9 +251,14 @@ pub fn unpack(archive: impl Read, into: &Path, limits: Limits) -> Result<(), Pac
 
         let kind = header.entry_type();
         if kind.is_dir() {
-            // Directories are created as their files need them, so an explicit entry
-            // only has to be checked, not acted on.
             safe_relative(&raw).ok_or_else(|| PackageError::UnsafePath(display.clone()))?;
+            dirs = dirs.saturating_add(1);
+            if dirs.saturating_add(seen.len()) > limits.entries {
+                return Err(PackageError::TooLarge(format!(
+                    "archive holds more than {} entries",
+                    limits.entries
+                )));
+            }
             continue;
         }
         if !kind.is_file() {

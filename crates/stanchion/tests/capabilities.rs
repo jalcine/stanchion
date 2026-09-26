@@ -2,16 +2,20 @@
 //! plugin's environment.
 #![cfg(feature = "registry")]
 
-use std::fs;
-use std::path::Path;
+mod common;
 
+use std::fs;
+
+use stanchion::registry::{
+    CapabilityRequest, Decision, FailureReason, Registry, Rules, Sandbox, toml,
+};
 use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table, Value};
-use stanchion::tests::common::{first_failure, probe_source, write_plugin};
+use stanchion_lua::mlua::{self, Lua, Result, Table};
 use tempfile::TempDir;
 
-type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
-type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+use common::{
+    Fallible, TestResult, first_failure, lua_function, probe_source, with_lua, write_plugin,
+};
 
 #[lua_class]
 pub trait Probe {
@@ -29,23 +33,19 @@ fn single(manifest: &str, body: &str) -> Fallible<TempDir> {
 /// enforces from its grant).
 fn registry() -> Registry<ProbeClass> {
     Registry::isolated(Lua::new(), Sandbox::restricted()).with_setup(|host| {
-        host.capability("log", |lua, _grant| {
-            Ok(Value::Function(lua.create_function(
-                |_, message: String| Ok(format!("logged: {message}")),
-            )?))
+        host.capability("log", |runtime, _grant| {
+            lua_function(runtime, |_, message: String| Ok(format!("logged: {message}")))
         });
-        host.capability("network", |lua, grant| {
+        host.capability("network", |runtime, grant| {
             // The allowlist is baked in here, so the plugin cannot widen it later.
             let allowed: Vec<String> = grant.get_or_default("hosts");
-            Ok(Value::Function(lua.create_function(
-                move |_, host: String| {
-                    if allowed.contains(&host) {
-                        Ok(format!("fetched {host}"))
-                    } else {
-                        Err(mlua::Error::RuntimeError(format!("`{host}` not granted")))
-                    }
-                },
-            )?))
+            lua_function(runtime, move |_, host: String| {
+                if allowed.contains(&host) {
+                    Ok(format!("fetched {host}"))
+                } else {
+                    Err(mlua::Error::RuntimeError(format!("`{host}` not granted")))
+                }
+            })
         });
         Ok(())
     })
@@ -293,8 +293,8 @@ fn audit_lists_ambient_globals_alongside_declarations() -> TestResult {
     let root = single("name = \"probe\"\n", r#"return "x""#)?;
     let registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
         .with_setup(|host| {
-            host.ambient("HOST_VERSION", |lua| {
-                lua.globals().set("HOST_VERSION", "1.0")
+            host.ambient("HOST_VERSION", |runtime| {
+                with_lua(runtime, |lua| lua.globals().set("HOST_VERSION", "1.0"))
             });
             Ok(())
         });

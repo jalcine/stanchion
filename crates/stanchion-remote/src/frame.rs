@@ -146,10 +146,14 @@ pub fn read<R: BufRead>(reader: &mut R) -> io::Result<Option<Incoming>> {
 
         let value: Json = serde_json::from_str(&line).map_err(io::Error::other)?;
         // Shape, not a tag: that is how JSON-RPC separates the two.
-        let message = if value.get("method").is_some() {
-            Incoming::Request(serde_json::from_value(value).map_err(io::Error::other)?)
-        } else {
-            Incoming::Response(serde_json::from_value(value).map_err(io::Error::other)?)
+        let has_method = value.get("method").is_some();
+        let has_reply = value.get("result").is_some() || value.get("error").is_some();
+
+        let message = match (has_method, has_reply) {
+            (true, false) => Incoming::Request(serde_json::from_value(value).map_err(io::Error::other)?),
+            (false, true) => Incoming::Response(serde_json::from_value(value).map_err(io::Error::other)?),
+            (true, true) => return Err(io::Error::other("message carries both `method` and `result`/`error`")),
+            (false, false) => return Err(io::Error::other("message is neither a request nor a response")),
         };
         return Ok(Some(message));
     }

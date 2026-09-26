@@ -381,10 +381,10 @@ impl Stanchion {
                 #[cfg(feature = "signatures")]
                 let (signer, digest) = match registry.verify_plugin(&manifest) {
                     Ok(pair) => pair,
-                    Err(_) => {
+                    Err(e) => {
                         failures.push(Failure {
                             plugin: manifest.name.clone(),
-                            reason: "signature verification failed".to_string(),
+                            reason: e.to_string(),
                         });
                         continue;
                     }
@@ -405,7 +405,41 @@ impl Stanchion {
                 let budget = manifest.budget.as_ref().map(|b| b.max_instructions);
                 let call_budget = budget.map(CallBudget::new);
 
-                match backend.load(&manifest, &manifest.dir) {
+                // Read the entry once, here, and bind it to the digest before handing it
+                // to the backend. The backend compiles these exact bytes (`load_bytes`),
+                // so the file cannot be swapped between verification and loading. See #35.
+                let entry_bytes = match std::fs::read(manifest.entry_path()) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        failures.push(Failure {
+                            plugin: manifest.name.clone(),
+                            reason: format!("failed to read entry '{}': {e}", manifest.entry),
+                        });
+                        continue;
+                    }
+                };
+                #[cfg(feature = "signatures")]
+                if let Some(digest) = &digest {
+                    let relative = manifest.entry.replace('\\', "/");
+                    if !digest.covers(&relative) {
+                        failures.push(Failure {
+                            plugin: manifest.name.clone(),
+                            reason: format!("entry '{relative}' is not part of the verified plugin"),
+                        });
+                        continue;
+                    }
+                    if !digest.matches(&relative, &entry_bytes) {
+                        failures.push(Failure {
+                            plugin: manifest.name.clone(),
+                            reason: format!(
+                                "entry '{relative}' changed between verification and loading"
+                            ),
+                        });
+                        continue;
+                    }
+                }
+
+                match backend.load_bytes(&manifest, &manifest.dir, &entry_bytes) {
                     Ok(instance) => {
                         let runtime = instance.runtime().to_string();
                         instances.insert(manifest.name.clone(), PluginInstanceEntry {
@@ -665,8 +699,29 @@ impl Stanchion {
                 manifest.plugin_type
             )));
         };
+        // Bind the entry bytes to the digest before loading, same as the load path (#35).
+        let entry_bytes = std::fs::read(manifest.entry_path()).map_err(|e| {
+            Error::Io(format!(
+                "reading entry '{}' for reload of '{}': {e}",
+                manifest.entry, plugin
+            ))
+        })?;
+        #[cfg(feature = "signatures")]
+        if let Some(digest) = &digest {
+            let relative = manifest.entry.replace('\\', "/");
+            if !digest.covers(&relative) {
+                return Err(Error::Io(format!(
+                    "reload of '{plugin}': entry '{relative}' is not part of the verified plugin"
+                )));
+            }
+            if !digest.matches(&relative, &entry_bytes) {
+                return Err(Error::Io(format!(
+                    "reload of '{plugin}': entry '{relative}' changed between verification and loading"
+                )));
+            }
+        }
         let new_instance = backend
-            .load(&manifest, &manifest.dir)
+            .load_bytes(&manifest, &manifest.dir, &entry_bytes)
             .map_err(|e| Error::Io(format!("reload failed for '{}': {}", plugin, e)))?;
         let runtime = new_instance.runtime().to_string();
         let entry = instances

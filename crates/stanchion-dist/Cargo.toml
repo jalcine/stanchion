@@ -28,15 +28,6 @@ http = ["package", "dep:reqwest"]
 # Everything a host needs to install from a remote index.
 client = ["http"]
 
-# Forwarded so this crate can be built on its own; the Lua runtime reaches it only
-# through stanchion-registry.
-send = ["stanchion-registry/send"]
-lua54 = ["stanchion-registry/lua54"]
-lua53 = ["stanchion-registry/lua53"]
-luajit = ["stanchion-registry/luajit"]
-luau = ["stanchion-registry/luau"]
-vendored = ["stanchion-registry/vendored"]
-
 [dev-dependencies]
 tempfile = "3"
 

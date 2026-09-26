@@ -13,7 +13,7 @@ toml.workspace = true
 mlua = { workspace = true, optional = true, default-features = false, features = ["lua54"] }
 
 [features]
-default = []
+default = ["lua"]
 lua = ["dep:mlua"]
 
 [lints]

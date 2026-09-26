@@ -178,7 +178,7 @@ impl Sandbox {
     }
 
     /// Creates a state under this policy, plus its instruction budget if configured.
-    pub(crate) fn build(&self) -> mlua::Result<(Lua, Option<Budget>)> {
+    pub fn build(&self) -> mlua::Result<(Lua, Option<Budget>)> {
         let lua = Lua::new_with(self.libs, self.options.clone())?;
         if let Some(limit) = self.memory_limit {
             lua.set_memory_limit(limit)?;

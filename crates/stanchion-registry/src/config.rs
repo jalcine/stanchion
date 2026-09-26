@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use mlua::StdLib;
 use serde::Deserialize;
 
-use stanchion_lua::Sandbox;
+use stanchion_lua::sandbox::Sandbox;
 
 /// How a host runs plugins: what they may reach, and what they cost.
 #[derive(Debug, Clone, Default, Deserialize)]

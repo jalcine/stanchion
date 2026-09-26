@@ -154,7 +154,7 @@ pub struct Rules {
 #[cfg(feature = "send")]
 type RuleFn = Box<dyn Fn(&CapabilityRequest) -> Decision + Send + Sync>;
 #[cfg(not(feature = "send"))]
-type RuleFn = Box<dyn Fn(&CapabilityRequest) -> Decision>;
+type RuleFn = Box<dyn Fn(&CapabilityRequest) -> Decision + Send + Sync>;
 
 impl Rules {
     /// A policy that refuses everything; add rules to open specific capabilities.
@@ -196,17 +196,17 @@ impl fmt::Debug for Rules {
 }
 
 #[cfg(feature = "send")]
-pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> mlua::Result<mlua::Value> + Send + Sync>;
+pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value> + Send + Sync>;
 /// Builds the stanchion value a granted capability binds to.
 #[cfg(not(feature = "send"))]
-pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> mlua::Result<mlua::Value>>;
+pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value> + Send + Sync>;
 
 /// Installs a value into every plugin state, ungated.
 #[cfg(feature = "send")]
-pub type AmbientFn = Box<dyn Fn(&dyn Runtime) -> mlua::Result<()> + Send + Sync>;
+pub type AmbientFn = Box<dyn Fn(&dyn Runtime) -> stanchion_abi::Result<()> + Send + Sync>;
 /// Installs a value into every plugin state, ungated.
 #[cfg(not(feature = "send"))]
-pub type AmbientFn = Box<dyn Fn(&dyn Runtime) -> mlua::Result<()>>;
+pub type AmbientFn = Box<dyn Fn(&dyn Runtime) -> stanchion_abi::Result<()>>;
 
 /// What the host offers plugins.
 ///
@@ -229,7 +229,7 @@ impl HostSetup {
     pub fn capability(
         &mut self,
         name: impl Into<String>,
-        provider: impl Fn(&dyn Runtime, &Grant) -> mlua::Result<mlua::Value>
+        provider: impl Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value>
         + Send + Sync
         + 'static,
     ) -> &mut Self {
@@ -245,7 +245,7 @@ impl HostSetup {
     pub fn ambient(
         &mut self,
         label: impl Into<String>,
-        install: impl Fn(&dyn Runtime) -> mlua::Result<()> + Send + Sync + 'static,
+        install: impl Fn(&dyn Runtime) -> stanchion_abi::Result<()> + Send + Sync + 'static,
     ) -> &mut Self {
         self.ambient.push((label.into(), Box::new(install)));
         self
@@ -265,7 +265,7 @@ impl HostSetup {
         self.providers.get(name)
     }
 
-    pub(crate) fn install_ambient(&self, runtime: &dyn Runtime) -> mlua::Result<()> {
+    pub(crate) fn install_ambient(&self, runtime: &dyn Runtime) -> stanchion_abi::Result<()> {
         for (_, install) in &self.ambient {
             install(runtime)?;
         }

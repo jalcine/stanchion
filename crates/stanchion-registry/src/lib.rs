@@ -31,15 +31,6 @@ mod error;
 pub mod lock;
 mod manifest;
 mod panics;
-mod capability;
-#[cfg(feature = "config")]
-pub mod config;
-pub mod dynamic;
-mod error;
-#[cfg(feature = "signatures")]
-pub mod lock;
-mod manifest;
-mod panics;
 mod runtime;
 #[cfg(feature = "signatures")]
 pub mod signature;
@@ -76,7 +67,9 @@ use std::path::Path;
 
 use mlua::{Lua, LuaSerdeExt, Table, Value};
 
-use stanchion_lua::{Budget, LuaClass, LuaObject, Sandbox};
+use stanchion_lua::sandbox::{Budget, Sandbox};
+use stanchion_lua::{LuaClass, LuaObject};
+use stanchion_abi::value::lua::{abi_to_lua, lua_to_abi};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";
@@ -669,7 +662,7 @@ impl<C: LuaClass> Registry<C> {
     fn configure(&self, runtime: &dyn Runtime) -> Result<(), RegistryError> {
         self.host_setup
             .install_ambient(runtime)
-            .map_err(RegistryError::Lua)?;
+            .map_err(|err| RegistryError::Lua(mlua::Error::RuntimeError(err.to_string())))?;
         #[cfg(feature = "luarocks")]
         if let Some(paths) = &self.rock_paths {
             // Need a Lua state to prepend paths
@@ -1432,8 +1425,13 @@ impl<C: LuaClass> Registry<C> {
             };
 
             let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
-            let value = provider(runtime, &grant)?;
-            _environment.set(name.as_str(), value)?;
+            let value_abi = provider(runtime, &grant)?;
+            let lua_arc = runtime.lua_state()
+                .expect("Lua runtime required for capability binding");
+            let lua = lua_arc.lock().unwrap();
+            let value_lua = abi_to_lua(&value_abi, &lua)
+                .map_err(|e| FailureReason::Lua(mlua::Error::RuntimeError(e.to_string())))?;
+            _environment.set(name.as_str(), value_lua)?;
             granted.push(name.clone());
         }
 

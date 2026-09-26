@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 # The runtime trait replaces direct `&Lua` usage; lua-enabled bindings use stanchion-lua
-stanchion-registry = { workspace = true, features = ["config", "send"] }
+stanchion-registry = { workspace = true, features = ["config", "send", "signatures"] }
 stanchion-abi = { workspace = true, features = ["lua"] }
 mlua = { workspace = true, default-features = false, features = ["serde", "send"] }
 stanchion-lua = { workspace = true, features = ["lua54"] }
@@ -19,7 +19,7 @@ futures-executor = { version = "0.3", default-features = false, features = ["std
 tokio = { version = "1", default-features = false, features = ["sync"] }
 
 [features]
-default = []
+default = ["signatures"]
 async = ["stanchion-registry/async", "stanchion-lua/async", "mlua/async"]
 signatures = ["stanchion-registry/signatures"]
 

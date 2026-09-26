@@ -30,6 +30,9 @@ pub use mlua::{MaybeSend, MaybeSync};
 /// LuaRocks tree queries and version constraints (moved from `stanchion-rocks`).
 pub mod rocks;
 
+/// Per-plugin Lua state policy: standard libraries, memory and instruction limits.
+pub mod sandbox;
+
 /// A Lua object a handle can wrap: a table, or userdata.
 ///
 /// `mlua`'s `ObjectLike` covers both but is sealed, so this enum re-dispatches

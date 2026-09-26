@@ -18,6 +18,9 @@ use crate::error::Result;
 use crate::manifest::{Manifest, PluginType};
 use crate::value::Value;
 
+#[cfg(feature = "lua")]
+use mlua;
+
 /// A runtime backend (Lua, Wasm, etc.) that can load, call, verify,
 /// audit and enforce budgets for plugins.
 ///
@@ -61,6 +64,11 @@ pub trait Runtime: Send + Sync {
 
     /// Returns the underlying Lua state for Lua backends.
     /// Returns `None` for non-Lua backends.
+    #[cfg(feature = "lua")]
+    fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
+        None
+    }
+    #[cfg(not(feature = "lua"))]
     fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
         None
     }

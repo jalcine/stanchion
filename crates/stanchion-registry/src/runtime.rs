@@ -18,81 +18,87 @@ use stanchion_abi::{
     PluginInstance,
 };
 
-/// A runtime wrapper for `&Lua` that implements the [`Runtime`] trait.
-///
-/// This enables gradual migration from direct `Lua` usage to the
-/// [`Runtime`] abstraction. The wrapper delegates Lua operations
-/// to the underlying `Lua` state.
-pub struct LuaRuntime<'a> {
-    /// The Lua state to delegate to.
-    lua: &'a Lua,
-}
-
-impl<'a> LuaRuntime<'a> {
-    /// Creates a new `LuaRuntime` wrapper for the given Lua state.
-    pub fn new(lua: &'a Lua) -> Self {
-        Self { lua }
-    }
-}
-
-impl<'a> Runtime for LuaRuntime<'a> {
-    fn load(
-        &self,
-        _manifest: &Manifest,
-        _dir: &Path,
-    ) -> stanchion_abi::Result<Box<dyn PluginInstance>> {
-        // TODO: Implement proper plugin loading using LuaBackend.
-        // For now, stub to allow compilation.
-        unimplemented!("LuaRuntime::load - use LuaBackend for production")
+/// A runtime wrapper for `Lua` that implements the [`Runtime`] trait.
+    ///
+    /// This enables gradual migration from direct `Lua` usage to the
+    /// [`Runtime`] abstraction. The wrapper delegates Lua operations
+    /// to the underlying `Lua` state.
+    pub struct LuaRuntime {
+        /// The Lua state to delegate to.
+        lua: std::sync::Arc<std::sync::Mutex<mlua::Lua>>,
     }
 
-    fn verify(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<()> {
-        // TODO: Implement verification.
-        unimplemented!("LuaRuntime::verify")
+    impl LuaRuntime {
+        /// Creates a new `LuaRuntime` wrapper for the given Lua state.
+        pub fn new(lua: mlua::Lua) -> Self {
+            Self {
+                lua: std::sync::Arc::new(std::sync::Mutex::new(lua)),
+            }
+        }
     }
 
-    fn audit(&self, _log: &mut dyn Write) -> stanchion_abi::Result<()> {
-        // TODO: Implement audit logging.
-        unimplemented!("LuaRuntime::audit")
-    }
+    impl Runtime for LuaRuntime {
+        fn load(
+            &self,
+            _manifest: &Manifest,
+            _dir: &Path,
+        ) -> stanchion_abi::Result<Box<dyn PluginInstance>> {
+            // TODO: Implement proper plugin loading using LuaBackend.
+            // For now, stub to allow compilation.
+            unimplemented!("LuaRuntime::load - use LuaBackend for production")
+        }
 
-    fn call(
-        &self,
-        _instance: &dyn PluginInstance,
-        _method: &str,
-        _args: &[AbiValue],
-    ) -> stanchion_abi::Result<AbiValue> {
-        // TODO: Implement method call on plugin instance.
-        unimplemented!("LuaRuntime::call")
-    }
+        fn verify(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<()> {
+            // TODO: Implement verification.
+            unimplemented!("LuaRuntime::verify")
+        }
 
-    fn budget(&self, _plugin_name: &str) -> stanchion_abi::Result<u64> {
-        // TODO: Implement budget tracking.
-        Ok(u64::MAX)
-    }
+        fn audit(&self, _log: &mut dyn Write) -> stanchion_abi::Result<()> {
+            // TODO: Implement audit logging.
+            unimplemented!("LuaRuntime::audit")
+        }
 
-    fn reset_budget(&self, _plugin_name: &str) -> stanchion_abi::Result<()> {
-        // TODO: Implement budget reset.
-        Ok(())
-    }
+        fn call(
+            &self,
+            _instance: &dyn PluginInstance,
+            _method: &str,
+            _args: &[AbiValue],
+        ) -> stanchion_abi::Result<AbiValue> {
+            // TODO: Implement method call on plugin instance.
+            unimplemented!("LuaRuntime::call")
+        }
 
-    fn runtime_name(&self) -> &'static str {
-        "lua"
-    }
+        fn budget(&self, _plugin_name: &str) -> stanchion_abi::Result<u64> {
+            // TODO: Implement budget tracking.
+            Ok(u64::MAX)
+        }
 
-    fn plugin_type(&self) -> stanchion_abi::PluginType {
-        stanchion_abi::PluginType::Lua
-    }
+        fn reset_budget(&self, _plugin_name: &str) -> stanchion_abi::Result<()> {
+            // TODO: Implement budget reset.
+            Ok(())
+        }
 
-    fn install_capability(
-        &self,
-        _name: &str,
-        _provider: &dyn stanchion_abi::callback::CapabilityProvider,
-        _grant: &stanchion_abi::callback::Grant,
-    ) -> stanchion_abi::Result<()> {
-        // The capability installation is handled by the registry's
-        // with_setup mechanism, which uses the Runtime trait to bind
-        // functions into plugin environments.
-        Ok(())
+        fn runtime_name(&self) -> &'static str {
+            "lua"
+        }
+
+        fn plugin_type(&self) -> stanchion_abi::PluginType {
+            stanchion_abi::PluginType::Lua
+        }
+
+        fn install_capability(
+            &self,
+            _name: &str,
+            _provider: &dyn stanchion_abi::callback::CapabilityProvider,
+            _grant: &stanchion_abi::callback::Grant,
+        ) -> stanchion_abi::Result<()> {
+            // The capability installation is handled by the registry's
+            // with_setup mechanism, which uses the Runtime trait to bind
+            // functions into plugin environments.
+            Ok(())
+        }
+
+        fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
+            Some(std::sync::Arc::clone(&self.lua))
+        }
     }
-}

@@ -7,13 +7,17 @@
 //! WASM-only build links no Lua at all.
 
 pub mod backend;
+pub mod callback;
 pub mod error;
 pub mod manifest;
+pub mod runtime;
 pub mod value;
 
 pub use backend::{BackendRegistry, PluginBackend, PluginInstance};
-pub use error::{Error, Result};
+pub use callback::{CapabilityCall, CapabilityProvider, Decision, Grant};
+pub use error::{Error, Result, RuntimeError};
 pub use manifest::{
     DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType,
 };
+pub use runtime::Runtime;
 pub use value::Value;

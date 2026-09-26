@@ -30,42 +30,29 @@ name = "remote_host"
 required-features = ["remote"]
 
 [dependencies]
-stanchion-core.workspace = true
 stanchion-dist = { workspace = true, optional = true }
 stanchion-index = { workspace = true, optional = true }
 stanchion-registry = { workspace = true, optional = true }
 stanchion-remote = { workspace = true, optional = true }
-stanchion-rocks = { workspace = true, optional = true }
 stanchion-sigstore = { workspace = true, optional = true }
 
 [features]
 default = []
-async = ["stanchion-registry?/async", "stanchion-remote?/async"]
-send = ["stanchion-registry?/send", "stanchion-remote?/send"]
+async = ["stanchion-registry/async"]
 registry = ["dep:stanchion-registry"]
-luarocks = ["registry", "dep:stanchion-rocks", "stanchion-registry/luarocks"]
+lua54 = ["stanchion-registry/lua54"]
+lua53 = ["stanchion-registry/lua53"]
+luajit = ["stanchion-registry/luajit"]
+luau = ["stanchion-registry/luau"]
+vendored = ["stanchion-registry/vendored"]
+luarocks = ["registry", "stanchion-registry/luarocks"]
 signatures = ["registry", "stanchion-registry/signatures"]
 sigstore-verify = ["signatures", "dep:stanchion-sigstore"]
 remote = ["registry", "dep:stanchion-remote"]
-
-# Packaging and installing plugins with a pinned lockfile. Adds tar and gzip, and no
-# network stack: an install from a directory of packages needs nothing more.
 distribution = ["signatures", "dep:stanchion-dist", "stanchion-dist/package"]
-# Reading an index and fetching packages over HTTPS. Quarantined behind
-# its own feature because it is where the HTTP and TLS dependencies arrive.
 distribution-client = ["distribution", "stanchion-dist/client"]
-# Serving an index: the framework-neutral core. Adapters are their own crates
-# (`stanchion-index-poem`) or a feature of the core (`tower`).
 index-server = ["distribution", "dep:stanchion-index"]
-
-# Everything testable without the sigstore dependency graph. Integration tests are
-# gated per feature, so a run without this silently covers almost nothing.
-full = ["async", "send", "registry", "luarocks", "signatures", "remote", "distribution"]
-lua54 = ["mlua/lua54"]
-lua53 = ["mlua/lua53"]
-luajit = ["mlua/luajit"]
-luau = ["mlua/luau"]
-vendored = ["mlua/vendored"]
+full = ["async", "registry", "luarocks", "signatures", "remote", "distribution"]
 
 [dev-dependencies]
 mlua = { workspace = true, features = ["serde"] }
@@ -77,7 +64,7 @@ tar = "0.4"
 flate2 = "1"
 
 [package.metadata.docs.rs]
-features = ["lua54", "vendored", "async", "send", "registry", "luarocks", "signatures", "remote"]
+features = ["async", "registry", "luarocks", "signatures", "remote"]
 
 [lints]
 workspace = true

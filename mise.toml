@@ -69,7 +69,7 @@ run = "cargo tarpaulin --workspace --features $STANCHION_FEATURES --out Html --o
 
 [tasks."test:coverage:quick"]
 description = "Quick coverage (excludes slow suites)"
-run = "cargo tarpaulin --workspace --features $STANCHION_FEATURES --exclude-files '*/rocks/*' --exclude-files '*/ui/*' --out Html --out Lcov --output-dir target/coverage --timeout 180"
+run = "cargo tarpaulin --workspace --features $STANCHION_FEATURES --exclude-files '*/rocks/*' --exclude-files '*/ui/*' --exclude-files '*/bindings/*' --out Html --out Lcov --output-dir target/coverage --timeout 180"
 
 [tasks.lint]
 description = "Clippy across the workspace and the bindings"

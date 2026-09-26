@@ -1,4 +1,4 @@
-//! Tests for the [`BackendRegistry`] and [`PluginBackend`] types.
+//! Tests for [`BackendRegistry`] and [`PluginBackend`] types.
 
 use stanchion_abi::backend::{BackendRegistry, PluginBackend};
 use stanchion_abi::manifest::{Manifest, PluginType};
@@ -14,7 +14,7 @@ impl PluginBackend for DummyBackend {
     }
 
     fn load(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        unimplemented!()
+        Err(stanchion_abi::Error::Plugin { plugin: "dummy".to_string(), reason: "not implemented".to_string() })
     }
 }
 
@@ -27,7 +27,7 @@ impl PluginBackend for LuaBackend {
     }
 
     fn load(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        unimplemented!()
+        Err(stanchion_abi::Error::Plugin { plugin: "lua".to_string(), reason: "not implemented".to_string() })
     }
 }
 
@@ -37,7 +37,7 @@ impl PluginBackend for WasmBackend {
     }
 
     fn load(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        unimplemented!()
+        Err(stanchion_abi::Error::Plugin { plugin: "wasm".to_string(), reason: "not implemented".to_string() })
     }
 }
 
@@ -95,4 +95,56 @@ fn iter_returns_all_backends() {
     assert_eq!(types.len(), 2);
     assert!(types.contains(&PluginType::Lua));
     assert!(types.contains(&PluginType::Wasm));
+}
+
+#[test]
+fn register_preserves_last_write_for_same_type() {
+    let mut registry = BackendRegistry::new();
+    registry.register(Box::new(LuaBackend));
+    let second_ty = PluginType::Lua;
+    registry.register(Box::new(DummyBackend { ty: second_ty.clone() }));
+    assert_eq!(registry.len(), 1);
+    assert!(registry.get(&second_ty).is_some());
+}
+
+#[test]
+fn get_returns_none_for_empty_registry() {
+    let registry: BackendRegistry = BackendRegistry::default();
+    assert!(registry.get(&PluginType::Lua).is_none());
+}
+
+#[test]
+fn len_reflects_registered_backends() {
+    let mut registry = BackendRegistry::new();
+    assert_eq!(registry.len(), 0);
+    registry.register(Box::new(LuaBackend));
+    assert_eq!(registry.len(), 1);
+    registry.register(Box::new(WasmBackend));
+    assert_eq!(registry.len(), 2);
+}
+
+#[test]
+fn load_returns_error_for_unimplemented_backends() {
+    let manifest = Manifest {
+        name: "test".to_string(),
+        version: None,
+        plugin_type: PluginType::Lua,
+        entry: "init.lua".to_string(),
+        dependencies: Default::default(),
+        capabilities: Default::default(),
+        rocks: Default::default(),
+        config: Default::default(),
+        budget: None,
+        dir: Path::new("/tmp").to_path_buf(),
+    };
+    let dir = Path::new("/tmp");
+
+    let lua = LuaBackend;
+    assert!(lua.load(&manifest, dir).is_err());
+
+    let wasm = WasmBackend;
+    assert!(wasm.load(&manifest, dir).is_err());
+
+    let dummy = DummyBackend { ty: PluginType::Lua };
+    assert!(dummy.load(&manifest, dir).is_err());
 }

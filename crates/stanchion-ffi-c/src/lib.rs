@@ -24,7 +24,7 @@ fn to_ffi_error_code(err: &stanchion_ffi::Error) -> i32 {
     match err {
         stanchion_ffi::Error::UnknownPlugin(_) => STANCHION_ERR_UNKNOWN_PLUGIN,
         stanchion_ffi::Error::Plugin { .. } => STANCHION_ERR_PLUGIN,
-        stanchion_ffi::Error::Lua(_) => STANCHION_ERR_LUA,
+        stanchion_ffi::Error::Runtime(_) => STANCHION_ERR_LUA,
         stanchion_ffi::Error::Io(_) => STANCHION_ERR_IO,
         stanchion_ffi::Error::Config(_) => STANCHION_ERR_CONFIG,
         stanchion_ffi::Error::Capability { .. } => STANCHION_ERR_CAPABILITY,

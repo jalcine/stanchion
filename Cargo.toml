@@ -15,19 +15,18 @@ repository = "https://github.com/jalcine/stanchion"
 
 [workspace.dependencies]
 stanchion-abi = { path = "crates/stanchion-abi", version = "0.1.0" }
-stanchion-core = { path = "crates/stanchion-core", version = "0.1.0" }
 stanchion-dist = { path = "crates/stanchion-dist", version = "0.1.0" }
 stanchion-ffi = { path = "crates/stanchion-ffi", version = "0.1.0" }
 stanchion-index = { path = "crates/stanchion-index", version = "0.1.0" }
 stanchion-index-poem = { path = "crates/stanchion-index-poem", version = "0.1.0" }
+stanchion-lua = { path = "crates/stanchion-lua", version = "0.1.0" }
 stanchion-macros = { path = "crates/stanchion-macros", version = "0.1.0" }
 stanchion-registry = { path = "crates/stanchion-registry", version = "0.1.0" }
 stanchion-remote = { path = "crates/stanchion-remote", version = "0.1.0" }
-stanchion-rocks = { path = "crates/stanchion-rocks", version = "0.1.0" }
 stanchion-sigstore = { path = "crates/stanchion-sigstore", version = "0.1.0" }
 stanchion-wasm = { path = "crates/stanchion-wasm", version = "0.1.0" }
 
-mlua = { version = "0.12", default-features = false }
+mlua = { version = "0.12", default-features = false, features = ["lua54", "vendored"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = { version = "1", features = ["serde"] }
@@ -36,6 +35,8 @@ toml = "0.9"
 jsonrpsee-types = "0.26"
 http = "1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
 
 # The panic policy, in one place so it cannot drift between crates: every fallible
 # path returns an error instead of unwinding into a caller.

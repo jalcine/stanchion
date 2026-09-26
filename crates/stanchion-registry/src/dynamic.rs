@@ -11,7 +11,7 @@
 
 use mlua::{FromLua, Lua, MultiValue, Result, Value};
 
-use stanchion_core::{LuaClass, LuaHandle, LuaObject};
+use stanchion_lua::{LuaClass, LuaHandle, LuaObject};
 
 /// A plugin class whose methods are resolved at call time.
 #[derive(Clone, Debug)]
@@ -63,7 +63,7 @@ impl LuaObject for DynInstance {
 
 impl FromLua for DynInstance {
     fn from_lua(value: Value, _lua: &Lua) -> Result<Self> {
-        let handle = stanchion_core::__private::expect_handle(value, "DynInstance")?;
+        let handle = stanchion_lua::__private::expect_handle(value, "DynInstance")?;
         DynInstance::from_handle(handle)
     }
 }
@@ -87,7 +87,7 @@ impl LuaClass for DynClass {
 
 impl FromLua for DynClass {
     fn from_lua(value: Value, _lua: &Lua) -> Result<Self> {
-        let handle = stanchion_core::__private::expect_handle(value, "DynClass")?;
+        let handle = stanchion_lua::__private::expect_handle(value, "DynClass")?;
         DynClass::from_handle(handle)
     }
 }

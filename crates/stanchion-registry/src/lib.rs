@@ -31,15 +31,23 @@ mod error;
 pub mod lock;
 mod manifest;
 mod panics;
-mod sandbox;
+mod capability;
+#[cfg(feature = "config")]
+pub mod config;
+pub mod dynamic;
+mod error;
+#[cfg(feature = "signatures")]
+pub mod lock;
+mod manifest;
+mod panics;
+mod runtime;
 #[cfg(feature = "signatures")]
 pub mod signature;
 pub mod upgrade;
-#[cfg(feature = "luarocks")]
-pub use stanchion_rocks as rocks;
 
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
+pub use stanchion_abi::runtime::Runtime;
 pub use stanchion_abi::manifest::{
     DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType,
 };
@@ -50,7 +58,6 @@ pub use panics::Panicked;
 pub use toml;
 
 pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY, Policy, Rules};
-pub use sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
 #[cfg(feature = "config")]
 pub use config::{CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config};
 #[cfg(feature = "signatures")]
@@ -69,7 +76,7 @@ use std::path::Path;
 
 use mlua::{Lua, LuaSerdeExt, Table, Value};
 
-use stanchion_core::{LuaClass, LuaObject};
+use stanchion_lua::{Budget, LuaClass, LuaObject, Sandbox};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";
@@ -604,13 +611,15 @@ impl<C: LuaClass> Registry<C> {
         if let Isolation::PerPlugin(sandbox) | Isolation::PerGroup(sandbox) = &self.isolation {
             let sandbox = sandbox.clone();
             let (lua, budget) = sandbox.build().map_err(RegistryError::Lua)?;
-            self.configure(&lua)?;
+            let runtime = crate::runtime::LuaRuntime::new(lua.clone());
+            self.configure(&runtime)?;
             return Ok((lua, budget));
         }
 
         let lua = self.host.clone();
+        let runtime = crate::runtime::LuaRuntime::new(lua.clone());
         if !self.shared_configured {
-            self.configure(&lua)?;
+            self.configure(&runtime)?;
             self.shared_configured = true;
         }
         Ok((lua, None))
@@ -657,13 +666,15 @@ impl<C: LuaClass> Registry<C> {
     }
 
     /// Installs ambient globals and cached rock paths on one state.
-    fn configure(&self, lua: &Lua) -> Result<(), RegistryError> {
+    fn configure(&self, runtime: &dyn Runtime) -> Result<(), RegistryError> {
         self.host_setup
-            .install_ambient(lua)
+            .install_ambient(runtime)
             .map_err(RegistryError::Lua)?;
         #[cfg(feature = "luarocks")]
         if let Some(paths) = &self.rock_paths {
-            prepend_module_paths(lua, paths).map_err(RegistryError::Lua)?;
+            // Need a Lua state to prepend paths
+            // This will be a separate issue
+            unimplemented!("LuaRuntime::configure - luarocks paths")
         }
         Ok(())
     }
@@ -778,11 +789,13 @@ impl<C: LuaClass> Registry<C> {
 
             let (lua, budget, group) =
                 self.group_state(components.as_ref(), &mut group_states, &manifest)?;
+            let runtime = crate::runtime::LuaRuntime::new(lua.clone());
             // Evaluating a chunk and running a constructor is plugin code, so a panic
             // there is this plugin's failure rather than the whole load's.
             let built = panics::guard(|| {
                 self.instantiate(
                     &lua,
+                    &runtime,
                     budget.as_ref(),
                     &manifest,
                     #[cfg(feature = "signatures")]
@@ -869,16 +882,18 @@ impl<C: LuaClass> Registry<C> {
         #[cfg(feature = "signatures")]
         let (signer, digest) = self.verify_plugin(&manifest).map_err(&fail)?;
 
+        let runtime = crate::runtime::LuaRuntime::new(lua.clone());
         let built = panics::guard(|| {
-            self.instantiate(
-                &lua,
-                budget.as_ref(),
-                &manifest,
-                #[cfg(feature = "signatures")]
-                &signer,
-                #[cfg(feature = "signatures")]
-                digest.as_ref(),
-            )
+                self.instantiate(
+                    &lua,
+                    &runtime,
+                    budget.as_ref(),
+                    &manifest,
+                    #[cfg(feature = "signatures")]
+                    &signer,
+                    #[cfg(feature = "signatures")]
+                    digest.as_ref(),
+                )
         })
         .unwrap_or_else(|panicked| Err(FailureReason::Panicked(panicked)))
         .map_err(&fail)?;
@@ -1242,6 +1257,7 @@ impl<C: LuaClass> Registry<C> {
     fn instantiate(
         &self,
         lua: &Lua,
+        runtime: &dyn Runtime,
         budget: Option<&Budget>,
         manifest: &Manifest,
         #[cfg(feature = "signatures")] signer: &Signer,
@@ -1262,7 +1278,7 @@ impl<C: LuaClass> Registry<C> {
         extend_package_path(lua, &manifest.dir)?;
         let environment = plugin_environment(lua)?;
         let granted = self.grant_capabilities(
-            lua,
+            runtime,
             &environment,
             manifest,
             #[cfg(feature = "signatures")]
@@ -1370,8 +1386,8 @@ impl<C: LuaClass> Registry<C> {
     /// simply leaves the name unbound.
     fn grant_capabilities(
         &self,
-        lua: &Lua,
-        environment: &Table,
+        runtime: &dyn Runtime,
+        _environment: &Table,
         manifest: &Manifest,
         #[cfg(feature = "signatures")] signer: &Signer,
     ) -> Result<Vec<String>, FailureReason> {
@@ -1416,8 +1432,8 @@ impl<C: LuaClass> Registry<C> {
             };
 
             let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
-            let value = provider(lua, &grant)?;
-            environment.set(name.as_str(), value)?;
+            let value = provider(runtime, &grant)?;
+            _environment.set(name.as_str(), value)?;
             granted.push(name.clone());
         }
 
@@ -1475,7 +1491,7 @@ impl<C: LuaClass> Registry<C> {
     /// Reads a plugin's `exports`, accepting either a table or a function returning one.
     fn extract_exports(
         &self,
-        instance: &stanchion_core::LuaHandle,
+        instance: &stanchion_lua::LuaHandle,
     ) -> Result<Option<Table>, FailureReason> {
         match instance.get::<Value>(EXPORTS_KEY)? {
             Value::Nil => Ok(None),

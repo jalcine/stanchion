@@ -408,7 +408,7 @@ impl Stanchion {
                 match backend.load(&manifest, &manifest.dir) {
                     Ok(instance) => {
                         let runtime = instance.runtime().to_string();
-                        instances.push(PluginInstanceEntry {
+                        instances.insert(manifest.name.clone(), PluginInstanceEntry {
                             name: manifest.name.clone(),
                             instance,
                             runtime,
@@ -472,7 +472,7 @@ impl Stanchion {
             .map(|entry| PluginInfo {
                 name: entry.name.clone(),
                 version: None,
-                granted: entry.granted.clone(),
+                granted: entry.1.granted.clone(),
                 signer: entry.signer.clone(),
                 runtime: entry.runtime.clone(),
             })
@@ -519,7 +519,7 @@ impl Stanchion {
             let registry = futures_executor::block_on(self.registry.lock());
             if let Some(entry) = registry.get(plugin) {
                 refresh_budget(entry);
-                let result = call_plugin(entry.lua(), entry.instance(), method, args)?;
+                let result = call_plugin(entry.lua(), entry.1.instance(), method, args)?;
                 return Ok(result);
             }
         }
@@ -527,11 +527,11 @@ impl Stanchion {
         // Try non-Lua instances.
         let instances = futures_executor::block_on(self.instances.lock());
         for entry in instances.iter() {
-            if entry.name == plugin && entry.granted.contains(&method.to_string()) {
-                if let Some(budget) = &entry.call_budget {
+            if entry.1.name == plugin && entry.1.granted.contains(&method.to_string()) {
+                if let Some(budget) = &entry.1.call_budget {
                     budget.reset();
                 }
-                return entry.instance.call(method, args);
+                return entry.1.instance.call(method, args);
             }
         }
         drop(instances);
@@ -569,7 +569,7 @@ impl Stanchion {
 
         let instances = futures_executor::block_on(self.instances.lock());
         for entry in instances.iter() {
-            if !entry.granted.contains(&method.to_string()) {
+            if !entry.1.granted.contains(&method.to_string()) {
                 outcomes.push(Outcome {
                     plugin: entry.name.clone(),
                     value: None,
@@ -577,10 +577,10 @@ impl Stanchion {
                 });
                 continue;
             }
-            if let Some(budget) = &entry.call_budget {
+            if let Some(budget) = &entry.1.call_budget {
                 budget.reset();
             }
-            outcomes.push(match entry.instance.call(method, args) {
+            outcomes.push(match entry.1.instance.call(method, args) {
                 Ok(value) => Outcome {
                     plugin: entry.name.clone(),
                     value: Some(value),
@@ -620,7 +620,7 @@ impl Stanchion {
         let instances = futures_executor::block_on(self.instances.lock());
         let dir = instances
             .iter()
-            .find(|e| e.name == plugin)
+            .find(|e| e.1.name == plugin)
             .map(|e| e.dir.clone())
             .ok_or_else(|| Error::UnknownPlugin(plugin.to_string()))?;
         // Read fresh manifest and validate (filesystem, no lock needed).
@@ -671,15 +671,15 @@ impl Stanchion {
         let runtime = new_instance.runtime().to_string();
         let entry = instances
             .iter_mut()
-            .find(|e| e.name == plugin)
+            .find(|e| e.1.name == plugin)
             .ok_or_else(|| Error::UnknownPlugin(plugin.to_string()))?;
-        entry.instance = new_instance;
+        entry.1.instance = new_instance;
         entry.runtime = runtime;
-        entry.granted = granted;
+        entry.1.granted = granted;
         entry.signer = signer.to_string();
         entry.digest = digest.as_ref().map(|d| d.hex().to_string());
         entry.budget = budget;
-        entry.call_budget = call_budget;
+        entry.1.call_budget = call_budget;
         entry.dir = manifest.dir;
         Ok(())
     }
@@ -700,9 +700,9 @@ impl Stanchion {
         }
         let mut instances = futures_executor::block_on(self.instances.lock());
         for entry in instances.iter_mut() {
-            if entry.name == plugin {
-                if let Some(idx) = entry.granted.iter().position(|c| c == capability) {
-                    entry.granted.remove(idx);
+            if entry.1.name == plugin {
+                if let Some(idx) = entry.1.granted.iter().position(|c| c == capability) {
+                    entry.1.granted.remove(idx);
                     return Ok(true);
                 } else {
                     return Ok(false);
@@ -753,7 +753,7 @@ impl Stanchion {
                 .ok_or_else(|| Error::UnknownPlugin(plugin.clone()))?;
             refresh_budget(entry);
             let lua_args = to_lua_args(entry.lua(), &args)?;
-            let result = entry.instance().call_method_async(&method, lua_args).await
+            let result = entry.1.instance().call_method_async(&method, lua_args).await
                 .map_err(|e| Error::Runtime(stanchion_abi::RuntimeError::from(e)))?;
             Ok(crate::value::lua_to_abi(entry.lua(), &result))
         }).await;
@@ -767,12 +767,12 @@ impl Stanchion {
         // Try non-Lua instances.
         let instances = self.instances.lock().await;
         for entry in instances.iter() {
-            if entry.name == plugin && entry.granted.contains(&method.to_string()) {
-                if let Some(budget) = &entry.call_budget {
+            if entry.1.name == plugin && entry.1.granted.contains(&method.to_string()) {
+                if let Some(budget) = &entry.1.call_budget {
                     budget.reset();
                 }
                 return crate::guard::Guarded::new(self.id, async {
-                    entry.instance.call(&method, &args)
+                    entry.1.instance.call(&method, &args)
                 }).await;
             }
         }
@@ -822,7 +822,7 @@ impl Stanchion {
              // Non-Lua plugins
              let instances = self.instances.lock().await;
              for entry in instances.iter() {
-                 if !entry.granted.contains(&method.to_string()) {
+                 if !entry.1.granted.contains(&method.to_string()) {
                      outcomes.push(Outcome {
                          plugin: entry.name.clone(),
                          value: None,
@@ -830,10 +830,10 @@ impl Stanchion {
                      });
                      continue;
                  }
-                 if let Some(budget) = &entry.call_budget {
+                 if let Some(budget) = &entry.1.call_budget {
                      budget.reset();
                  }
-                 outcomes.push(match entry.instance.call(&method, &args) {
+                 outcomes.push(match entry.1.instance.call(&method, &args) {
                     Ok(value) => Outcome {
                         plugin: entry.name.clone(),
                         value: Some(value),

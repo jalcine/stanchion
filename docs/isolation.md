@@ -29,10 +29,18 @@ let registry = Registry::grouped(Lua::new(), policy);
 | Cost | one state | one state per group | one state per plugin |
 
 Under **shared** isolation each chunk is evaluated with its own environment table whose
-`__index` is the real globals: a plugin **reads** globals normally but its **writes**
-stay local, so one plugin cannot redefine `string.format` for the others. That is
-namespace hygiene, not a security boundary — `rawset(_G, ...)` still reaches the shared
-state, and nothing bounds CPU or memory.
+`__index` is the real globals: a plugin **reads** globals normally, and a plain global
+assignment (`x = ...`) stays local to its environment. Each environment also gets its
+own shallow copy of the core library tables (`string`, `table`, `math`, `coroutine`,
+`os`, `io`), so `string.format = ...` mutates only that plugin's copy.
+
+This is namespace hygiene, **not a security boundary.** In one shared state the string
+metatable, the method tables reached by `s:upper()` syntax, and every value passed
+between plugins are the same objects, so a determined plugin can still reach and mutate
+what others use (for example through `getmetatable("")`). `rawset(_G, ...)` reaches the
+shared globals directly, and nothing bounds CPU or memory. Run untrusted plugins under
+**per-plugin** isolation, where each plugin has its own `Lua` state and none of this is
+shared.
 
 Under **per-plugin** isolation the boundary is real. Memory and instruction limits are
 properties of a `Lua`, which is exactly why they cannot be applied inside a shared

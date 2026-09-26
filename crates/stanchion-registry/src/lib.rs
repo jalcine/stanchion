@@ -153,9 +153,12 @@ struct Exports {
 
 impl Exports {
     /// Points the stable proxy at a freshly built exports table.
+    ///
+    /// Only `__index` (reads) is repointed. Writes are refused by the read-only
+    /// `__newindex` installed in [`Registry::make_proxy`], so a dependent cannot write
+    /// through the proxy into the provider's live table. See #32.
     fn repoint(&self, table: Table) -> mlua::Result<()> {
-        self.metatable.set("__index", table.clone())?;
-        self.metatable.set("__newindex", table)?;
+        self.metatable.set("__index", table)?;
         Ok(())
     }
 }
@@ -1545,11 +1548,24 @@ impl<C: LuaClass> Registry<C> {
     }
 
     /// Wraps an exports table in the stable proxy dependents hold.
+    ///
+    /// The proxy forwards reads to the live exports table but is otherwise sealed:
+    /// writes are refused, and the forwarding metatable is hidden behind `__metatable`
+    /// so a dependent cannot repoint `__index` at a table of its own or write through
+    /// `__newindex` — both of which would let it hijack the provider's surface for
+    /// every other dependent. See #32.
     fn make_proxy(&self, lua: &Lua, table: &Table) -> mlua::Result<Exports> {
         let proxy = lua.create_table()?;
         let metatable = lua.create_table()?;
         let exports = Exports { proxy, metatable };
         exports.repoint(table.clone())?;
+        let readonly = lua.create_function(|_, (_, _, _): (Table, Value, Value)| {
+            Err::<(), _>(mlua::Error::RuntimeError(
+                "plugin exports are read-only".to_string(),
+            ))
+        })?;
+        exports.metatable.set("__newindex", readonly)?;
+        exports.metatable.set("__metatable", "locked: plugin exports")?;
         exports
             .proxy
             .set_metatable(Some(exports.metatable.clone()))?;
@@ -1767,6 +1783,30 @@ fn plugin_environment(lua: &Lua) -> mlua::Result<Table> {
     let metatable = lua.create_table()?;
     metatable.set("__index", lua.globals())?;
     environment.set_metatable(Some(metatable))?;
+
+    // Under shared/grouped isolation every plugin's environment `__index`es the same
+    // globals, so `string.format = ...` would mutate the library table every other
+    // plugin sees. Give each environment its own shallow copy of the mutable core
+    // library tables as *own* fields, so a field reassignment stays local. Method-call
+    // syntax (`s:upper()`) and the string metatable still resolve through the one
+    // shared state and are not a boundary — see docs/isolation.md; untrusted plugins
+    // need per-plugin isolation. See #32.
+    let globals = lua.globals();
+    for name in ["string", "table", "math", "coroutine", "os", "io"] {
+        if let Some(lib) = globals.get::<Option<Table>>(name)? {
+            environment.set(name, shallow_copy(lua, &lib)?)?;
+        }
+    }
     Ok(environment)
+}
+
+/// Copies a table's own key/value pairs into a fresh table (values shared, not cloned).
+fn shallow_copy(lua: &Lua, table: &Table) -> mlua::Result<Table> {
+    let copy = lua.create_table()?;
+    for pair in table.clone().pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        copy.set(key, value)?;
+    }
+    Ok(copy)
 }
 

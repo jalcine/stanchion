@@ -4,10 +4,8 @@
 pub use stanchion_abi::backend::{BackendRegistry, PluginBackend, PluginInstance};
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-use crate::error::{Error, Result};
-use crate::value::Value;
+use crate::error::Result;
 
 /// The built-in Lua backend, wrapping a `stanchion_lua` instance.
 ///

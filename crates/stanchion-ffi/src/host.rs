@@ -19,7 +19,7 @@ use tokio::sync::{Mutex, MutexGuard};
 
 use crate::backend::{BackendRegistry, PluginBackend, PluginInstance};
 use crate::budget::CallBudget;
-use crate::callback::{AllowList, CapabilityCall, CapabilityProvider, Policy, PolicyBridge};
+use crate::callback::{AllowList, CapabilityProvider, Policy, PolicyBridge};
 use crate::error::{Error, Result};
 use crate::guard::{CallGuard, next_id};
 use crate::value::Value;
@@ -515,7 +515,7 @@ impl Stanchion {
         // Try Lua first (the common case).
         #[cfg(feature = "lua54")]
         {
-            let guard = CallGuard::enter(self.id)?;
+            let _guard = CallGuard::enter(self.id)?;
             let registry = futures_executor::block_on(self.registry.lock());
             if let Some(entry) = registry.get(plugin) {
                 refresh_budget(entry);

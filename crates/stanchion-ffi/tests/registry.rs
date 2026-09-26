@@ -1,7 +1,7 @@
 //! Tests for the registry interface in stanchion-ffi.
 
 use stanchion_abi::manifest::PluginType;
-use stanchion_ffi::{BackendRegistry, PluginBackend, PluginInstance, Error, Result, Value};
+use stanchion_ffi::{BackendRegistry, PluginBackend, PluginInstance, Result, Value};
 use std::path::Path;
 
 struct MockPluginInstance;

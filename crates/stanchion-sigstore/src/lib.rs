@@ -84,7 +84,7 @@ impl<P: VerificationPolicy> SigstoreVerifier<P> {
     }
 }
 
-impl<P: VerificationPolicy + mlua::MaybeSend + mlua::MaybeSync> PluginVerifier
+impl<P: VerificationPolicy + Send + Sync> PluginVerifier
     for SigstoreVerifier<P>
 {
     fn verify(&self, digest: &DirectoryDigest, dir: &Path) -> Result<Signer, VerifyError> {

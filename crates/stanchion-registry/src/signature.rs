@@ -237,8 +237,9 @@ impl DirectoryDigest {
 /// Checks a plugin's signature against the host's trust root.
 ///
 /// Implementations decide what counts as trusted; the registry only decides what to do
-/// with the answer.
-pub trait PluginVerifier: mlua::MaybeSend + mlua::MaybeSync {
+/// with the answer. This trait is runtime-agnostic — implementors should not
+/// depend on `mlua` or any specific plugin runtime.
+pub trait PluginVerifier: Send + Sync {
     /// Verifies `dir`'s signature over `digest`, returning who signed it.
     ///
     /// Return [`VerifyError::Missing`] when no signature artifact is present, so the

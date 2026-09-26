@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mlua.workspace = true
 stanchion-registry = { workspace = true, features = ["signatures"] }
 serde_json.workspace = true
 sha2.workspace = true
@@ -20,11 +19,6 @@ sigstore = { version = "0.14", default-features = false, features = [
 [features]
 default = []
 send = ["stanchion-registry/send"]
-lua54 = ["mlua/lua54"]
-lua53 = ["mlua/lua53"]
-luajit = ["mlua/luajit"]
-luau = ["mlua/luau"]
-vendored = ["mlua/vendored"]
 
 [lints]
 workspace = true

@@ -495,6 +495,46 @@ fn a_revocation_list_loads_from_toml() -> TestResult {
 }
 
 #[test]
+fn a_prefixed_revocation_digest_still_matches() -> TestResult {
+    // #36: entries copied from a lockfile/index/error use the `sha256:<hex>` form. That
+    // must match the bare hex root, not silently fail open.
+    let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
+    let dir = root.path().join("probe");
+    let digest = DirectoryDigest::compute(&dir)?;
+
+    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_revocations(
+            Revocations::new().deny_digest(format!("sha256:{}", digest.hex()), "prefixed form"),
+        );
+
+    let report = registry.load_dir(root.path())?;
+    assert!(report.loaded.is_empty());
+    assert!(first_failure(&report)?.to_string().contains("prefixed form"));
+    Ok(())
+}
+
+#[test]
+fn a_truncated_revocation_digest_is_rejected_at_load() -> TestResult {
+    // The docs example is truncated with `…`; a digest that is not 64 hex characters
+    // could never match, so loading it must fail loudly rather than protect nothing.
+    let root = tempfile::tempdir()?;
+    let list_path = root.path().join("revoked.toml");
+    fs::write(
+        &list_path,
+        "[[revoked]]\ndigest = \"sha256:9f86d081884c7d65\"\nreason = \"typo\"\n",
+    )?;
+
+    let Err(error) = Revocations::load(&list_path) else {
+        return Err("a truncated digest should be rejected".into());
+    };
+    assert!(
+        error.to_string().contains("64 hex characters"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_revocation_entry_naming_nothing_is_a_configuration_error() -> TestResult {
     let root = tempfile::tempdir()?;
     let list_path = root.path().join("revoked.toml");

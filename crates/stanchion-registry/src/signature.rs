@@ -370,6 +370,20 @@ impl Revocations {
                     position.saturating_add(1)
                 )));
             }
+            // A digest that is not 64 hex characters (a typo, or the truncated `…` form
+            // from documentation) can never match a real root and would fail open. Refuse
+            // it loudly here rather than silently protecting nothing. See #36.
+            if let Some(digest) = &entry.digest {
+                let normalized = normalize_digest(digest);
+                if normalized.len() != 64 || !normalized.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(VerifyError::Invalid(format!(
+                        "{}: revoked entry {} has a digest that is not 64 hex characters: `{}`",
+                        path.display(),
+                        position.saturating_add(1),
+                        digest
+                    )));
+                }
+            }
         }
         Ok(list)
     }
@@ -394,13 +408,15 @@ impl Revocations {
 
     /// Returns why this plugin is refused, or `None` if it is not.
     ///
-    /// Digests are compared case-insensitively so a list written by hand still matches.
+    /// Digests are normalised on both sides — an optional `sha256:` prefix stripped and
+    /// lowercased — so an entry copied from a lockfile, index release or error message
+    /// (all of which use the `sha256:<hex>` form) matches the bare hex root. See #36.
     pub fn check(&self, digest: Option<&DirectoryDigest>, signer: &Signer) -> Option<String> {
         let hex = digest.map(DirectoryDigest::hex);
 
         for entry in &self.revoked {
             if let (Some(revoked), Some(actual)) = (&entry.digest, &hex)
-                && revoked.trim().eq_ignore_ascii_case(actual)
+                && normalize_digest(revoked) == normalize_digest(actual)
             {
                 return Some(entry.describe("this build"));
             }
@@ -412,4 +428,14 @@ impl Revocations {
         }
         None
     }
+}
+
+/// Strips an optional `sha256:` prefix and lowercases, yielding bare hex.
+///
+/// Mirrors the lockfile's normalisation so digests are comparable no matter which form
+/// they were written in.
+fn normalize_digest(digest: &str) -> String {
+    let trimmed = digest.trim();
+    let bare = trimmed.strip_prefix("sha256:").unwrap_or(trimmed);
+    bare.to_ascii_lowercase()
 }

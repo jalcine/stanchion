@@ -61,6 +61,9 @@ pub enum RocksError {
     },
     /// A manifest declared a requirement that could not be parsed.
     Requirement { raw: String, message: String },
+    /// A rock name or version did not fit LuaRocks' grammar, so it was refused
+    /// before being handed to the `luarocks` subprocess.
+    InvalidName { value: String, reason: String },
 }
 
 impl fmt::Display for RocksError {
@@ -83,6 +86,9 @@ impl fmt::Display for RocksError {
             }
             RocksError::Requirement { raw, message } => {
                 write!(f, "invalid rock requirement `{raw}`: {message}")
+            }
+            RocksError::InvalidName { value, reason } => {
+                write!(f, "refusing rock name/version `{value}`: {reason}")
             }
         }
     }
@@ -473,9 +479,20 @@ impl RocksConfig {
     /// `luarocks install` accepts a version, not a constraint expression, so a range
     /// requirement installs the newest available version and is checked afterwards.
     pub fn install(&self, name: &str, requirement: &Requirement) -> Result<(), RocksError> {
+        // The name comes straight from an untrusted `plugin.toml`. LuaRocks does not run
+        // it through a shell, but it still reads an argument that starts with `-` as an
+        // option (`--server`, `--only-server`), one that looks like a URL or path as a
+        // remote/local rockspec, and one ending in `.rock`/`.rockspec` as a file to
+        // build — and a rockspec's build step runs arbitrary commands. Validate against
+        // LuaRocks' name grammar first, and pass `--` so nothing that survives can still
+        // be taken as an option. See #33.
+        validate_rock_name(name)?;
         match requirement.pinned_version() {
-            Some(version) => self.run(&["install", name, version])?,
-            None => self.run(&["install", name])?,
+            Some(version) => {
+                validate_rock_version(version)?;
+                self.run(&["install", "--", name, version])?
+            }
+            None => self.run(&["install", "--", name])?,
         };
         Ok(())
     }
@@ -506,6 +523,67 @@ impl RocksConfig {
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
+}
+
+/// Confirms a rock name is a bare LuaRocks module name, not an option, URL, path or
+/// rockspec/rock file that `luarocks install` would treat specially.
+///
+/// The grammar: begins with an ASCII letter or digit, and every character is an ASCII
+/// letter, digit, `.`, `_` or `-`. That rejects a leading `-` (option), `/` and `:`
+/// (paths and URLs), and a leading `.` (`../…`). Names ending in `.rock`/`.rockspec`
+/// are refused as well, since LuaRocks reads those as a file to install and build.
+fn validate_rock_name(name: &str) -> Result<(), RocksError> {
+    let refuse = |reason: &str| RocksError::InvalidName {
+        value: name.to_string(),
+        reason: reason.to_string(),
+    };
+    match name.chars().next() {
+        None => return Err(refuse("a rock name may not be empty")),
+        Some(first) if !first.is_ascii_alphanumeric() => {
+            return Err(refuse("must start with an ASCII letter or digit"));
+        }
+        Some(_) => {}
+    }
+    if let Some(bad) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+    {
+        return Err(refuse(&format!(
+            "contains `{bad}`; only ASCII letters, digits, '.', '_' and '-' are allowed"
+        )));
+    }
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".rock") || lower.ends_with(".rockspec") {
+        return Err(refuse(
+            "a `.rock`/`.rockspec` suffix is read as a file to build, not a rock name",
+        ));
+    }
+    Ok(())
+}
+
+/// Confirms a pinned version is a bare LuaRocks version string, by the same reasoning
+/// as [`validate_rock_name`]: it becomes a positional argument to `luarocks install`.
+fn validate_rock_version(version: &str) -> Result<(), RocksError> {
+    let refuse = |reason: &str| RocksError::InvalidName {
+        value: version.to_string(),
+        reason: reason.to_string(),
+    };
+    match version.chars().next() {
+        None => return Err(refuse("a version may not be empty")),
+        Some(first) if !first.is_ascii_alphanumeric() => {
+            return Err(refuse("must start with an ASCII letter or digit"));
+        }
+        Some(_) => {}
+    }
+    if let Some(bad) = version
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+    {
+        return Err(refuse(&format!(
+            "contains `{bad}`; only ASCII letters, digits, '.', '_' and '-' are allowed"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -592,6 +670,55 @@ mod tests {
         );
         assert_eq!(Requirement::parse(">= 2.0").unwrap().pinned_version(), None);
         assert_eq!(Requirement::parse("*").unwrap().pinned_version(), None);
+    }
+
+    #[test]
+    fn accepts_ordinary_rock_names_and_versions() {
+        for name in ["luafilesystem", "lua-cjson", "penlight", "say", "30log"] {
+            assert!(validate_rock_name(name).is_ok(), "{name} should be valid");
+        }
+        for version in ["2.11", "2.11-1", "1.0.0", "0.1beta"] {
+            assert!(
+                validate_rock_version(version).is_ok(),
+                "{version} should be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_argument_injection_via_rock_names() {
+        // Each of these makes `luarocks install` do something other than install a
+        // named rock from the configured tree.
+        for name in [
+            "--server=https://attacker.example",
+            "--only-server=x",
+            "-Wl,evil",
+            "https://attacker.example/evil-1.0-1.rockspec",
+            "../../somewhere/evil.rockspec",
+            "evil.rock",
+            "payload.rockspec",
+            "a/b",
+            "a:b",
+            "",
+        ] {
+            assert!(
+                matches!(validate_rock_name(name), Err(RocksError::InvalidName { .. })),
+                "`{name}` must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_argument_injection_via_versions() {
+        for version in ["--server=x", "-1", "1.0/../x", "", "http://x"] {
+            assert!(
+                matches!(
+                    validate_rock_version(version),
+                    Err(RocksError::InvalidName { .. })
+                ),
+                "`{version}` must be refused"
+            );
+        }
     }
 
     #[test]

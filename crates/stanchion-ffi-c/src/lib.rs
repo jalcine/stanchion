@@ -91,7 +91,6 @@ fn json_to_ffi_value(value: &Json) -> FfiValue {
             }
             FfiValue::Map(entries)
         }
-        _ => FfiValue::Nil,
     }
 }
 

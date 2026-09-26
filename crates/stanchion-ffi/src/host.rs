@@ -447,7 +447,7 @@ impl Stanchion {
             .plugins
             .iter()
             .map(|entry| AuditEntry {
-                plugin: entry.name.clone(),
+                          plugin: entry.name.clone(),
                 capabilities: entry.requests.iter().map(|r| r.name.clone()).collect(),
                 signer: audit_signer(entry),
             })
@@ -470,11 +470,11 @@ impl Stanchion {
         let non_lua: Vec<PluginInfo> = instances
             .iter()
             .map(|entry| PluginInfo {
-                name: entry.name.clone(),
+                name: entry.1.name.clone(),
                 version: None,
                 granted: entry.1.granted.clone(),
-                signer: entry.signer.clone(),
-                runtime: entry.runtime.clone(),
+                signer: entry.1.signer.clone(),
+                runtime: entry.1.runtime.clone(),
             })
             .collect();
 
@@ -489,7 +489,7 @@ impl Stanchion {
         let mut names: Vec<String> = registry.names().map(str::to_string).collect();
         drop(registry);
         let instances = futures_executor::block_on(self.instances.lock());
-        names.extend(instances.iter().map(|e| e.name.clone()));
+        names.extend(instances.iter().map(|e| e.1.name.clone()));
         Ok(names)
     }
 
@@ -519,7 +519,7 @@ impl Stanchion {
             let registry = futures_executor::block_on(self.registry.lock());
             if let Some(entry) = registry.get(plugin) {
                 refresh_budget(entry);
-                let result = call_plugin(entry.lua(), entry.1.instance(), method, args)?;
+                let result = call_plugin(entry.lua(), entry.instance(), method, args)?;
                 return Ok(result);
             }
         }
@@ -571,7 +571,7 @@ impl Stanchion {
         for entry in instances.iter() {
             if !entry.1.granted.contains(&method.to_string()) {
                 outcomes.push(Outcome {
-                    plugin: entry.name.clone(),
+                          plugin: entry.1.name.clone(),
                     value: None,
                     error: Some(format!("capability '{}' not granted", method)),
                 });
@@ -582,12 +582,12 @@ impl Stanchion {
             }
             outcomes.push(match entry.1.instance.call(method, args) {
                 Ok(value) => Outcome {
-                    plugin: entry.name.clone(),
+                          plugin: entry.1.name.clone(),
                     value: Some(value),
                     error: None,
                 },
                 Err(err) => Outcome {
-                    plugin: entry.name.clone(),
+                          plugin: entry.1.name.clone(),
                     value: None,
                     error: Some(err.to_string()),
                 },
@@ -621,7 +621,7 @@ impl Stanchion {
         let dir = instances
             .iter()
             .find(|e| e.1.name == plugin)
-            .map(|e| e.dir.clone())
+            .map(|e| e.1.dir.clone())
             .ok_or_else(|| Error::UnknownPlugin(plugin.to_string()))?;
         // Read fresh manifest and validate (filesystem, no lock needed).
         // Clone dir to release borrow before reading.
@@ -674,13 +674,13 @@ impl Stanchion {
             .find(|e| e.1.name == plugin)
             .ok_or_else(|| Error::UnknownPlugin(plugin.to_string()))?;
         entry.1.instance = new_instance;
-        entry.runtime = runtime;
+        entry.1.runtime = runtime;
         entry.1.granted = granted;
-        entry.signer = signer.to_string();
-        entry.digest = digest.as_ref().map(|d| d.hex().to_string());
-        entry.budget = budget;
+        entry.1.signer = signer.to_string();
+        entry.1.digest = digest.as_ref().map(|d| d.hex().to_string());
+        entry.1.budget = budget;
         entry.1.call_budget = call_budget;
-        entry.dir = manifest.dir;
+        entry.1.dir = manifest.dir;
         Ok(())
     }
 
@@ -753,7 +753,7 @@ impl Stanchion {
                 .ok_or_else(|| Error::UnknownPlugin(plugin.clone()))?;
             refresh_budget(entry);
             let lua_args = to_lua_args(entry.lua(), &args)?;
-            let result = entry.1.instance().call_method_async(&method, lua_args).await
+            let result = entry.instance().call_method_async(&method, lua_args).await
                 .map_err(|e| Error::Runtime(stanchion_abi::RuntimeError::from(e)))?;
             Ok(crate::value::lua_to_abi(entry.lua(), &result))
         }).await;
@@ -824,7 +824,7 @@ impl Stanchion {
              for entry in instances.iter() {
                  if !entry.1.granted.contains(&method.to_string()) {
                      outcomes.push(Outcome {
-                         plugin: entry.name.clone(),
+                          plugin: entry.1.name.clone(),
                          value: None,
                          error: Some(format!("capability '{}' not granted", method)),
                      });
@@ -835,12 +835,12 @@ impl Stanchion {
                  }
                  outcomes.push(match entry.1.instance.call(&method, &args) {
                     Ok(value) => Outcome {
-                        plugin: entry.name.clone(),
+                          plugin: entry.1.name.clone(),
                         value: Some(value),
                         error: None,
                     },
                     Err(err) => Outcome {
-                        plugin: entry.name.clone(),
+                          plugin: entry.1.name.clone(),
                         value: None,
                         error: Some(err.to_string()),
                     },

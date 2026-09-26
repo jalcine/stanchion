@@ -361,6 +361,7 @@ impl<I: PluginIndex, S: PluginSource> Installer<I, S> {
             fs::remove_dir_all(&staging)?;
         }
         fs::create_dir(&staging)?;
+        fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700))?;
         Ok(staging)
     }
 }

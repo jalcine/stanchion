@@ -323,16 +323,28 @@ fn apply_conditional(served: Served, if_none_match: Option<&str>) -> Served {
     }
 }
 
-/// Maps a source's failure to a status.
+/// Maps a source's failure to a status and a client-safe body.
 ///
 /// `UnknownPlugin` must be a 404 and nothing else: a client maps 404 to "no such
 /// plugin" and every other status to "the index is unreachable", which is the
 /// difference between giving up and retrying.
+///
+/// Every other variant is a server-side condition whose message embeds absolute
+/// filesystem paths and parser detail (a permission error or a malformed catalog file,
+/// for `DirectorySource`). Returning that to anonymous clients discloses the
+/// deployment's layout, so the detail is logged server-side and the client is told only
+/// the status class. See #43.
 fn error_for(err: &IndexError) -> Served {
-    let status = match err {
-        IndexError::UnknownPlugin(_) => StatusCode::NOT_FOUND,
-        IndexError::Malformed(_) => StatusCode::BAD_REQUEST,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    Served::error(status, &err.to_string())
+    match err {
+        // Only echoes the requested name, which the client already sent.
+        IndexError::UnknownPlugin(_) => Served::error(StatusCode::NOT_FOUND, &err.to_string()),
+        IndexError::Malformed(_) => {
+            eprintln!("stanchion-index: malformed index document: {err}");
+            Served::error(StatusCode::BAD_REQUEST, "the index document is malformed")
+        }
+        _ => {
+            eprintln!("stanchion-index: {err}");
+            Served::error(StatusCode::INTERNAL_SERVER_ERROR, "internal index error")
+        }
+    }
 }

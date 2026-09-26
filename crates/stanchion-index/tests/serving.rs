@@ -223,6 +223,29 @@ fn an_unknown_plugin_is_404_and_nothing_else() -> TestResult {
 }
 
 #[test]
+fn a_malformed_server_file_does_not_leak_its_path() -> TestResult {
+    // #43: a malformed catalog on the server must not disclose the deployment's
+    // filesystem layout (or parser detail) to anonymous clients.
+    let root = index_root()?;
+    fs::write(root.path().join("v1").join("index.json"), b"{ not json")?;
+    let server = server(root.path());
+
+    let served = server.serve(&Method::GET, "/v1/index.json", None);
+    assert!(
+        served.status.is_client_error() || served.status.is_server_error(),
+        "a malformed catalog should be an error, got {}",
+        served.status
+    );
+    let body = String::from_utf8(served.body.into_vec()?)?;
+    let leaked = root.path().display().to_string();
+    assert!(
+        !body.contains(&leaked),
+        "the response leaked the server path: {body}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_traversing_name_is_refused_before_it_reaches_the_disk() -> TestResult {
     let root = index_root()?;
     let server = server(root.path());

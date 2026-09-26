@@ -45,6 +45,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use semver::VersionReq;

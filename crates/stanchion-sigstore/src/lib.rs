@@ -101,6 +101,9 @@ impl<P: VerificationPolicy + Send + Sync> PluginVerifier
         let bundle: Bundle = serde_json::from_str(&raw)
             .map_err(|err| VerifyError::Invalid(format!("malformed {BUNDLE_FILE}: {err}")))?;
 
+        // #1 full extraction: verify identity before verification digest consumes bundle.
+        let extracted = extract_identity(&bundle);
+
         // The bundle covers the canonical preimage, which is what the root digest is
         // taken over, so this checks every file in the plugin.
         let hasher = Sha256::new_with_prefix(digest.preimage());
@@ -109,12 +112,18 @@ impl<P: VerificationPolicy + Send + Sync> PluginVerifier
             .verify_digest(hasher, bundle, &self.policy, self.offline)
             .map_err(|err| VerifyError::Untrusted(err.to_string()))?;
 
-        // #1 transition assertion: identity must match the cert subject.
-        // Full extraction via x509-parser from bundle DER is TODO; this asserts
-        // the constructor was not mismatched (load-time failure, not silent).
-        if !self.identity.is_empty() {
-            // TODO: parse bundle cert SAN / OIDC extension and compare to self.identity
-            // For now, fail loudly if identity looks unverified vs policy expectation
+        // Compare extracted cert identity to constructor identity; fail loudly on mismatch.
+        if let Some(id) = extracted {
+            if id != self.identity {
+                return Err(VerifyError::Untrusted(format!(
+                    "sigstore identity mismatch: bundle cert says \"{id}\", policy/constructor expected \"{}\"",
+                    self.identity
+                )));
+            }
+        } else {
+            return Err(VerifyError::Untrusted(
+                "sigstore bundle has no extractable certificate identity".to_string(),
+            ));
         }
 
         Ok(Signer::verified(
@@ -122,4 +131,27 @@ impl<P: VerificationPolicy + Send + Sync> PluginVerifier
             Some("sigstore".to_string()),
         ))
     }
+}
+
+/// Extract identity from bundle cert (SAN URI / OIDC).
+fn extract_identity(bundle: &Bundle) -> Option<String> {
+    let vm = bundle.verification_material.as_ref()?;
+    let content = vm.content.as_ref()?;
+    // Access the X509 certificate DER bytes from the bundle's verification material.
+    // The `content` field is a oneof; we handle the two certificate variants.
+    let der = match content {
+        sigstore_protobuf_specs::dev::sigstore::bundle::v1::verification_material::Content::X509CertificateChain(chain) => chain.certificates.first()?,
+        sigstore_protobuf_specs::dev::sigstore::bundle::v1::verification_material::Content::Certificate(cert) => cert,
+        _ => return None,
+    };
+    let (_, parsed) = x509_parser::parse_x509_certificate(&der.raw_bytes).ok()?;
+    let san_ext = parsed.subject_alternative_name().ok()??;
+    let sans = san_ext.value.general_names
+        .iter()
+        .filter_map(|n| match n {
+            x509_parser::extensions::GeneralName::URI(s) => Some(s.to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    sans.into_iter().next()
 }

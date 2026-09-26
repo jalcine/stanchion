@@ -28,7 +28,7 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest, FailureReason> {
     // Catch a malformed requirement at discovery rather than at load.
     #[cfg(feature = "luarocks")]
     for (rock, requirement) in &manifest.rocks {
-        stanchion_rocks::Requirement::parse(requirement)
+        crate::rocks::Requirement::parse(requirement)
             .map_err(|err| FailureReason::Manifest(format!("rock `{rock}`: {err}")))?;
     }
 

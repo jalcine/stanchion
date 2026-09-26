@@ -21,7 +21,7 @@ pub enum RegistryError {
     Lua(mlua::Error),
     /// The `luarocks` command could not be queried, so no plugin can be verified.
     #[cfg(feature = "luarocks")]
-    Rocks(stanchion_rocks::RocksError),
+    Rocks(stanchion_lua::rocks::RocksError),
 }
 
 impl fmt::Display for RegistryError {
@@ -254,7 +254,10 @@ impl From<RegistryError> for stanchion_abi::Error {
                 stanchion_abi::Error::Io(format!("reading `{}`: {source}", path.display()))
             }
             RegistryError::Reload(failure) => stanchion_abi::Error::from(*failure),
-            RegistryError::Lua(source) => stanchion_abi::Error::Lua(source.to_string()),
+            RegistryError::Lua(source) => stanchion_abi::Error::Runtime(stanchion_abi::RuntimeError {
+                runtime_name: "lua".to_string(),
+                error: source.to_string(),
+            }),
             // `RegistryError` is effectively `#[non_exhaustive]`: `Rocks` appears
             // whenever *any* crate in the build turns on the registry's `luarocks`
             // feature, which this match cannot know about. Falling through keeps that

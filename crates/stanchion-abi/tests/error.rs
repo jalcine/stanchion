@@ -21,9 +21,12 @@ fn plugin_kind() {
 
 #[test]
 fn lua_kind() {
-    let err = Error::Lua("syntax error".to_string());
-    assert_eq!(err.kind(), "lua");
-    assert_eq!(err.to_string(), "syntax error");
+    let err = Error::Runtime(stanchion_abi::RuntimeError {
+        runtime_name: "lua".to_string(),
+        error: "syntax error".to_string(),
+    });
+    assert_eq!(err.kind(), "runtime");
+    assert_eq!(err.to_string(), "lua runtime error: syntax error");
 }
 
 #[test]

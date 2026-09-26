@@ -107,7 +107,7 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
     Ok(quote! {
         #(#trait_attrs)*
         #[doc = #trait_doc_note]
-        #vis trait #trait_ident: ::stanchion::MaybeSend + ::stanchion::MaybeSync {
+         #vis trait #trait_ident: ::stanchion_lua::MaybeSend + ::stanchion_lua::MaybeSync {
             #(#passthrough)*
             #(#trait_items)*
         }
@@ -115,14 +115,14 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
         #[doc = #class_doc]
         #[derive(Clone, Debug)]
         #vis struct #class_ident {
-            handle: ::stanchion::LuaHandle,
+            handle: ::stanchion_lua::LuaHandle,
         }
 
         impl #class_ident {
             #(#class_impls)*
         }
 
-        impl ::stanchion::LuaClass for #class_ident {
+        impl ::stanchion_lua::LuaClass for #class_ident {
             const CLASS_NAME: &'static str = #class_name;
             type Instance = #handle_ident;
 
@@ -133,38 +133,38 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
             }
 
             fn from_handle(
-                handle: ::stanchion::LuaHandle,
-            ) -> ::stanchion::mlua::Result<Self> {
-                ::stanchion::__private::require_handle_functions(
+                handle: ::stanchion_lua::LuaHandle,
+            ) -> ::stanchion_lua::mlua::Result<Self> {
+                ::stanchion_lua::__private::require_handle_functions(
                     &handle,
                     #class_str,
-                    &<Self as ::stanchion::LuaClass>::required_functions(),
+                    &<Self as ::stanchion_lua::LuaClass>::required_functions(),
                 )?;
                 Ok(Self { handle })
             }
 
-            fn handle(&self) -> &::stanchion::LuaHandle {
+            fn handle(&self) -> &::stanchion_lua::LuaHandle {
                 &self.handle
             }
         }
 
-        impl ::stanchion::mlua::FromLua for #class_ident {
+        impl ::stanchion_lua::mlua::FromLua for #class_ident {
             fn from_lua(
-                value: ::stanchion::mlua::Value,
-                _lua: &::stanchion::mlua::Lua,
-            ) -> ::stanchion::mlua::Result<Self> {
-                let handle = ::stanchion::__private::expect_handle(value, #class_str)?;
-                <Self as ::stanchion::LuaClass>::from_handle(handle)
+                value: ::stanchion_lua::mlua::Value,
+                _lua: &::stanchion_lua::mlua::Lua,
+            ) -> ::stanchion_lua::mlua::Result<Self> {
+                let handle = ::stanchion_lua::__private::expect_handle(value, #class_str)?;
+                <Self as ::stanchion_lua::LuaClass>::from_handle(handle)
             }
         }
 
         #[doc = #handle_doc]
         #[derive(Clone, Debug)]
         #vis struct #handle_ident {
-            handle: ::stanchion::LuaHandle,
+            handle: ::stanchion_lua::LuaHandle,
         }
 
-        impl ::stanchion::LuaObject for #handle_ident {
+        impl ::stanchion_lua::LuaObject for #handle_ident {
             fn required_methods() -> ::std::vec::Vec<&'static str> {
                 let mut __names = ::std::vec::Vec::new();
                 #(#required_methods)*
@@ -172,32 +172,32 @@ fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
             }
 
             fn from_handle(
-                handle: ::stanchion::LuaHandle,
-            ) -> ::stanchion::mlua::Result<Self> {
-                ::stanchion::__private::require_handle_functions(
+                handle: ::stanchion_lua::LuaHandle,
+            ) -> ::stanchion_lua::mlua::Result<Self> {
+                ::stanchion_lua::__private::require_handle_functions(
                     &handle,
                     #handle_str,
-                    &<Self as ::stanchion::LuaObject>::required_methods(),
+                    &<Self as ::stanchion_lua::LuaObject>::required_methods(),
                 )?;
                 Ok(Self { handle })
             }
 
-            fn handle(&self) -> &::stanchion::LuaHandle {
+            fn handle(&self) -> &::stanchion_lua::LuaHandle {
                 &self.handle
             }
 
-            fn into_handle(self) -> ::stanchion::LuaHandle {
+            fn into_handle(self) -> ::stanchion_lua::LuaHandle {
                 self.handle
             }
         }
 
-        impl ::stanchion::mlua::FromLua for #handle_ident {
+        impl ::stanchion_lua::mlua::FromLua for #handle_ident {
             fn from_lua(
-                value: ::stanchion::mlua::Value,
-                _lua: &::stanchion::mlua::Lua,
-            ) -> ::stanchion::mlua::Result<Self> {
-                let handle = ::stanchion::__private::expect_handle(value, #handle_str)?;
-                <Self as ::stanchion::LuaObject>::from_handle(handle)
+                value: ::stanchion_lua::mlua::Value,
+                _lua: &::stanchion_lua::mlua::Lua,
+            ) -> ::stanchion_lua::mlua::Result<Self> {
+                let handle = ::stanchion_lua::__private::expect_handle(value, #handle_str)?;
+                <Self as ::stanchion_lua::LuaObject>::from_handle(handle)
             }
         }
 
@@ -339,7 +339,7 @@ fn trait_signature(method: &Method) -> TokenStream2 {
     if *is_async {
         quote! {
             #(#sig_attrs)*
-            fn #ident(&self #(, #params)*) -> ::stanchion::BoxFuture<'_, #ret>;
+            fn #ident(&self #(, #params)*) -> ::stanchion_lua::BoxFuture<'_, #ret>;
         }
     } else {
         quote! {
@@ -363,7 +363,7 @@ fn method_body_core(
     Ok(if *is_async {
         quote! {
             #(#attrs)*
-            #pub_prefix fn #ident(&self #(, #params)*) -> ::stanchion::BoxFuture<'_, #ret> {
+            #pub_prefix fn #ident(&self #(, #params)*) -> ::stanchion_lua::BoxFuture<'_, #ret> {
                 let __handle = ::core::clone::Clone::clone(&self.handle);
                 ::std::boxed::Box::pin(async move { #body })
             }
@@ -401,7 +401,7 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
         // conversion is the blanket `impl<T> From<T> for T`, so it costs nothing.
         MethodKind::FieldGet => quote! {
             ::core::result::Result::map_err(
-                ::stanchion::LuaHandle::get(#table, #name),
+                ::stanchion_lua::LuaHandle::get(#table, #name),
                 ::core::convert::From::from,
             )
         },
@@ -414,32 +414,32 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
             };
             quote! {
                 ::core::result::Result::map_err(
-                    ::stanchion::LuaHandle::set(#table, #name, #value),
+                    ::stanchion_lua::LuaHandle::set(#table, #name, #value),
                     ::core::convert::From::from,
                 )
             }
         }
         MethodKind::Method { optional: false } if method.is_async => quote! {
             ::core::result::Result::map_err(
-                ::stanchion::LuaHandle::call_async_method(#table, #name, #tuple).await,
+                ::stanchion_lua::LuaHandle::call_async_method(#table, #name, #tuple).await,
                 ::core::convert::From::from,
             )
         },
         MethodKind::Method { optional: false } => quote! {
             ::core::result::Result::map_err(
-                ::stanchion::LuaHandle::call_method(#table, #name, #tuple),
+                ::stanchion_lua::LuaHandle::call_method(#table, #name, #tuple),
                 ::core::convert::From::from,
             )
         },
         MethodKind::Function { optional: false } if method.is_async => quote! {
             ::core::result::Result::map_err(
-                ::stanchion::LuaHandle::call_async_function(#table, #name, #tuple).await,
+                ::stanchion_lua::LuaHandle::call_async_function(#table, #name, #tuple).await,
                 ::core::convert::From::from,
             )
         },
         MethodKind::Function { optional: false } => quote! {
             ::core::result::Result::map_err(
-                ::stanchion::LuaHandle::call_function(#table, #name, #tuple),
+                ::stanchion_lua::LuaHandle::call_function(#table, #name, #tuple),
                 ::core::convert::From::from,
             )
         },
@@ -449,7 +449,7 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
             let receiver = match method.kind {
                 // A hand-resolved optional method still needs `self` passed, and a
                 // handle is not itself a Lua value.
-                MethodKind::Method { .. } => quote!(::stanchion::LuaHandle::to_value(#table),),
+                MethodKind::Method { .. } => quote!(::stanchion_lua::LuaHandle::to_value(#table),),
                 _ => quote!(),
             };
             let call = if method.is_async {
@@ -458,7 +458,7 @@ fn call_expr(method: &Method, table: TokenStream2) -> syn::Result<TokenStream2> 
                 quote!(__function.call((#receiver #(#arg_idents,)*))?)
             };
             quote! {
-                match ::stanchion::__private::optional_function(#table, #name)? {
+                match ::stanchion_lua::__private::optional_function(#table, #name)? {
                     ::core::option::Option::Some(__function) => {
                         ::core::result::Result::Ok(::core::option::Option::Some(#call))
                     }

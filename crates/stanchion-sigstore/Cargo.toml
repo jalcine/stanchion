@@ -16,6 +16,7 @@ sigstore = { version = "0.14", default-features = false, features = [
     "rustls-tls",
 ] }
 x509-parser = "0.16"
+sigstore_protobuf_specs = "0.5.2"
 
 [features]
 default = []

@@ -118,6 +118,8 @@ pub enum FailureReason {
     Lock(crate::lock::LockError),
     /// A file's bytes changed between verification and loading.
     DigestMismatch(String),
+    /// A file was not part of the verified plugin digest.
+    UncoveredFile(String),
     /// Policy refused a capability the plugin requires.
     CapabilityDenied { name: String, reason: String },
     /// The plugin requested a capability the host does not offer.
@@ -169,6 +171,9 @@ impl fmt::Display for FailureReason {
             FailureReason::Lock(source) => write!(f, "{source}"),
             FailureReason::DigestMismatch(path) => {
                 write!(f, "`{path}` changed between verification and loading")
+            }
+            FailureReason::UncoveredFile(path) => {
+                write!(f, "`{path}` was not part of the verified plugin")
             }
             FailureReason::CapabilityDenied { name, reason } => {
                 write!(f, "capability `{name}` denied: {reason}")

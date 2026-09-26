@@ -31,13 +31,19 @@ mod error;
 pub mod lock;
 mod manifest;
 mod panics;
+mod capability;
+#[cfg(feature = "config")]
+pub mod config;
+pub mod dynamic;
+mod error;
+#[cfg(feature = "signatures")]
+pub mod lock;
+mod manifest;
+mod panics;
 mod runtime;
-mod sandbox;
 #[cfg(feature = "signatures")]
 pub mod signature;
 pub mod upgrade;
-#[cfg(feature = "luarocks")]
-pub use stanchion_lua::rocks;
 
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
@@ -52,7 +58,6 @@ pub use panics::Panicked;
 pub use toml;
 
 pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY, Policy, Rules};
-pub use sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
 #[cfg(feature = "config")]
 pub use config::{CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config};
 #[cfg(feature = "signatures")]
@@ -71,7 +76,7 @@ use std::path::Path;
 
 use mlua::{Lua, LuaSerdeExt, Table, Value};
 
-use stanchion_lua::{LuaClass, LuaObject};
+use stanchion_lua::{Budget, LuaClass, LuaObject, Sandbox};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";

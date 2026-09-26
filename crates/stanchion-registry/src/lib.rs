@@ -1263,6 +1263,9 @@ impl<C: LuaClass> Registry<C> {
         #[cfg(feature = "signatures")]
         if let Some(digest) = digest {
             let relative = slash_path(&manifest.entry);
+            if !digest.covers(&relative) {
+                return Err(FailureReason::UncoveredFile(relative));
+            }
             if !digest.matches(&relative, source.as_bytes()) {
                 return Err(FailureReason::DigestMismatch(relative));
             }
@@ -1635,7 +1638,12 @@ fn install_plugin_require(
                 && let Ok(relative) = Path::new(&candidate).strip_prefix(&plugin_dir)
             {
                 let relative = slash_path(relative);
-                if digest.covers(&relative) && !digest.matches(&relative, source.as_bytes()) {
+                if !digest.covers(&relative) {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "`{relative}` was not part of the verified plugin"
+                    )));
+                }
+                if !digest.matches(&relative, source.as_bytes()) {
                     return Err(mlua::Error::RuntimeError(format!(
                         "`{relative}` changed between verification and loading"
                     )));

@@ -16,6 +16,14 @@
 /// by Rust and must be freed with `stanchion_string_free`. Every
 /// `stanchion_t*` returned by `stanchion_init` must be freed with
 /// `stanchion_destroy`.
+///
+/// Null pointers: passing NULL for the `stanchion_t*` handle, or for a
+/// required string argument (`plugin`, `method`, `capability`), is handled
+/// rather than dereferenced — the call sets `out_error` and returns NULL (or
+/// a `STANCHION_ERR_*` code) instead of crashing. `stanchion_init` returns
+/// NULL on failure, so a caller must check its result before using the
+/// handle. Arguments documented as "null or ..." (`config_json`, `root`,
+/// `args_json`) treat NULL as an absent value.
 
 #include <stdbool.h>
 #include <stddef.h>

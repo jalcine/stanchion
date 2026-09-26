@@ -287,6 +287,10 @@ pub unsafe extern "C" fn stanchion_load(
     root: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return std::ptr::null_mut();
+    }
     let stanchion = unsafe { &*s };
     let root_path = match root_arg(root) {
         Ok(path) => path,
@@ -338,6 +342,10 @@ pub unsafe extern "C" fn stanchion_list(
     s: *mut Stanchion,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return std::ptr::null_mut();
+    }
     let stanchion = unsafe { &*s };
     match stanchion.list() {
         Ok(plugins) => {
@@ -383,6 +391,10 @@ pub unsafe extern "C" fn stanchion_audit(
     root: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return std::ptr::null_mut();
+    }
     let stanchion = unsafe { &*s };
     let root_path = match root_arg(root) {
         Ok(path) => path,
@@ -437,6 +449,14 @@ pub unsafe extern "C" fn stanchion_call(
     args_json: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return std::ptr::null_mut();
+    }
+    if plugin.is_null() || method.is_null() {
+        set_error(out_error, "plugin and method must not be null");
+        return std::ptr::null_mut();
+    }
     let stanchion = unsafe { &*s };
     let plugin = match unsafe { CStr::from_ptr(plugin) }.to_str() {
         Ok(s) => s,
@@ -471,6 +491,14 @@ pub unsafe extern "C" fn stanchion_dispatch(
     args_json: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return std::ptr::null_mut();
+    }
+    if method.is_null() {
+        set_error(out_error, "method must not be null");
+        return std::ptr::null_mut();
+    }
     let stanchion = unsafe { &*s };
     let method = match unsafe { CStr::from_ptr(method) }.to_str() {
         Ok(s) => s,
@@ -512,6 +540,14 @@ pub unsafe extern "C" fn stanchion_reload(
     plugin: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> i32 {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return STANCHION_ERR_CONFIG;
+    }
+    if plugin.is_null() {
+        set_error(out_error, "plugin must not be null");
+        return STANCHION_ERR_CONFIG;
+    }
     let stanchion = unsafe { &*s };
     let plugin = match unsafe { CStr::from_ptr(plugin) }.to_str() {
         Ok(s) => s,
@@ -536,6 +572,14 @@ pub unsafe extern "C" fn stanchion_revoke(
     capability: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> i32 {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return STANCHION_ERR_CONFIG;
+    }
+    if plugin.is_null() || capability.is_null() {
+        set_error(out_error, "plugin and capability must not be null");
+        return STANCHION_ERR_CONFIG;
+    }
     let stanchion = unsafe { &*s };
     let plugin = match unsafe { CStr::from_ptr(plugin) }.to_str() {
         Ok(s) => s,
@@ -583,4 +627,50 @@ pub extern "C" fn stanchion_error_string(code: i32) -> *const std::ffi::c_char {
         _ => c"unknown error code",
     };
     message.as_ptr()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A null handle must be reported, never dereferenced (a caller that ignored a
+    /// failed `stanchion_init` would otherwise hit undefined behaviour). See #41.
+    #[test]
+    fn a_null_handle_is_rejected() {
+        let mut err: *mut std::ffi::c_char = std::ptr::null_mut();
+
+        let out = unsafe { stanchion_load(std::ptr::null_mut(), std::ptr::null(), &mut err) };
+        assert!(out.is_null());
+        assert!(!err.is_null(), "an error message should be set");
+        unsafe { stanchion_string_free(err) };
+
+        let mut err2: *mut std::ffi::c_char = std::ptr::null_mut();
+        let code = unsafe { stanchion_reload(std::ptr::null_mut(), std::ptr::null(), &mut err2) };
+        assert_eq!(code, STANCHION_ERR_CONFIG);
+        unsafe { stanchion_string_free(err2) };
+    }
+
+    /// A null required string argument is rejected rather than passed to CStr::from_ptr.
+    #[test]
+    fn null_string_arguments_are_rejected() {
+        let mut err: *mut std::ffi::c_char = std::ptr::null_mut();
+        let handle = unsafe { stanchion_init(c"{}".as_ptr(), &mut err) };
+        assert!(!handle.is_null(), "init with an empty config should succeed");
+
+        let mut call_err: *mut std::ffi::c_char = std::ptr::null_mut();
+        let out = unsafe {
+            stanchion_call(
+                handle,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                &mut call_err,
+            )
+        };
+        assert!(out.is_null());
+        assert!(!call_err.is_null(), "an error message should be set");
+        unsafe { stanchion_string_free(call_err) };
+
+        unsafe { stanchion_destroy(handle) };
+    }
 }

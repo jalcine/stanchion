@@ -246,6 +246,12 @@ impl From<LoadFailure> for stanchion_abi::Error {
     }
 }
 
+impl From<stanchion_abi::Error> for FailureReason {
+    fn from(err: stanchion_abi::Error) -> Self {
+        FailureReason::Lua(mlua::Error::RuntimeError(err.to_string()))
+    }
+}
+
 impl From<RegistryError> for stanchion_abi::Error {
     fn from(err: RegistryError) -> Self {
         match err {

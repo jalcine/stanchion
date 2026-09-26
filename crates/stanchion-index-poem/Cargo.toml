@@ -13,11 +13,6 @@ tokio = { version = "1", features = ["rt"] }
 
 [features]
 default = []
-lua54 = ["stanchion-index/lua54"]
-lua53 = ["stanchion-index/lua53"]
-luajit = ["stanchion-index/luajit"]
-luau = ["stanchion-index/luau"]
-vendored = ["stanchion-index/vendored"]
 
 [dev-dependencies]
 stanchion-dist = { workspace = true, features = ["client"] }

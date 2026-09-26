@@ -28,11 +28,6 @@ default = []
 stream = ["dep:bytes", "dep:tokio", "dep:tokio-stream"]
 # A `tower::Service`, so axum, tonic and warp can mount the index directly.
 tower = ["stream", "dep:tower-service", "dep:http-body-util", "dep:http-body", "dep:futures-util"]
-lua54 = ["stanchion-dist/lua54"]
-lua53 = ["stanchion-dist/lua53"]
-luajit = ["stanchion-dist/luajit"]
-luau = ["stanchion-dist/luau"]
-vendored = ["stanchion-dist/vendored"]
 
 [dev-dependencies]
 tempfile = "3"

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use mlua::{Lua, LuaSerdeExt, MultiValue, Value};
 use serde_json::Value as Json;
+use stanchion_abi::value::lua::lua_to_abi;
 
 use stanchion_registry::config::HostConfig;
 use stanchion_registry::{DynClass, DynInstance, Registry, Rules};
@@ -39,14 +40,16 @@ pub fn build_registry(
         // that launched the host already captures.
         host.capability("log", |lua, grant| {
             let plugin = grant.plugin().to_string();
-            let lua_state = lua.lua_state().expect("Lua runtime expected");
-            let lua_guard = lua_state.lock().unwrap();
-            Ok(Value::Function(lua_guard.create_function(
-                move |_, message: String| {
-                    eprintln!("[{plugin}] {message}");
-                    Ok(())
-                },
-            )?))
+let lua_state = lua.lua_state().expect("Lua runtime expected");
+                let lua_guard = lua_state.lock().unwrap();
+                let func = lua_guard.create_function(
+                    move |_, message: String| {
+                        eprintln!("[{plugin}] {message}");
+                        Ok(())
+                    },
+                )
+                .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
+                Ok(lua_to_abi(&*lua_guard, &Value::Function(func)))
         });
 
         for capability in forwarded {
@@ -59,7 +62,9 @@ pub fn build_registry(
                 // re-check it rather than trusting this host to have narrowed.
                 let granted = serde_json::to_value(grant.params()).unwrap_or(Json::Null);
 
-                Ok(Value::Function(lua.create_function(
+                let lua_state = lua.lua_state().expect("Lua runtime expected");
+                let lua_guard = lua_state.lock().unwrap();
+                let func = lua_guard.create_function(
                     move |lua, args: mlua::MultiValue| {
                         let mut json_args = Vec::with_capacity(args.len());
                         for arg in args {
@@ -72,10 +77,13 @@ pub fn build_registry(
                                 grant: granted.clone(),
                                 args: json_args,
                             })
-                            .map_err(mlua::Error::RuntimeError)?;
-                        lua.to_value(&value)
+                            .map_err(|err| mlua::Error::RuntimeError(err))?;
+                        let value_lua = lua.to_value(&value);
+                        Ok(value_lua)
                     },
-                )?))
+                )
+                .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
+                Ok(lua_to_abi(&*lua_guard, &Value::Function(func)))
             });
         }
         Ok(())

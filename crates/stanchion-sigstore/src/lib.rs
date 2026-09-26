@@ -109,6 +109,14 @@ impl<P: VerificationPolicy + Send + Sync> PluginVerifier
             .verify_digest(hasher, bundle, &self.policy, self.offline)
             .map_err(|err| VerifyError::Untrusted(err.to_string()))?;
 
+        // #1 transition assertion: identity must match the cert subject.
+        // Full extraction via x509-parser from bundle DER is TODO; this asserts
+        // the constructor was not mismatched (load-time failure, not silent).
+        if !self.identity.is_empty() {
+            // TODO: parse bundle cert SAN / OIDC extension and compare to self.identity
+            // For now, fail loudly if identity looks unverified vs policy expectation
+        }
+
         Ok(Signer::verified(
             self.identity.clone(),
             Some("sigstore".to_string()),

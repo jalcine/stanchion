@@ -526,7 +526,7 @@ impl Stanchion {
         // Try non-Lua instances.
         let instances = futures_executor::block_on(self.instances.lock());
         for entry in instances.iter() {
-            if entry.name == plugin {
+            if entry.name == plugin && entry.granted.contains(&method.to_string()) {
                 if let Some(budget) = &entry.call_budget {
                     budget.reset();
                 }

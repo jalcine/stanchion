@@ -1,8 +1,8 @@
 //! `async fn` in a `#[lua_class]` trait, driven by tokio.
 #![cfg(feature = "async")]
 
-use stanchion::mlua::{Lua, Result};
-use stanchion::{load_class, lua_class};
+use stanchion_lua::mlua::{Lua, Result};
+use stanchion_lua::{load_class, lua_class};
 
 const SOURCE: &str = include_str!("lua/fetcher.lua");
 

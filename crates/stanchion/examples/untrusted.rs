@@ -7,8 +7,8 @@
 
 use std::path::PathBuf;
 
-use stanchion::lua_class;
-use stanchion::mlua::{Lua, Result, Table, Value};
+use stanchion_lua::lua_class;
+use stanchion_lua::mlua::{Lua, Result, Table, Value};
 use stanchion::registry::{toml, CapabilityRequest, Decision, Registry, Rules, Sandbox};
 
 #[lua_class]

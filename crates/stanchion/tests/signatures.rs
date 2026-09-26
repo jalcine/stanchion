@@ -8,8 +8,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
-use stanchion::lua_class;
-use stanchion::mlua::{Lua, Result, Table, Value};
+use stanchion_lua::lua_class;
+use stanchion_lua::mlua::{Lua, Result, Table, Value};
 use stanchion::registry::{
     Decision, DirectoryDigest, FailureReason, PluginVerifier, Registry, Rules, SIGNATURE_FILE,
     Sandbox, Signer, VerifyError,

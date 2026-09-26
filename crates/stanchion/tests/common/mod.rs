@@ -9,8 +9,8 @@
 use std::fs;
 use std::path::Path;
 
-use stanchion::lua_class;
-use stanchion::mlua::Lua, Result, Table;
+use stanchion_lua::lua_class;
+use stanchion_lua::mlua::Lua, Result, Table;
 use stanchion::registry::{
     FailureReason,
     LoadReport,

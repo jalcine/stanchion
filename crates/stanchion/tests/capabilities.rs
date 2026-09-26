@@ -5,8 +5,8 @@
 use std::fs;
 use std::path::Path;
 
-use stanchion::lua_class;
-use stanchion::mlua::{Lua, Result, Table, Value};
+use stanchion_lua::lua_class;
+use stanchion_lua::mlua::{Lua, Result, Table, Value};
 use stanchion::tests::common::{first_failure, probe_source, write_plugin};
 use tempfile::TempDir;
 

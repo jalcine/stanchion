@@ -3,3 +3,25 @@ error: a `field` method takes no arguments (get) or exactly one (set)
   |
 9 |     fn pair(&self, a: u32, b: u32) -> Result<()>;
   |     ^^
+
+error[E0432]: unresolved import `stanchion_lua::Result`
+ --> tests/ui/field_arity.rs:4:5
+  |
+4 | use stanchion_lua::Result;
+  |     ^^^^^^^^^^^^^^^^^^^^^ no `Result` in the root
+  |
+help: consider importing one of these items instead
+  |
+4 - use stanchion_lua::Result;
+4 + use std::fmt::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::io::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::result::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::thread::Result;
+  |
+  = and 2 other candidates

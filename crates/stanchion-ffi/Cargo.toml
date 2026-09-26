@@ -10,8 +10,7 @@ repository.workspace = true
 # The runtime trait replaces direct `&Lua` usage; lua-enabled bindings use stanchion-lua
 stanchion-registry = { workspace = true, features = ["config", "send", "signatures"] }
 stanchion-abi = { workspace = true, features = ["lua"] }
-mlua = { workspace = true, default-features = false, features = ["serde", "send"] }
-stanchion-lua = { workspace = true, features = ["lua54"] }
+stanchion-lua = { workspace = true }
 serde.workspace = true
 toml.workspace = true
 
@@ -20,18 +19,8 @@ tokio = { version = "1", default-features = false, features = ["sync"] }
 
 [features]
 default = ["signatures"]
-async = ["stanchion-registry/async", "stanchion-lua/async", "mlua/async"]
+async = ["stanchion-registry/async", "stanchion-lua/async"]
 signatures = ["stanchion-registry/signatures"]
-
-# Which Lua, and whose. No default: picking a VM is the consumer's build-time
-# decision, and a binding that hard-codes one cannot be embedded in an application
-# that already has its own. Omitting all of these fails the build in `mlua`, which is
-# the right error to get.
-lua54 = ["mlua/lua54", "stanchion-registry/lua54"]
-lua53 = ["mlua/lua53", "stanchion-registry/lua53"]
-luajit = ["mlua/luajit", "stanchion-registry/luajit"]
-luau = ["mlua/luau", "stanchion-registry/luau"]
-vendored = ["mlua/vendored", "stanchion-registry/vendored"]
 
 [dev-dependencies]
 tempfile = "3"

@@ -287,14 +287,6 @@ pub fn unpack(archive: impl Read, into: &Path, limits: Limits) -> Result<(), Pac
                 limits.file_bytes
             )));
         }
-        total = total.saturating_add(declared);
-        if total > limits.total_bytes {
-            return Err(PackageError::TooLarge(format!(
-                "archive expands past the {} byte limit",
-                limits.total_bytes
-            )));
-        }
-
         let destination = into.join(&relative);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
@@ -308,6 +300,12 @@ pub fn unpack(archive: impl Read, into: &Path, limits: Limits) -> Result<(), Pac
         if written > limits.file_bytes {
             return Err(PackageError::TooLarge(format!(
                 "`{relative}` is larger than its header declared"
+            )));
+        }
+        total = total.saturating_add(written);
+        if total > limits.total_bytes {
+            return Err(PackageError::TooLarge(format!(
+                "archive expands past the {} byte limit", limits.total_bytes
             )));
         }
         file.flush()?;

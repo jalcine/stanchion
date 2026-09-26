@@ -303,6 +303,46 @@ fn only_exports_are_visible_to_a_dependent() -> TestResult {
 }
 
 #[test]
+fn a_dependent_cannot_tamper_with_the_exports_proxy() -> TestResult {
+    // #32: a dependent holds a read-only proxy. It must not be able to write through it
+    // into the provider's live exports, nor reach the forwarding metatable to repoint
+    // reads — either would hijack the provider's surface for every other dependent.
+    let root = plugin_root()?;
+    let registry = loaded_registry(&root)?;
+    let lua = registry.lua();
+    let proxy = plugin(&registry, "alpha")?
+        .exports()
+        .ok_or("alpha should publish exports")?
+        .clone();
+    lua.globals().set("p", proxy.clone())?;
+
+    // The forwarding metatable is hidden behind __metatable.
+    let mt: mlua::Value = lua.load("return getmetatable(p)").eval()?;
+    assert!(
+        matches!(mt, mlua::Value::String(_)),
+        "the forwarding metatable must be hidden, got {mt:?}"
+    );
+
+    // Writing through the proxy is refused rather than reaching the provider's table.
+    let err = lua
+        .load(r#"p.decorate = function() return "pwned" end"#)
+        .exec()
+        .expect_err("writing through the proxy must fail");
+    assert!(err.to_string().contains("read-only"), "{err}");
+
+    // setmetatable is refused too, so __index cannot be repointed.
+    let err = lua
+        .load("setmetatable(p, { __index = { decorate = 1 } })")
+        .exec()
+        .expect_err("replacing the metatable must fail");
+    assert!(err.to_string().contains("metatable"), "{err}");
+
+    // The genuine export still resolves and is unchanged.
+    assert!(proxy.get::<Option<mlua::Function>>("decorate")?.is_some());
+    Ok(())
+}
+
+#[test]
 fn reload_propagates_through_the_dependency_chain() -> TestResult {
     let root = plugin_root()?;
     let mut registry: Registry<GreeterClass> = Registry::new(Lua::new());

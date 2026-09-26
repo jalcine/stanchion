@@ -131,6 +131,34 @@ fn root_arg(root: *const std::ffi::c_char) -> Result<Option<std::path::PathBuf>,
 
 // ---- built-in capability provider for "log" ----------------------------
 
+/// Largest log message the built-in `log` provider will emit, in characters.
+const MAX_LOG_MESSAGE: usize = 4096;
+
+/// Escapes control characters and caps length before a plugin's text reaches stderr.
+///
+/// The message comes verbatim from the plugin, so without this it could embed newlines
+/// to forge log lines attributed to other plugins or the host, emit ANSI/OSC escape
+/// sequences that rewrite the terminal, or log unbounded text. See #40.
+fn sanitize_log(text: &str) -> String {
+    let mut out = String::with_capacity(text.len().min(MAX_LOG_MESSAGE));
+    let mut truncated = false;
+    for (seen, ch) in text.chars().enumerate() {
+        if seen >= MAX_LOG_MESSAGE {
+            truncated = true;
+            break;
+        }
+        if ch.is_control() {
+            out.extend(ch.escape_default());
+        } else {
+            out.push(ch);
+        }
+    }
+    if truncated {
+        out.push_str("…(truncated)");
+    }
+    out
+}
+
 struct LogProvider;
 impl stanchion_ffi::CapabilityProvider for LogProvider {
     fn invoke(&self, call: &stanchion_ffi::CapabilityCall) -> std::result::Result<FfiValue, String> {
@@ -145,7 +173,7 @@ impl stanchion_ffi::CapabilityProvider for LogProvider {
                 }
             })
             .unwrap_or("(no message)");
-        eprintln!("[{}] {message}", call.plugin);
+        eprintln!("[{}] {}", sanitize_log(&call.plugin), sanitize_log(message));
         Ok(FfiValue::Nil)
     }
 }

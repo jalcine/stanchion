@@ -10,9 +10,14 @@
 //! without any plugin noticing. The one addition is that Lua's integer/float
 //! split is preserved rather than collapsed the way JSON collapses it.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+
+thread_local! {
+    static FUNCTION_CACHE: RefCell<Option<mlua::Value>> = RefCell::new(None);
+}
 
 /// A value crossing the boundary between a plugin and a foreign host.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -33,6 +38,8 @@ pub enum Value {
     List(Vec<Value>),
     /// Any other table, with keys rendered as strings.
     Map(BTreeMap<String, Value>),
+    /// Lua function (in-process capability binding; cross-language sees as Nil).
+    Function,
 }
 
 /// Converts a value into the TOML a grant narrows with.
@@ -60,6 +67,7 @@ pub fn value_to_toml(value: &Value) -> Result<toml::Value, String> {
             }
             toml::Value::Table(table)
         }
+        Value::Function => return Err("TOML cannot represent a Lua function".to_string()),
     })
 }
 
@@ -88,6 +96,11 @@ pub mod lua {
     use super::Value;
     use mlua::{Lua, LuaString, Table, Value as LuaValue};
     use std::collections::BTreeMap;
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub static FUNCTION_CACHE: RefCell<Option<LuaValue>> = RefCell::new(None);
+    }
 
     /// Converts a `stanchion_abi::Value` to an `mlua::Value`.
     pub fn abi_to_lua(val: &Value, lua: &Lua) -> mlua::Result<LuaValue> {
@@ -111,6 +124,12 @@ pub mod lua {
                 }
                 Ok(LuaValue::Table(table))
             }
+            Value::Function => FUNCTION_CACHE.with(|cache| {
+                cache.borrow_mut().take().map_or_else(
+                    || Err(mlua::Error::RuntimeError("cached function not found".to_string())),
+                    Ok,
+                )
+            }),
         }
     }
 
@@ -123,7 +142,13 @@ pub mod lua {
             LuaValue::Number(v) => Value::Float(*v),
             LuaValue::String(s) => Value::Str(lua_string_to_string(s.clone())),
             LuaValue::Table(t) => Value::Map(lua_table_to_map(lua, t)),
-            LuaValue::UserData(_) | LuaValue::Thread(_) | LuaValue::Function(_) | LuaValue::LightUserData(_) | LuaValue::Error(_) | LuaValue::Other(_) => {
+            LuaValue::Function(f) => {
+                FUNCTION_CACHE.with(|cache| {
+                    *cache.borrow_mut() = Some(LuaValue::Function(f.clone()));
+                });
+                Value::Function
+            }
+            LuaValue::UserData(_) | LuaValue::Thread(_) | LuaValue::LightUserData(_) | LuaValue::Error(_) | LuaValue::Other(_) => {
                 // FFI cannot represent these types, use Nil as fallback
                 Value::Nil
             }

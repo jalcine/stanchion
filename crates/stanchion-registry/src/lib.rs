@@ -69,7 +69,7 @@ use mlua::{Lua, LuaSerdeExt, Table, Value};
 
 use stanchion_lua::sandbox::{Budget, Sandbox};
 use stanchion_lua::{LuaClass, LuaObject};
-use stanchion_abi::value::lua::{abi_to_lua, lua_to_abi};
+use stanchion_abi::value::lua::{abi_to_lua, lua_to_abi, FUNCTION_CACHE};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";
@@ -1429,8 +1429,15 @@ impl<C: LuaClass> Registry<C> {
             let lua_arc = runtime.lua_state()
                 .expect("Lua runtime required for capability binding");
             let lua = lua_arc.lock().unwrap();
-            let value_lua = abi_to_lua(&value_abi, &lua)
-                .map_err(|e| FailureReason::Lua(mlua::Error::RuntimeError(e.to_string())))?;
+            let value_lua = if matches!(value_abi, stanchion_abi::Value::Function) {
+                FUNCTION_CACHE.with(|cache| {
+                    cache.borrow_mut().take()
+                        .ok_or_else(|| mlua::Error::RuntimeError("cached function not found".to_string()))
+                }).map_err(|e| FailureReason::Lua(e))?
+            } else {
+                abi_to_lua(&value_abi, &lua)
+                    .map_err(|e| FailureReason::Lua(mlua::Error::RuntimeError(e.to_string())))?
+            };
             _environment.set(name.as_str(), value_lua)?;
             granted.push(name.clone());
         }

@@ -10,8 +10,8 @@
 
 use std::path::PathBuf;
 
-use stanchion::lua_class;
-use stanchion::mlua::{Lua, Result, Table};
+use stanchion_lua::lua_class;
+use stanchion_lua::mlua::{Lua, Result, Table};
 use stanchion::registry::Registry;
 
 /// Every plugin in the bus implements this.
@@ -63,8 +63,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if let Some(formatter) = registry.get("formatter")
         && let Some(exports) = formatter.exports()
     {
-        let published = exports.get::<Option<stanchion::mlua::Function>>("decorate")?;
-        let private = exports.get::<Option<stanchion::mlua::Value>>("handle")?;
+        let published = exports.get::<Option<stanchion_lua::Function>>("decorate")?;
+        let private = exports.get::<Option<stanchion_lua::Value>>("handle")?;
         println!("\nformatter exports `decorate`: {}", published.is_some());
         println!("formatter exports `handle`  : {}", private.is_some());
     }

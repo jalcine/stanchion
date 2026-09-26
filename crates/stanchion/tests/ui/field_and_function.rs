@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
-use stanchion::lua_class;
-use stanchion::mlua::Result;
+use stanchion_lua::lua_class;
+use stanchion_lua::Result;
 
 #[lua_class]
 pub trait FieldAndFunction {

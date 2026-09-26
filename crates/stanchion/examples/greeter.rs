@@ -6,7 +6,7 @@
 //! cargo run -p stanchion --features lua54,vendored --example greeter
 //! ```
 
-use stanchion_lua::{Lua, Result};
+use stanchion_lua::mlua::{Lua, Result};
 use stanchion_lua::{load_class, lua_class};
 
 /// The contract a Lua greeter must satisfy.

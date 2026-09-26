@@ -6,9 +6,9 @@
 
 use std::fs;
 
-use stanchion::mlua::{Lua, Result, Table, Value};
+use stanchion_lua::mlua::{Lua, Result, Table, Value};
 use stanchion::registry::{FailureReason, Panicked, Registry, Rules, Sandbox};
-use stanchion::lua_class;
+use stanchion_lua::lua_class;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -55,7 +55,7 @@ fn write_plugin(root: &std::path::Path, body: &str, manifest: &str) -> TestResul
 /// `Error::downcast_ref` descends through the `CallbackError` and `WithContext` layers
 /// mlua adds on the way out, which a plain `source()` walk does not: mlua's own
 /// `source` deliberately skips the external error it holds.
-fn panicked_in(error: &stanchion::mlua::Error) -> Option<&Panicked> {
+fn panicked_in(error: &stanchion_lua::Error) -> Option<&Panicked> {
     error.downcast_ref::<Panicked>()
 }
 

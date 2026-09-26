@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-use stanchion::lua_class;
+use stanchion_lua::lua_class;
 
 #[lua_class]
 pub trait MissingReturn {

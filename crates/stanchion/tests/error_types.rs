@@ -6,8 +6,8 @@
 
 use std::fmt;
 
-use stanchion::mlua::Lua;
-use stanchion::{load_class, lua_class};
+use stanchion_lua::mlua::Lua;
+use stanchion_lua::{load_class, lua_class};
 
 const SOURCE: &str = include_str!("lua/greeter.lua");
 
@@ -15,7 +15,7 @@ const SOURCE: &str = include_str!("lua/greeter.lua");
 /// whatever the interpreter reports.
 #[derive(Debug)]
 enum HostError {
-    Lua(stanchion::mlua::Error),
+    Lua(stanchion_lua::mlua::Error),
     #[expect(dead_code, reason = "present to prove the type is a real enum, not a wrapper")]
     Policy(String),
 }
@@ -31,8 +31,8 @@ impl fmt::Display for HostError {
 
 impl std::error::Error for HostError {}
 
-impl From<stanchion::mlua::Error> for HostError {
-    fn from(err: stanchion::mlua::Error) -> Self {
+impl From<stanchion_lua::mlua::Error> for HostError {
+    fn from(err: stanchion_lua::mlua::Error) -> Self {
         Self::Lua(err)
     }
 }
@@ -108,8 +108,8 @@ fn a_lua_failure_arrives_as_the_host_variant() -> Result<(), Box<dyn std::error:
 #[cfg(feature = "async")]
 mod asynchronous {
     use super::{HostError, HostResult};
-    use stanchion::mlua::Lua;
-    use stanchion::{load_class, lua_class};
+    use stanchion_lua::mlua::Lua;
+    use stanchion_lua::{load_class, lua_class};
 
     #[lua_class]
     pub trait Fetcher {

@@ -52,6 +52,9 @@ pub struct SandboxConfig {
     /// Instruction ceiling per call.
     #[serde(default)]
     pub instruction_limit: Option<u64>,
+    /// Whether a plugin's `pcall` may swallow a host panic.
+    #[serde(default)]
+    pub catch_rust_panics: Option<bool>,
     /// Whether plugins share one state.
     ///
     /// Defaults to false. A caller who reached for this module is holding plugins at
@@ -70,6 +73,7 @@ impl Default for SandboxConfig {
             memory_limit: Some(64 * 1024 * 1024),
             instruction_limit: Some(50_000_000),
             shared: false,
+            catch_rust_panics: None,
         }
     }
 }
@@ -131,6 +135,9 @@ impl SandboxConfig {
         }
         if let Some(bytes) = self.memory_limit {
             sandbox = sandbox.memory_limit(bytes);
+        }
+        if let Some(on) = self.catch_rust_panics {
+            sandbox = sandbox.catch_rust_panics(on);
         }
         if let Some(instructions) = self.instruction_limit {
             sandbox = sandbox.instruction_limit(instructions);

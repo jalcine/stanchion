@@ -4645,6 +4645,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sigstore",
+ "sigstore_protobuf_specs",
  "stanchion-registry",
  "x509-parser",
 ]

@@ -526,7 +526,7 @@ impl Stanchion {
         // Try non-Lua instances.
         let instances = futures_executor::block_on(self.instances.lock());
         for entry in instances.iter() {
-            if entry.name == plugin {
+            if entry.name == plugin && entry.granted.contains(&method.to_string()) {
                 if let Some(budget) = &entry.call_budget {
                     budget.reset();
                 }
@@ -568,6 +568,14 @@ impl Stanchion {
 
         let instances = futures_executor::block_on(self.instances.lock());
         for entry in instances.iter() {
+            if !entry.granted.contains(&method.to_string()) {
+                outcomes.push(Outcome {
+                    plugin: entry.name.clone(),
+                    value: None,
+                    error: Some(format!("capability '{}' not granted", method)),
+                });
+                continue;
+            }
             if let Some(budget) = &entry.call_budget {
                 budget.reset();
             }
@@ -758,11 +766,13 @@ impl Stanchion {
         // Try non-Lua instances.
         let instances = self.instances.lock().await;
         for entry in instances.iter() {
-            if entry.name == plugin {
+            if entry.name == plugin && entry.granted.contains(&method.to_string()) {
                 if let Some(budget) = &entry.call_budget {
                     budget.reset();
                 }
-                return entry.instance.call(&method, &args);
+                return crate::guard::Guarded::new(self.id, async {
+                    entry.instance.call(&method, &args)
+                }).await;
             }
         }
         drop(instances);
@@ -808,13 +818,21 @@ impl Stanchion {
             }
             drop(registry);
 
-            // Non-Lua plugins
-            let instances = self.instances.lock().await;
-            for entry in instances.iter() {
-                if let Some(budget) = &entry.call_budget {
-                    budget.reset();
-                }
-                outcomes.push(match entry.instance.call(&method, &args) {
+             // Non-Lua plugins
+             let instances = self.instances.lock().await;
+             for entry in instances.iter() {
+                 if !entry.granted.contains(&method.to_string()) {
+                     outcomes.push(Outcome {
+                         plugin: entry.name.clone(),
+                         value: None,
+                         error: Some(format!("capability '{}' not granted", method)),
+                     });
+                     continue;
+                 }
+                 if let Some(budget) = &entry.call_budget {
+                     budget.reset();
+                 }
+                 outcomes.push(match entry.instance.call(&method, &args) {
                     Ok(value) => Outcome {
                         plugin: entry.name.clone(),
                         value: Some(value),

@@ -93,9 +93,14 @@ let mut remote = RemoteRegistry::launch(options)?.on_callback(|call: &CallbackCa
 
 Three properties worth knowing:
 
-- **The approved grant travels with every call.** `call.grant` carries the parameters
-  the host's policy approved, so your application re-checks rather than trusting the
-  host to have narrowed correctly.
+- **The host process is untrusted; enforce your own policy.** Every field of a
+  `CallbackCall` — `plugin`, `capability`, `grant` and `args` — comes from the child, so
+  a child a plugin has compromised can send any `plugin` name, any `capability` and any
+  `grant`. "Re-checking" `call.grant` proves nothing, because the child chose it. Key
+  your decision on what *your application* approved for a given `plugin`/`capability`,
+  and treat `call.grant` as an untrusted hint. `RemoteRegistry::allow_capabilities` adds
+  a coarse client-side gate, and a per-call deadline (`RemoteOptions::call_timeout`,
+  default 30 s) kills a host that stops responding rather than blocking your thread.
 - **Declaration still governs.** A plugin that does not request `kv` in its manifest
   never gets it, even though the host offers it — capabilities stay declared-only
   across the process line.

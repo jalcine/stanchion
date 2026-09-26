@@ -456,6 +456,53 @@ fn a_plugin_calls_back_into_the_application() -> TestResult {
 }
 
 #[test]
+fn a_capability_outside_the_allowlist_never_reaches_the_handler() -> TestResult {
+    // #37: the client gates callbacks on the application's allowlist before the handler
+    // runs, so a capability the application did not allow is refused up front.
+    let root = caller_root("name = \"caller\"\n\n[capabilities.kv]\n")?;
+    let config = root.path().join("host.toml");
+
+    let options = RemoteOptions::new(host_binary()?)
+        .config(&config)
+        .plugins(root.path())
+        .inherit_stderr(false);
+    let mut remote = RemoteRegistry::launch(options)?
+        .allow_capabilities(["something-else"])
+        .on_callback(|_: &CallbackCall| -> Result<Json, String> {
+            panic!("the handler must not run for a capability outside the allowlist")
+        });
+
+    let result: Result<String, _> = remote.call("caller", "lookup", [json!("alpha")]);
+    assert!(
+        result.is_err(),
+        "a blocked capability should fail the call, got {result:?}"
+    );
+    remote.shutdown()?;
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn a_call_times_out_when_the_host_never_answers() -> TestResult {
+    use stanchion::remote::RemoteError;
+    use std::time::Duration;
+
+    // A program that never speaks the protocol stands in for a wedged host. The call
+    // must give up on the deadline and kill it, not block forever.
+    let options = RemoteOptions::new("/bin/sleep")
+        .arg("30")
+        .inherit_stderr(false)
+        .call_timeout(Duration::from_millis(200));
+    let mut remote = RemoteRegistry::launch(options)?;
+
+    let err = remote
+        .list()
+        .expect_err("a non-responding host must time out");
+    assert!(matches!(err, RemoteError::Timeout { .. }), "got: {err}");
+    Ok(())
+}
+
+#[test]
 fn an_application_error_surfaces_as_a_lua_error() -> TestResult {
     let root = caller_root("name = \"caller\"\n\n[capabilities.kv]\n")?;
     let config = root.path().join("host.toml");

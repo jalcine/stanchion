@@ -1,11 +1,15 @@
 //! The application side: launching a host process and talking to it.
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -48,6 +52,11 @@ pub enum RemoteError {
     Protocol(String),
     /// A plugin called a capability and nothing was registered to answer it.
     UnhandledCallback(String),
+    /// The host did not answer within the configured deadline; it has been killed.
+    ///
+    /// A child stuck in a loop (a plugin with no instruction limit, say) would
+    /// otherwise block the application thread forever.
+    Timeout { after: Duration },
 }
 
 impl fmt::Display for RemoteError {
@@ -71,6 +80,12 @@ impl fmt::Display for RemoteError {
                 write!(
                     f,
                     "a plugin called `{name}`, which this application does not handle"
+                )
+            }
+            RemoteError::Timeout { after } => {
+                write!(
+                    f,
+                    "the plugin host did not answer within {after:?}; it was killed"
                 )
             }
         }
@@ -122,7 +137,11 @@ pub struct RemoteOptions {
     program: PathBuf,
     args: Vec<OsString>,
     inherit_stderr: bool,
+    call_timeout: Option<Duration>,
 }
+
+/// How long a single request waits for the host before the host is killed.
+pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl RemoteOptions {
     /// Launches `program` as the host.
@@ -131,7 +150,27 @@ impl RemoteOptions {
             program: program.into(),
             args: Vec::new(),
             inherit_stderr: true,
+            call_timeout: Some(DEFAULT_CALL_TIMEOUT),
         }
+    }
+
+    /// Sets how long a single request waits for the host to make progress.
+    ///
+    /// The deadline is per received message, so a call that legitimately streams many
+    /// interleaved callbacks keeps resetting it. When it is exceeded the host is killed
+    /// and the call returns [`RemoteError::Timeout`], so a wedged plugin cannot hold the
+    /// application thread. Defaults to [`DEFAULT_CALL_TIMEOUT`]. See #37.
+    pub fn call_timeout(mut self, timeout: Duration) -> Self {
+        self.call_timeout = Some(timeout);
+        self
+    }
+
+    /// Removes the request deadline, letting a call block indefinitely.
+    ///
+    /// Only sensible when the host is trusted to always make progress.
+    pub fn no_call_timeout(mut self) -> Self {
+        self.call_timeout = None;
+        self
     }
 
     /// Passes `--config FILE` to the host.
@@ -171,9 +210,12 @@ type CallbackFn = Box<dyn FnMut(&CallbackCall) -> Result<Json, String>>;
 pub struct RemoteRegistry {
     child: Child,
     writer: BufWriter<ChildStdin>,
-    reader: BufReader<ChildStdout>,
+    /// Frames the reader thread has pulled off the host's stdout.
+    incoming: Receiver<io::Result<Option<Incoming>>>,
     next_id: u64,
     on_callback: Option<CallbackFn>,
+    call_timeout: Option<Duration>,
+    allowed_capabilities: Option<HashSet<String>>,
 }
 
 impl RemoteRegistry {
@@ -209,9 +251,11 @@ impl RemoteRegistry {
         Ok(RemoteRegistry {
             child,
             writer: BufWriter::new(stdin),
-            reader: BufReader::new(stdout),
+            incoming: spawn_reader(stdout),
             next_id: 1,
             on_callback: None,
+            call_timeout: options.call_timeout,
+            allowed_capabilities: None,
         })
     }
 
@@ -220,13 +264,34 @@ impl RemoteRegistry {
     /// Without a handler a plugin calling one gets a Lua error, so a host may offer a
     /// capability the application has not implemented without anything crashing.
     ///
-    /// The handler receives the grant the host's policy approved, so it can re-check
-    /// rather than trusting the host to have narrowed correctly.
+    /// **The host process is untrusted.** Every field of the [`CallbackCall`] —
+    /// `plugin`, `capability`, `grant` and `args` — is supplied by the child, so a child
+    /// compromised by a plugin can name any plugin, any capability and any grant.
+    /// "Re-checking" `call.grant` proves nothing, because the child chose it. The
+    /// handler must enforce the application's *own* policy, keyed on what the
+    /// application decided a given `plugin`/`capability` may do, and treat `call.grant`
+    /// as an untrusted hint. See [`RemoteRegistry::allow_capabilities`] for a coarse
+    /// gate the client applies before the handler runs. See #37.
     pub fn on_callback(
         mut self,
         handler: impl FnMut(&CallbackCall) -> Result<Json, String> + 'static,
     ) -> Self {
         self.on_callback = Some(Box::new(handler));
+        self
+    }
+
+    /// Restricts which capability names the client will dispatch to the handler.
+    ///
+    /// A callback naming any other capability is refused before the handler runs. This
+    /// is defence in depth over the untrusted child (see [`RemoteRegistry::on_callback`]):
+    /// it bounds the set the handler can be asked about, but it does not replace the
+    /// per-plugin policy the handler itself must enforce. Unset by default, meaning the
+    /// handler sees every callback.
+    pub fn allow_capabilities(
+        mut self,
+        names: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.allowed_capabilities = Some(names.into_iter().map(Into::into).collect());
         self
     }
 
@@ -339,7 +404,22 @@ impl RemoteRegistry {
         let id = Id::Number(number);
 
         loop {
-            match frame::read(&mut self.reader) {
+            // Wait for the next frame, but not forever: a child that stops making
+            // progress within the deadline is killed rather than left to hang the
+            // application thread. The deadline is per frame, so an ongoing stream of
+            // callbacks keeps resetting it.
+            let received: io::Result<Option<Incoming>> = match self.call_timeout {
+                Some(timeout) => match self.incoming.recv_timeout(timeout) {
+                    Ok(message) => message,
+                    Err(RecvTimeoutError::Timeout) => return Err(self.timed_out(timeout)),
+                    Err(RecvTimeoutError::Disconnected) => return Err(self.gone()),
+                },
+                None => match self.incoming.recv() {
+                    Ok(message) => message,
+                    Err(_) => return Err(self.gone()),
+                },
+            };
+            match received {
                 Err(err) => return Err(self.diagnose(err)),
                 // A closed stream means the child is gone, which is the case the
                 // whole design exists for.
@@ -369,12 +449,27 @@ impl RemoteRegistry {
         let outcome =
             match serde_json::from_value::<CallbackCall>(callback.params.unwrap_or(Json::Null)) {
                 Err(err) => Err(format!("malformed callback: {err}")),
-                Ok(call) => match self.on_callback.as_mut() {
-                    Some(handler) => handler(&call),
-                    None => Err(format!(
-                        "this application does not handle the `{name}` capability"
-                    )),
-                },
+                Ok(call) => {
+                    // The child chose `call.capability`; refuse anything outside the
+                    // application's allowlist before the handler ever sees it.
+                    let blocked = self
+                        .allowed_capabilities
+                        .as_ref()
+                        .is_some_and(|allowed| !allowed.contains(&call.capability));
+                    if blocked {
+                        Err(format!(
+                            "capability `{}` is not allowed by this application",
+                            call.capability
+                        ))
+                    } else {
+                        match self.on_callback.as_mut() {
+                            Some(handler) => handler(&call),
+                            None => Err(format!(
+                                "this application does not handle the `{name}` capability"
+                            )),
+                        }
+                    }
+                }
             };
 
         let response = match outcome {
@@ -408,6 +503,34 @@ impl RemoteRegistry {
             signal: killing_signal(&status),
         }
     }
+
+    /// Kills a host that missed its deadline and reports the timeout.
+    fn timed_out(&mut self, after: Duration) -> RemoteError {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        RemoteError::Timeout { after }
+    }
+}
+
+/// Reads framed messages off the host's stdout on a background thread.
+///
+/// A blocking pipe read cannot be given a timeout directly, so the read lives on its
+/// own thread and hands each frame to the caller through a channel the caller can wait
+/// on with a deadline. The thread stops at end of stream, on a read error, or once the
+/// receiver is dropped.
+fn spawn_reader(stdout: ChildStdout) -> Receiver<io::Result<Option<Incoming>>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let message = frame::read(&mut reader);
+            let done = !matches!(message, Ok(Some(_)));
+            if sender.send(message).is_err() || done {
+                break;
+            }
+        }
+    });
+    receiver
 }
 
 impl Drop for RemoteRegistry {

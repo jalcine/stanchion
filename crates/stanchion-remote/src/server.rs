@@ -39,7 +39,9 @@ pub fn build_registry(
         // that launched the host already captures.
         host.capability("log", |lua, grant| {
             let plugin = grant.plugin().to_string();
-            Ok(Value::Function(lua.create_function(
+            let lua_state = lua.lua_state().expect("Lua runtime expected");
+            let lua_guard = lua_state.lock().unwrap();
+            Ok(Value::Function(lua_guard.create_function(
                 move |_, message: String| {
                     eprintln!("[{plugin}] {message}");
                     Ok(())

@@ -65,9 +65,17 @@ Implement it for any runtime — WASM, Python, JavaScript — and register it wi
 
 ## Isolation
 
-WASM plugins run in their own sandboxed instance via [wasmtime], with per-instance
-memory limits. They cannot reach the host filesystem unless WASI capabilities are
-explicitly granted through the capability system.
+WASM plugins run in their own sandboxed instance via [wasmtime], under host-set
+resource limits ([`WasmLimits`]): a per-call fuel ceiling, so an infinite loop traps
+instead of hanging the calling thread, and a linear-memory ceiling enforced by a
+store limiter. The limits are the host's — registered on the backend with
+[`WasmBackend::with_limits`] — and a plugin manifest's `budget.max_instructions` may
+only *lower* the fuel ceiling, never raise it. `WasmBackend::new()` uses secure
+defaults (1e9 fuel, 64 MiB). Plugins cannot reach the host filesystem unless WASI
+capabilities are explicitly granted through the capability system.
+
+[`WasmLimits`]: https://docs.rs/stanchion-wasm/latest/stanchion_wasm/struct.WasmLimits.html
+[`WasmBackend::with_limits`]: https://docs.rs/stanchion-wasm/latest/stanchion_wasm/struct.WasmBackend.html#method.with_limits
 
 [`Stanchion`]: https://docs.rs/stanchion-ffi/latest/stanchion_ffi/struct.Stanchion.html
 [`Value`]: https://docs.rs/stanchion-ffi/latest/stanchion_ffi/enum.Value.html

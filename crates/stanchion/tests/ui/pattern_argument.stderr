@@ -3,3 +3,25 @@ error: #[lua_class] arguments must be plain identifiers
   |
 8 |     fn greet(&self, (a, b): (u32, u32)) -> Result<String>;
   |                     ^^^^^^
+
+error[E0432]: unresolved import `stanchion_lua::Result`
+ --> tests/ui/pattern_argument.rs:4:5
+  |
+4 | use stanchion_lua::Result;
+  |     ^^^^^^^^^^^^^^^^^^^^^ no `Result` in the root
+  |
+help: consider importing one of these items instead
+  |
+4 - use stanchion_lua::Result;
+4 + use std::fmt::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::io::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::result::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::thread::Result;
+  |
+  = and 2 other candidates

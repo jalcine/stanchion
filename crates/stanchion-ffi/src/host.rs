@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use mlua::{Lua, MultiValue};
+
+use stanchion_lua::mlua::{Lua, MultiValue};
 
 use stanchion_registry::config::HostConfig;
 #[allow(unused_imports)]
@@ -183,12 +184,11 @@ impl Builder {
                             grant: granted.clone(),
                             args: converted,
                         };
-                        let answer = provider.invoke(&call).map_err(|e| mlua::Error::RuntimeError(e.to_string()))?;
+                        let answer = provider.invoke(&call).map_err(|e| stanchion_lua::mlua::Error::RuntimeError(e.to_string()))?;
                         Ok(crate::value::abi_to_lua(&answer, &lua))
                     })
                     .map_err(|e| stanchion_abi::Error::Config(e.to_string()))?;
-                    use stanchion_abi::value::lua::lua_to_abi;
-                    Ok(lua_to_abi(&lua, &mlua::Value::Function(function.clone())))
+                    Ok(crate::value::lua_to_abi(&lua, &stanchion_lua::mlua::Value::Function(function.clone())))
                 });
             }
             Ok(())

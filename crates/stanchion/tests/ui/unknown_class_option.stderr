@@ -3,3 +3,25 @@ error: unknown option: expected `class`, `handle` or `name`
   |
 6 | #[lua_class(bogus = "nope")]
   |             ^^^^^
+
+error[E0432]: unresolved import `stanchion_lua::Result`
+ --> tests/ui/unknown_class_option.rs:4:5
+  |
+4 | use stanchion_lua::Result;
+  |     ^^^^^^^^^^^^^^^^^^^^^ no `Result` in the root
+  |
+help: consider importing one of these items instead
+  |
+4 - use stanchion_lua::Result;
+4 + use std::fmt::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::io::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::result::Result;
+  |
+4 - use stanchion_lua::Result;
+4 + use std::thread::Result;
+  |
+  = and 2 other candidates

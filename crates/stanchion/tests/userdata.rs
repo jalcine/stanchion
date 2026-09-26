@@ -1,8 +1,8 @@
 //! Classes backed by userdata rather than a Lua table.
 #![cfg(feature = "registry")]
 
-use stanchion::mlua::{AnyUserData, Lua, Result, UserData, UserDataMethods};
-use stanchion::{LuaClass, LuaHandle, LuaObject, load_class, lua_class};
+use stanchion_lua::mlua::{AnyUserData, Lua, Result, UserData, UserDataMethods};
+use stanchion_lua::{LuaClass, LuaHandle, LuaObject, load_class, lua_class};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 

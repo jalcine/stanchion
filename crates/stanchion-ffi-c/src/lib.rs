@@ -67,6 +67,7 @@ fn ffi_value_to_json(value: &FfiValue) -> Json {
             }
             Json::Object(map)
         }
+        FfiValue::Function => Json::Null,
     }
 }
 
@@ -90,6 +91,7 @@ fn json_to_ffi_value(value: &Json) -> FfiValue {
             }
             FfiValue::Map(entries)
         }
+        _ => FfiValue::Nil,
     }
 }
 

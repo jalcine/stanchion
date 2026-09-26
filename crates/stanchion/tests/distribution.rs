@@ -10,7 +10,7 @@ use stanchion::dist::index::{DirectoryIndex, Freshness, PluginReleases, Release}
 use stanchion::dist::install::{PluginSource, SourceError};
 use stanchion::dist::package::{self, Limits};
 use stanchion::dist::{IndexError, Installer, PluginIndex};
-use stanchion::lua_class;
+use stanchion_lua::lua_class;
 use stanchion::registry::{DirectoryDigest, LockError, Lockfile, Registry, Sandbox};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;

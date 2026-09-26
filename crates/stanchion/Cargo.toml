@@ -37,6 +37,7 @@ stanchion-remote = { workspace = true, optional = true }
 stanchion-sigstore = { workspace = true, optional = true }
 
 [features]
+send = []
 default = []
 async = ["stanchion-registry/async"]
 registry = ["dep:stanchion-registry"]

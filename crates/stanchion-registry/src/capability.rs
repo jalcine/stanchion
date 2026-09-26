@@ -17,7 +17,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use stanchion_abi::runtime::Runtime;
-use stanchion_abi::Value;
 
 /// Manifest key reserved by the registry rather than passed to a provider.
 pub const OPTIONAL_KEY: &str = "optional";

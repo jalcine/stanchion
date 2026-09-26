@@ -5,7 +5,6 @@
 //! [`LuaBackend`] and [`LuaInstance`] implementations that satisfy
 //! [`stanchion_abi::PluginBackend`] and [`stanchion_abi::PluginInstance`].
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::io::Write;
 use std::path::Path;
@@ -398,7 +397,7 @@ impl Runtime for LuaBackend {
 
     fn install_capability(
         &self,
-        name: &str,
+        _name: &str,
         _provider: &dyn stanchion_abi::callback::CapabilityProvider,
         _grant: &stanchion_abi::callback::Grant,
     ) -> stanchion_abi::Result<()> {

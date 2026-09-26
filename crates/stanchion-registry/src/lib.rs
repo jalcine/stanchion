@@ -69,7 +69,7 @@ use mlua::{Lua, LuaSerdeExt, Table, Value};
 
 use stanchion_lua::sandbox::{Budget, Sandbox};
 use stanchion_lua::{LuaClass, LuaObject};
-use stanchion_abi::value::lua::{abi_to_lua, lua_to_abi, FUNCTION_CACHE};
+use stanchion_abi::value::lua::{abi_to_lua, FUNCTION_CACHE};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";

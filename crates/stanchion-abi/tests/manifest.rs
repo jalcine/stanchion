@@ -49,7 +49,7 @@ fn wasm_plugin_defaults() {
 
 #[test]
 fn lua_wrong_entry_is_rejected() {
-    let mut manifest = Manifest {
+    let manifest = Manifest {
         name: "test".to_string(),
         version: None,
         plugin_type: PluginType::Lua,

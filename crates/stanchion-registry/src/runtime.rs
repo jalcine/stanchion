@@ -10,7 +10,6 @@
 use std::io::Write;
 use std::path::Path;
 
-use mlua::{Lua, Value};
 use stanchion_abi::{
     manifest::Manifest,
     runtime::Runtime,

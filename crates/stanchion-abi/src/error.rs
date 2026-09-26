@@ -28,6 +28,16 @@ impl fmt::Display for RuntimeError {
     }
 }
 
+#[cfg(feature = "lua")]
+impl From<mlua::Error> for RuntimeError {
+    fn from(err: mlua::Error) -> Self {
+        RuntimeError {
+            runtime_name: "lua".to_string(),
+            error: err.to_string(),
+        }
+    }
+}
+
 impl std::error::Error for RuntimeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         None
@@ -99,6 +109,12 @@ impl fmt::Display for Error {
                  which would deadlock; do the work without re-entering stanchion",
             ),
         }
+    }
+}
+
+impl From<RuntimeError> for Error {
+    fn from(err: RuntimeError) -> Self {
+        Error::Runtime(err)
     }
 }
 

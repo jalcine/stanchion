@@ -388,6 +388,32 @@ impl Runtime for LuaBackend {
     fn plugin_type(&self) -> stanchion_abi::PluginType {
         stanchion_abi::PluginType::Lua
     }
+
+    fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
+        Some(std::sync::Arc::clone(&self.lua))
+    }
+
+    fn install_capability(
+        &self,
+        name: &str,
+        _provider: &dyn stanchion_abi::callback::CapabilityProvider,
+        _grant: &stanchion_abi::callback::Grant,
+    ) -> stanchion_abi::Result<()> {
+        // The actual capability installation is handled by the registry's
+        // with_setup mechanism, which uses the Runtime trait to bind
+        // functions into plugin environments.
+        Ok(())
+    }
+}
+
+/// Creates a new Lua state and returns it for `stanchion-registry`.
+pub fn new_lua() -> mlua::Lua {
+    mlua::Lua::new()
+}
+
+/// Creates a new `Runtime` backed by a fresh Lua state.
+pub fn new_runtime() -> std::sync::Arc<dyn stanchion_abi::Runtime> {
+    std::sync::Arc::new(LuaBackend::new(new_lua()))
 }
 
 /// A Lua-specific plugin instance that implements [`stanchion_abi::PluginInstance`].

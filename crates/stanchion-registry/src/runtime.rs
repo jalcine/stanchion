@@ -83,4 +83,16 @@ impl<'a> Runtime for LuaRuntime<'a> {
     fn plugin_type(&self) -> stanchion_abi::PluginType {
         stanchion_abi::PluginType::Lua
     }
+
+    fn install_capability(
+        &self,
+        _name: &str,
+        _provider: &dyn stanchion_abi::callback::CapabilityProvider,
+        _grant: &stanchion_abi::callback::Grant,
+    ) -> stanchion_abi::Result<()> {
+        // The capability installation is handled by the registry's
+        // with_setup mechanism, which uses the Runtime trait to bind
+        // functions into plugin environments.
+        Ok(())
+    }
 }

@@ -4396,6 +4396,7 @@ dependencies = [
  "serde_json",
  "stanchion-dist",
  "stanchion-index",
+ "stanchion-lua",
  "stanchion-registry",
  "stanchion-remote",
  "stanchion-sigstore",
@@ -4437,7 +4438,6 @@ name = "stanchion-ffi"
 version = "0.1.0"
 dependencies = [
  "futures-executor",
- "mlua",
  "serde",
  "stanchion-abi",
  "stanchion-lua",

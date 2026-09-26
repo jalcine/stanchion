@@ -4,8 +4,8 @@
 use std::fs;
 use std::path::Path;
 
-use stanchion::lua_class;
-use stanchion::mlua::{Lua, Result, StdLib, Table};
+use stanchion_lua::lua_class;
+use stanchion_lua::{Lua, Result, StdLib, Table};
 use stanchion::tests::common::{first_failure, probe_source, write_plugin};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;

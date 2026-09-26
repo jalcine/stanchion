@@ -14,7 +14,13 @@ use mlua::{Lua, LuaOptions, StdLib, Table, Value};
 /// `package` is loaded so `require` works for rocks and plugin-local modules, but
 /// `package.loadlib` would let a plugin load an arbitrary shared object, and
 /// `dofile`/`loadfile` reach the filesystem regardless of which libraries are loaded.
-pub const RESTRICTED_DENY_LIST: &[&str] = &["dofile", "loadfile", "package.loadlib"];
+///
+/// `string.dump` serialises a function to Lua bytecode. On its own that is harmless,
+/// but paired with a `load` that accepts bytecode it is half of a VM-corruption
+/// primitive, so it is removed here and [`Sandbox::restricted`] also forces `load` to
+/// text-only mode (see [`harden_load`]).
+pub const RESTRICTED_DENY_LIST: &[&str] =
+    &["dofile", "loadfile", "package.loadlib", "string.dump"];
 
 /// Libraries present in every supported Lua version, minus `io`, `os` and `debug`.
 fn core_libs() -> StdLib {
@@ -80,6 +86,7 @@ pub struct Sandbox {
     memory_limit: Option<usize>,
     instruction_limit: Option<u64>,
     denied: Vec<String>,
+    text_only_load: bool,
 }
 
 impl Default for Sandbox {
@@ -105,6 +112,7 @@ impl Sandbox {
                 .iter()
                 .map(|name| (*name).to_string())
                 .collect(),
+            text_only_load: true,
         }
     }
 
@@ -120,7 +128,19 @@ impl Sandbox {
             memory_limit: None,
             instruction_limit: None,
             denied: Vec::new(),
+            text_only_load: false,
         }
+    }
+
+    /// Whether `load` is confined to text chunks, rejecting Lua bytecode.
+    ///
+    /// Lua does not verify bytecode, so crafted bytecode passed to `load` is a route to
+    /// VM-memory corruption and native code execution — an escape from every sandbox
+    /// mode. [`Sandbox::restricted`] enables this (and denies `string.dump`);
+    /// [`Sandbox::permissive`] does not, since it already grants `io`/`os`.
+    pub fn text_only_load(mut self, enabled: bool) -> Self {
+        self.text_only_load = enabled;
+        self
     }
 
     /// Sets exactly which standard libraries plugin states load.
@@ -186,6 +206,9 @@ impl Sandbox {
         for path in &self.denied {
             remove_global(&lua, path)?;
         }
+        if self.text_only_load {
+            harden_load(&lua)?;
+        }
         let budget = self.install_limit(&lua)?;
         Ok((lua, budget))
     }
@@ -222,6 +245,29 @@ impl Sandbox {
     }
 }
 
+/// Replaces the global `load` with a wrapper that forces text-only mode.
+///
+/// mlua's safe mode still lets `load` accept a bytecode chunk. Since Lua does not
+/// verify bytecode, that is a memory-safety escape (see [`RESTRICTED_DENY_LIST`]). The
+/// wrapper preserves `load`'s `(chunk, chunkname, mode, env)` signature but ignores the
+/// caller's `mode`, always passing `"t"`, so `load` returns `nil, err` on a binary
+/// chunk exactly as a text-only `load` does. A missing `load` (library not loaded) is
+/// left alone.
+fn harden_load(lua: &Lua) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let Some(original) = globals.get::<Option<mlua::Function>>("load")? else {
+        return Ok(());
+    };
+    let safe = lua.create_function(
+        move |_, (chunk, chunkname, _mode, env): (Value, Value, Value, Value)| {
+            let _ = _mode;
+            original.call::<mlua::MultiValue>((chunk, chunkname, "t", env))
+        },
+    )?;
+    globals.set("load", safe)?;
+    Ok(())
+}
+
 /// Sets a dotted global path to nil, e.g. `package.loadlib`.
 fn remove_global(lua: &Lua, path: &str) -> mlua::Result<()> {
     let mut segments = path.split('.').peekable();
@@ -239,4 +285,54 @@ fn remove_global(lua: &Lua, path: &str) -> mlua::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restricted_load_rejects_bytecode() {
+        let (lua, _) = Sandbox::restricted().build().expect("build restricted state");
+        // Under a permissive-style state string.dump is available to produce bytecode;
+        // build it there so the test does not depend on string.dump surviving.
+        let (donor, _) = Sandbox::permissive().build().expect("build donor state");
+        let bytecode: mlua::LuaString = donor
+            .load("return string.dump(function() return 42 end)")
+            .eval()
+            .expect("dump a function to bytecode");
+        let bytes = bytecode.as_bytes().to_vec();
+
+        // load(<bytecode>) must fail (return nil, err) rather than accept the chunk.
+        let loaded: Value = lua
+            .load("return function(b) return (load(b)) end")
+            .eval::<mlua::Function>()
+            .expect("build a load probe")
+            .call(lua.create_string(&bytes).expect("bytes into lua string"))
+            .expect("calling load must not raise");
+        assert!(
+            matches!(loaded, Value::Nil),
+            "load must reject bytecode under restricted(), got {loaded:?}"
+        );
+    }
+
+    #[test]
+    fn restricted_load_still_accepts_text() {
+        let (lua, _) = Sandbox::restricted().build().expect("build restricted state");
+        let result: i64 = lua
+            .load(r#"return load("return 7")()"#)
+            .eval()
+            .expect("text chunks must still load");
+        assert_eq!(result, 7);
+    }
+
+    #[test]
+    fn restricted_denies_string_dump() {
+        let (lua, _) = Sandbox::restricted().build().expect("build restricted state");
+        let dump: Value = lua.globals().get::<Table>("string").unwrap().get("dump").unwrap();
+        assert!(
+            matches!(dump, Value::Nil),
+            "string.dump must be removed under restricted()"
+        );
+    }
 }

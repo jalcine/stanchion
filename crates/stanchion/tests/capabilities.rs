@@ -259,6 +259,40 @@ fn a_submodule_sees_its_plugins_capabilities() -> TestResult {
 }
 
 #[test]
+fn require_ignores_plugin_controlled_search_paths() -> TestResult {
+    // #31: setting `package.path` at runtime must not steer `require` at a file outside
+    // the plugin's own directory. A file the host process can read but never blessed
+    // stays unreachable.
+    let outside = tempfile::tempdir()?;
+    fs::write(
+        outside.path().join("secret.lua"),
+        "return { value = \"leaked\" }\n",
+    )?;
+
+    let root = tempfile::tempdir()?;
+    let body = format!(
+        "package.path = \"{dir}/?.lua;\" .. package.path\n\
+         local ok, mod = pcall(require, \"secret\")\n\
+         if ok and type(mod) == \"table\" then return \"LEAKED:\" .. tostring(mod.value) end\n\
+         return \"blocked\"",
+        dir = outside.path().display()
+    );
+    write_plugin(root.path(), "probe", "name = \"probe\"\n", &probe_source(&body))?;
+
+    let mut registry = registry().with_policy(Rules::deny_all());
+    let report = registry.load_dir(root.path())?;
+    assert!(report.is_clean(), "failures: {:?}", report.failures);
+
+    let probe = registry.get("probe").ok_or("probe should load")?;
+    assert_eq!(
+        probe.instance().run("hi".to_string())?,
+        "blocked",
+        "a plugin-set package.path must not let require reach outside its directory"
+    );
+    Ok(())
+}
+
+#[test]
 fn audit_reports_requests_without_running_anything() -> TestResult {
     let root = tempfile::tempdir()?;
     write_plugin(

@@ -1285,6 +1285,7 @@ impl<C: LuaClass> Registry<C> {
         install_plugin_require(
             lua,
             &environment,
+            true,
             #[cfg(feature = "signatures")]
             manifest.dir.clone(),
             #[cfg(feature = "signatures")]
@@ -1607,6 +1608,7 @@ fn slash_path(path: impl AsRef<Path>) -> String {
 fn install_plugin_require(
     lua: &Lua,
     environment: &Table,
+    restricted: bool,
     #[cfg(feature = "signatures")] plugin_dir: std::path::PathBuf,
     #[cfg(feature = "signatures")] digest: Option<DirectoryDigest>,
 ) -> mlua::Result<()> {
@@ -1666,8 +1668,8 @@ fn install_plugin_require(
         }
 
         match &fallback {
-            Some(fallback) => fallback.call(name),
-            None => Err(mlua::Error::RuntimeError(format!(
+            Some(fallback) if !restricted => fallback.call(name),
+            _ => Err(mlua::Error::RuntimeError(format!(
                 "module `{name}` not found"
             ))),
         }

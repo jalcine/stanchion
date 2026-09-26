@@ -35,6 +35,8 @@ mod runtime;
 #[cfg(feature = "signatures")]
 pub mod signature;
 pub mod upgrade;
+#[cfg(feature = "luarocks")]
+pub use stanchion_lua::rocks;
 
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
@@ -48,6 +50,9 @@ pub use panics::Panicked;
 /// that names a foreign type has to hand you that type.
 pub use toml;
 
+/// Re-exported because [`Registry::isolated`] takes a [`Sandbox`] and
+/// [`Plugin::budget`] hands back a [`Budget`].
+pub use stanchion_lua::sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
 pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY, Policy, Rules};
 #[cfg(feature = "config")]
 pub use config::{CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config};
@@ -67,7 +72,6 @@ use std::path::Path;
 
 use mlua::{Lua, LuaSerdeExt, Table, Value};
 
-use stanchion_lua::sandbox::{Budget, Sandbox};
 use stanchion_lua::{LuaClass, LuaObject};
 use stanchion_abi::value::lua::{abi_to_lua, FUNCTION_CACHE};
 

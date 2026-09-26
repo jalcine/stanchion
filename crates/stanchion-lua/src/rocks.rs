@@ -31,6 +31,20 @@ use std::process::Command;
 /// Lua version whose tree is queried when none is configured.
 pub const DEFAULT_LUA_VERSION: &str = "5.4";
 
+/// Lua version mlua is compiled against, spelled the way LuaRocks spells it.
+///
+/// A C rock is only loadable when it was built for this version. Luau has no C
+/// module ABI at all, so its value matches no LuaRocks version.
+pub const MLUA_LUA_VERSION: &str = if cfg!(feature = "luau") {
+    "luau"
+} else if cfg!(feature = "luajit") {
+    "5.1"
+} else if cfg!(feature = "lua53") {
+    "5.3"
+} else {
+    "5.4"
+};
+
 /// Command name used when none is configured.
 pub const DEFAULT_BINARY: &str = "luarocks";
 
@@ -376,8 +390,13 @@ impl RocksConfig {
     }
 
     /// Queries the tree for a Lua version other than [`DEFAULT_LUA_VERSION`].
+    ///
+    /// # Panics
+    ///
+    /// If C modules are enabled and `version` is not [`MLUA_LUA_VERSION`].
     pub fn lua_version(mut self, version: impl Into<String>) -> Self {
         self.lua_version = version.into();
+        self.assert_c_module_abi();
         self
     }
 
@@ -386,13 +405,25 @@ impl RocksConfig {
     /// Only enable this when mlua links against the same external Lua the rocks were
     /// built against. With `vendored`, Lua is statically linked into the host binary
     /// and a C rock can bring a second runtime's symbols into the process.
+    ///
+    /// # Panics
+    ///
+    /// If `enabled` and the configured Lua version is not [`MLUA_LUA_VERSION`]: a C
+    /// rock built for another version would be loaded into a runtime with a different
+    /// ABI.
     pub fn load_c_modules(mut self, enabled: bool) -> Self {
-        assert!(
-            !enabled || self.lua_version == rock_lua_version(&self.tree),
-            "C rock LuaRocks version must match mlua lua_version"
-        );
         self.load_c_modules = enabled;
+        self.assert_c_module_abi();
         self
+    }
+
+    /// Checked from both setters, so the order they are called in cannot skip it.
+    fn assert_c_module_abi(&self) {
+        assert!(
+            !self.load_c_modules || self.lua_version == MLUA_LUA_VERSION,
+            "C rocks for Lua {} cannot load into mlua built for Lua {MLUA_LUA_VERSION}",
+            self.lua_version
+        );
     }
 
     /// The tree this configuration operates on.
@@ -570,5 +601,34 @@ mod tests {
             err.to_string().contains("names an operator but no version"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn c_modules_load_for_the_lua_mlua_was_built_against() {
+        let config = RocksConfig::new("tree")
+            .lua_version(MLUA_LUA_VERSION)
+            .load_c_modules(true);
+        assert!(config.load_c_modules);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot load into mlua built for Lua")]
+    fn c_modules_for_another_lua_are_refused() {
+        let _ = RocksConfig::new("tree").lua_version("5.0").load_c_modules(true);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot load into mlua built for Lua")]
+    fn changing_the_version_after_enabling_c_modules_is_still_checked() {
+        let _ = RocksConfig::new("tree")
+            .lua_version(MLUA_LUA_VERSION)
+            .load_c_modules(true)
+            .lua_version("5.0");
+    }
+
+    #[test]
+    fn a_mismatched_version_is_fine_without_c_modules() {
+        let config = RocksConfig::new("tree").lua_version("5.0");
+        assert!(!config.load_c_modules);
     }
 }

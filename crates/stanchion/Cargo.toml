@@ -57,6 +57,7 @@ full = ["async", "registry", "luarocks", "signatures", "remote", "distribution"]
 
 [dev-dependencies]
 mlua = { workspace = true, features = ["serde"] }
+stanchion-abi = { workspace = true }
 stanchion-lua = { workspace = true }
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt", "macros", "time"] }

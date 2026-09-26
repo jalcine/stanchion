@@ -31,13 +31,21 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     )
     .with_setup(|host| {
         // The host offers `kv`; the policy below decides who actually gets it.
-        host.capability("kv", |lua, grant| {
+        host.capability("kv", |runtime, grant| {
             // The approved namespace is baked into the closure, so a plugin cannot
             // widen it at call time — there is no parameter left to tamper with.
             let namespace: String = grant.get_or_default("namespace");
-            Ok(Value::Function(lua.create_function(move |_, key: String| {
-                Ok(format!("{namespace}/{key}"))
-            })?))
+            let state = runtime
+                .lua_state()
+                .ok_or_else(|| stanchion_abi::Error::Config("`kv` needs a Lua runtime".into()))?;
+            let lua = state
+                .lock()
+                .map_err(|_| stanchion_abi::Error::Config("the Lua state is poisoned".into()))?;
+            let kv = lua
+                .create_function(move |_, key: String| Ok(format!("{namespace}/{key}")))
+                .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
+            // A function crosses the ABI by being parked in its cache.
+            Ok(stanchion_abi::value::lua::lua_to_abi(&lua, &Value::Function(kv)))
         });
         Ok(())
     })

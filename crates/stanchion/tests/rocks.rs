@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::Command;
 
 use stanchion_lua::lua_class;
-use stanchion_lua::{Lua, Result};
+use stanchion_lua::mlua::{Lua, Result};
 use stanchion::registry::rocks::RocksConfig;
 use stanchion::registry::{FailureReason, Registry};
 use tempfile::TempDir;
@@ -16,7 +16,7 @@ type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[lua_class]
 pub trait Greeter {
-    fn new(config: stanchion_lua::Table, deps: stanchion_lua::Table) -> Result<Self>;
+    fn new(config: stanchion_lua::mlua::Table, deps: stanchion_lua::mlua::Table) -> Result<Self>;
     fn greet(&self, who: String) -> Result<String>;
 }
 

@@ -4,11 +4,15 @@
 //! stderr on the way through. That output is the panic being handled, not a failure.
 #![cfg(feature = "registry")]
 
+mod common;
+
 use std::fs;
 
-use stanchion_lua::mlua::{Lua, Result, Table, Value};
 use stanchion::registry::{FailureReason, Panicked, Registry, Rules, Sandbox};
 use stanchion_lua::lua_class;
+use stanchion_lua::mlua::{Lua, Result, Table};
+
+use common::lua_function;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -25,10 +29,10 @@ pub trait Probe {
 )]
 fn exploding_registry() -> Registry<ProbeClass> {
     Registry::isolated(Lua::new(), Sandbox::restricted()).with_setup(|host| {
-        host.capability("boom", |lua, _grant| {
-            Ok(Value::Function(lua.create_function(|_, ()| -> Result<()> {
+        host.capability("boom", |runtime, _grant| {
+            lua_function(runtime, |_, ()| -> Result<()> {
                 panic!("the provider gave up")
-            })?))
+            })
         });
         Ok(())
     })
@@ -55,7 +59,7 @@ fn write_plugin(root: &std::path::Path, body: &str, manifest: &str) -> TestResul
 /// `Error::downcast_ref` descends through the `CallbackError` and `WithContext` layers
 /// mlua adds on the way out, which a plain `source()` walk does not: mlua's own
 /// `source` deliberately skips the external error it holds.
-fn panicked_in(error: &stanchion_lua::Error) -> Option<&Panicked> {
+fn panicked_in(error: &stanchion_lua::mlua::Error) -> Option<&Panicked> {
     error.downcast_ref::<Panicked>()
 }
 

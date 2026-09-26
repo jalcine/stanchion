@@ -4,17 +4,21 @@
 //! These use a stub verifier so the wiring is covered without a crypto dependency.
 #![cfg(feature = "signatures")]
 
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
 use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table, Value};
+use stanchion_lua::mlua::{Lua, Result, Table};
 use stanchion::registry::{
     Decision, DirectoryDigest, FailureReason, PluginVerifier, Registry, Rules, SIGNATURE_FILE,
     Sandbox, Signer, VerifyError,
 };
 use tempfile::TempDir;
+
+use common::lua_function;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -237,8 +241,8 @@ fn provenance_tiers_capability_grants() -> TestResult {
             Registry::isolated(Lua::new(), Sandbox::restricted())
                 .with_verifier(StubVerifier::new("repo:acme/plugins"))
                 .with_setup(|host| {
-                    host.capability("network", |lua, _grant| {
-                        Ok(Value::Function(lua.create_function(|_, ()| Ok(()))?))
+                    host.capability("network", |runtime, _grant| {
+                        lua_function(runtime, |_, ()| Ok(()))
                     });
                     Ok(())
                 })

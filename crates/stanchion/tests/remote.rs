@@ -1,12 +1,16 @@
 //! The out-of-process host, driven end to end against the real binary.
 #![cfg(feature = "remote")]
 
+mod common;
+
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value as Json, json};
 use stanchion::remote::{CallbackCall, RemoteOptions, RemoteRegistry};
-use stanchion::tests::common::write_plugin;
 use tempfile::TempDir;
+
+use common::write_plugin;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;

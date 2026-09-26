@@ -63,8 +63,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if let Some(formatter) = registry.get("formatter")
         && let Some(exports) = formatter.exports()
     {
-        let published = exports.get::<Option<stanchion_lua::Function>>("decorate")?;
-        let private = exports.get::<Option<stanchion_lua::Value>>("handle")?;
+        let published = exports.get::<Option<stanchion_lua::mlua::Function>>("decorate")?;
+        let private = exports.get::<Option<stanchion_lua::mlua::Value>>("handle")?;
         println!("\nformatter exports `decorate`: {}", published.is_some());
         println!("formatter exports `handle`  : {}", private.is_some());
     }

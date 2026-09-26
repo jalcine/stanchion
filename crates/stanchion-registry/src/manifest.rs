@@ -20,11 +20,9 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest, FailureReason> {
     let source = fs::read_to_string(&path)?;
     let mut manifest: Manifest =
         toml::from_str(&source).map_err(|err| FailureReason::Manifest(err.to_string()))?;
-    if manifest.name.is_empty() {
-        return Err(FailureReason::Manifest(
-            "`name` must not be empty".to_string(),
-        ));
-    }
+    // The name becomes part of filesystem paths, log lines and protocol messages, so it
+    // is held to a strict grammar at the earliest point it is read. See #42.
+    stanchion_abi::validate_name(&manifest.name).map_err(FailureReason::Manifest)?;
     // Catch a malformed requirement at discovery rather than at load.
     #[cfg(feature = "luarocks")]
     for (rock, requirement) in &manifest.rocks {

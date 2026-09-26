@@ -269,6 +269,11 @@ impl<I: PluginIndex, S: PluginSource> Installer<I, S> {
         release: Release,
         lockfile: &Lockfile,
     ) -> Result<Staged, InstallError> {
+        // The name is used to build `root/<name>` and the staging directory that is
+        // later removed, so validate it before either is touched — a custom index or a
+        // lockfile entry could otherwise steer those paths outside `root`. See #42.
+        crate::index::validate_name(name)?;
+
         // A pin, when there is one, overrides whatever the index says the digest is.
         // The index is a convenience; the lockfile is the decision.
         if let Some(pin) = lockfile.get(name)

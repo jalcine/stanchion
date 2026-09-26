@@ -17,7 +17,7 @@ pub use backend::{BackendRegistry, PluginBackend, PluginInstance};
 pub use callback::{CapabilityCall, CapabilityProvider, Decision, Grant};
 pub use error::{Error, Result, RuntimeError};
 pub use manifest::{
-    DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType,
+    DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType, validate_name,
 };
 pub use runtime::Runtime;
 pub use value::Value;

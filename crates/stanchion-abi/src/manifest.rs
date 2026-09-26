@@ -139,6 +139,30 @@ impl DependencySpec {
     }
 }
 
+/// Confirms a plugin name is a safe, portable identifier.
+///
+/// The name flows into filesystem paths (`root/<name>`, staging directories), log
+/// lines, remote-protocol messages and error strings, so it is held to a strict
+/// grammar: 1–128 characters of ASCII letters, digits, `-`, `_` and `.`, and never `.`
+/// or `..`. This matches the distribution index's grammar so a name is validated the
+/// same way whether it came from a manifest or an index lookup. See #42.
+pub fn validate_name(name: &str) -> Result<(), String> {
+    let acceptable = !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && name != "."
+        && name != "..";
+    if acceptable {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{name}` is not a usable plugin name: use 1-128 ASCII letters, digits, `-`, `_` and `.`"
+        ))
+    }
+}
+
 impl Manifest {
     /// Validates that the manifest's entry file matches its plugin type and names a
     /// file *inside* the plugin directory.
@@ -147,6 +171,7 @@ impl Manifest {
     /// `entry` cannot point at `../elsewhere/x.wasm` or an absolute path that the
     /// plugin's digest never covers. Enforced for every backend. See #35.
     pub fn validate(&self) -> Result<(), String> {
+        validate_name(&self.name)?;
         self.validate_entry_path()?;
         match &self.plugin_type {
             PluginType::Lua if !self.entry.ends_with(".lua") => Err(format!(
@@ -216,6 +241,27 @@ mod tests {
         assert!(manifest("lua", "src/init.lua").validate().is_ok());
         assert!(manifest("wasm", "plugin.wasm").validate().is_ok());
         assert!(manifest("wasm", "./build/plugin.wasm").validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_ordinary_plugin_names() {
+        for name in ["probe", "my-plugin", "weather_v2", "a.b.c", "30log"] {
+            assert!(validate_name(name).is_ok(), "{name} should be valid");
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_plugin_names() {
+        for name in ["", ".", "..", "a/b", "../evil", "has space", "a:b", &"x".repeat(129)] {
+            assert!(validate_name(name).is_err(), "`{name}` must be refused");
+        }
+        // A manifest carrying a bad name fails validate() as a whole.
+        assert!(manifest("lua", "init.lua")
+            .validate()
+            .is_ok());
+        let mut bad = manifest("lua", "init.lua");
+        bad.name = "../evil".to_string();
+        assert!(bad.validate().is_err(), "a path-like name must be refused");
     }
 
     #[test]

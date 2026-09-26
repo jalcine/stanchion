@@ -1,6 +1,7 @@
 //! The object a binding hands to its language: a registry of dynamically-typed plugins.
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -225,7 +226,7 @@ impl Builder {
                 id: next_id(),
                 registry,
                 backends: Mutex::new(backends),
-                instances: Mutex::new(Vec::new()),
+                instances: Mutex::new(HashMap::new()),
                 default_root: config.plugins.clone(),
             });
         }
@@ -234,7 +235,7 @@ impl Builder {
             id: next_id(),
             registry: Arc::new(Mutex::new(registry)),
             backends: Mutex::new(backends),
-            instances: Mutex::new(Vec::new()),
+            instances: Mutex::new(HashMap::new()),
             default_root: config.plugins.clone(),
         })
     }
@@ -255,7 +256,7 @@ pub struct Stanchion {
     /// Registered non-Lua backends, keyed by plugin type.
     backends: Mutex<BackendRegistry>,
     /// Loaded non-Lua plugin instances.
-    instances: Mutex<Vec<PluginInstanceEntry>>,
+    instances: Mutex<HashMap<String, PluginInstanceEntry>>,
     default_root: Option<std::path::PathBuf>,
 }
 

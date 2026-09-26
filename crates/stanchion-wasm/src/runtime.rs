@@ -1,25 +1,84 @@
 use stanchion_abi::Value;
 use std::collections::HashMap;
-use wasmtime::{Engine, Func, Instance, Module, Store, Val, ValType};
+use wasmtime::{
+    Config, Engine, Func, Instance, Module, Store, StoreLimits, StoreLimitsBuilder, Val, ValType,
+};
+
+/// Resource ceilings a WASM plugin runs under.
+///
+/// Without these a plugin can loop forever (hanging the calling thread) or
+/// `memory.grow` up to 4 GiB. They are set by the host, never by the plugin — a plugin
+/// manifest may only *lower* the fuel ceiling (see `WasmBackend`), never raise it.
+#[derive(Debug, Clone, Copy)]
+pub struct WasmLimits {
+    /// Fuel (roughly, executed WASM instructions) allowed per call and for the
+    /// module's `start`. `None` disables the fuel meter entirely.
+    pub max_fuel: Option<u64>,
+    /// Ceiling on the plugin's linear memory, in bytes. `None` leaves wasmtime's
+    /// default (up to 4 GiB per memory).
+    pub memory_limit: Option<usize>,
+}
+
+impl Default for WasmLimits {
+    fn default() -> Self {
+        // Secure-by-default: a bounded amount of work and 64 MiB of memory, matching
+        // the Lua sandbox defaults, so a backend registered with `WasmBackend::new()`
+        // is not a DoS hole.
+        WasmLimits {
+            max_fuel: Some(1_000_000_000),
+            memory_limit: Some(64 * 1024 * 1024),
+        }
+    }
+}
+
+/// Per-store data holding the resource limiter wasmtime enforces.
+struct StoreData {
+    limits: StoreLimits,
+}
 
 /// A loaded WASM runtime for executing WASM plugin exports.
 #[allow(dead_code)]
 pub struct WasmRuntime {
     engine: Engine,
-    store: Store<()>,
+    store: Store<StoreData>,
     instance: Instance,
     exports: HashMap<String, Func>,
+    /// Refuelled before each call so the ceiling is per call, not for the lifetime.
+    max_fuel: Option<u64>,
 }
 
 impl WasmRuntime {
-    /// Creates a new WASM runtime from a compiled binary.
-    pub fn new(wasm_binary: &[u8]) -> Result<Self, String> {
-        let engine = Engine::default();
+    /// Creates a new WASM runtime from a compiled binary, under `limits`.
+    pub fn new(wasm_binary: &[u8], limits: WasmLimits) -> Result<Self, String> {
+        let mut config = Config::new();
+        if limits.max_fuel.is_some() {
+            config.consume_fuel(true);
+        }
+        let engine =
+            Engine::new(&config).map_err(|e| format!("Failed to configure WASM engine: {e}"))?;
         let module = Module::new(&engine, wasm_binary)
             .map_err(|e| format!("Failed to load WASM module: {}", e))?;
-        let mut store = Store::new(&engine, ());
+
+        let mut store_limits = StoreLimitsBuilder::new();
+        if let Some(bytes) = limits.memory_limit {
+            store_limits = store_limits.memory_size(bytes);
+        }
+        let mut store = Store::new(
+            &engine,
+            StoreData {
+                limits: store_limits.build(),
+            },
+        );
+        store.limiter(|data| &mut data.limits);
+        // Bound the module's `start` too: it runs during instantiation and could
+        // otherwise loop forever.
+        if let Some(fuel) = limits.max_fuel {
+            store
+                .set_fuel(fuel)
+                .map_err(|e| format!("Failed to set WASM fuel: {e}"))?;
+        }
         let instance = Instance::new(&mut store, &module, &[])
-            .map_err(|e| format!("Failed to instantiate WASM module: {}", e))?;
+            .map_err(|e| format!("Failed to instantiate WASM module: {:#}", e))?;
 
         let mut exports = HashMap::new();
         for export in instance.exports(&mut store) {
@@ -34,6 +93,7 @@ impl WasmRuntime {
             store,
             instance,
             exports,
+            max_fuel: limits.max_fuel,
         })
     }
 
@@ -43,6 +103,14 @@ impl WasmRuntime {
             .exports
             .get(func)
             .ok_or_else(|| format!("Export '{}' not found", func))?;
+
+        // Refuel so each call gets the full instruction ceiling; an infinite loop then
+        // traps ("all fuel consumed") instead of hanging the calling thread.
+        if let Some(fuel) = self.max_fuel {
+            self.store
+                .set_fuel(fuel)
+                .map_err(|e| format!("Failed to reset WASM fuel: {e}"))?;
+        }
 
         // Determine expected param and result types from the function's signature.
         let ty = wasm_func.ty(&self.store);
@@ -62,7 +130,7 @@ impl WasmRuntime {
         let mut results = vec![Val::I32(0); result_types.len()];
         wasm_func
             .call(&mut self.store, &wasm_args, &mut results)
-            .map_err(|e| format!("WASM call failed: {}", e))?;
+            .map_err(|e| format!("WASM call failed: {:#}", e))?;
 
         wasm_to_value(&results)
     }
@@ -256,13 +324,66 @@ mod tests {
     fn wasm_runtime_rejects_truncated_int() {
         // Minimal WAT: (module (func (export "id") (param i32) (result i32) local.get 0))
         let wat = br#"(module (func (export "id") (param i32) (result i32) local.get 0))"#;
-        let mut rt = WasmRuntime::new(wat).expect("wat");
+        let mut rt = WasmRuntime::new(wat, WasmLimits::default()).expect("wat");
         // in-range succeeds and round-trips
         let ok = rt.call("id", &[Value::Int(42)]).expect("call ok");
         assert_eq!(ok, Value::Int(42));
         // out-of-range is rejected before the call
         let err = rt.call("id", &[Value::Int(0x1_0000_0000)]).expect_err("should reject");
         assert!(err.contains("does not fit in an i32"), "err: {err}");
+    }
+
+    #[test]
+    fn an_infinite_loop_traps_on_fuel_instead_of_hanging() {
+        // Without a fuel meter this call never returns; with one it must trap.
+        let wat = br#"(module (func (export "spin") (loop br 0)))"#;
+        let limits = WasmLimits {
+            max_fuel: Some(1_000_000),
+            memory_limit: Some(1024 * 1024),
+        };
+        let mut rt = WasmRuntime::new(wat, limits).expect("wat");
+        let err = rt.call("spin", &[]).expect_err("infinite loop must trap");
+        assert!(
+            err.to_lowercase().contains("fuel"),
+            "expected a fuel-exhaustion trap, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_module_start_that_loops_is_bounded() {
+        // A `start` function that loops forever must not hang instantiation.
+        let wat = br#"(module (func $s (loop br 0)) (start $s))"#;
+        let limits = WasmLimits {
+            max_fuel: Some(500_000),
+            memory_limit: Some(1024 * 1024),
+        };
+        let err = match WasmRuntime::new(wat, limits) {
+            Ok(_) => panic!("a looping start function must trap"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_lowercase().contains("fuel"),
+            "expected fuel exhaustion during start, got: {err}"
+        );
+    }
+
+    #[test]
+    fn memory_growth_is_capped() {
+        // memory.grow past the store limit fails (returns -1) rather than reaching 4 GiB.
+        let wat = br#"(module
+            (memory 1)
+            (func (export "grow") (result i32) (memory.grow (i32.const 1000))))"#;
+        let limits = WasmLimits {
+            max_fuel: Some(1_000_000),
+            memory_limit: Some(2 * 64 * 1024), // 2 pages
+        };
+        let mut rt = WasmRuntime::new(wat, limits).expect("wat");
+        let result = rt.call("grow", &[]).expect("grow call returns");
+        assert_eq!(
+            result,
+            Value::Int(-1),
+            "memory.grow past the limit must fail rather than succeed"
+        );
     }
 }
 

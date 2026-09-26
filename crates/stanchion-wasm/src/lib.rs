@@ -1,5 +1,5 @@
 mod runtime;
-pub use runtime::{WasmInstance, WasmRuntime};
+pub use runtime::{WasmInstance, WasmLimits, WasmRuntime};
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -11,7 +11,48 @@ use stanchion_abi::{Error, Manifest, PluginBackend, PluginInstance, PluginType, 
 /// Loads plugins from `.wasm` binaries specified in the manifest's
 /// `entry` field. Each plugin calls its first exported function (the entry point)
 /// with the arguments passed to [`PluginInstance::call`].
-pub struct WasmBackend;
+///
+/// Every instance runs under [`WasmLimits`]: a fuel ceiling (so an infinite loop
+/// traps rather than hangs) and a linear-memory ceiling. The limits are the host's,
+/// set when the backend is registered; a plugin manifest's `budget.max_instructions`
+/// may only *lower* the fuel ceiling, never raise it. See #34.
+pub struct WasmBackend {
+    limits: WasmLimits,
+}
+
+impl Default for WasmBackend {
+    fn default() -> Self {
+        WasmBackend::new()
+    }
+}
+
+impl WasmBackend {
+    /// A backend with the secure default limits ([`WasmLimits::default`]).
+    pub fn new() -> Self {
+        WasmBackend {
+            limits: WasmLimits::default(),
+        }
+    }
+
+    /// A backend with host-chosen limits.
+    pub fn with_limits(limits: WasmLimits) -> Self {
+        WasmBackend { limits }
+    }
+
+    /// The limits to load a given plugin under: the host's, with the manifest allowed
+    /// only to lower the fuel ceiling.
+    fn limits_for(&self, manifest: &Manifest) -> WasmLimits {
+        let mut limits = self.limits;
+        if let Some(budget) = &manifest.budget {
+            let requested = budget.max_instructions;
+            limits.max_fuel = Some(match limits.max_fuel {
+                Some(host) => host.min(requested),
+                None => requested,
+            });
+        }
+        limits
+    }
+}
 
 impl PluginBackend for WasmBackend {
     fn plugin_type(&self) -> PluginType {
@@ -44,10 +85,11 @@ impl PluginBackend for WasmBackend {
 impl WasmBackend {
     /// Builds a [`WasmPluginInstance`] from module bytes.
     fn compile(&self, manifest: &Manifest, wasm_binary: &[u8]) -> Result<Box<dyn PluginInstance>> {
-        let runtime = WasmRuntime::new(wasm_binary).map_err(|e| Error::Plugin {
-            plugin: manifest.name.clone(),
-            reason: e,
-        })?;
+        let runtime =
+            WasmRuntime::new(wasm_binary, self.limits_for(manifest)).map_err(|e| Error::Plugin {
+                plugin: manifest.name.clone(),
+                reason: e,
+            })?;
 
         // Use the first exported function as the entry point.
         let entry = runtime

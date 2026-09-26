@@ -1,42 +1,19 @@
 //! Per-plugin Lua states: standard library selection and resource limits.
 #![cfg(feature = "registry")]
 
-use std::fs;
-use std::path::Path;
+mod common;
 
+use stanchion::registry::{FailureReason, Isolation, Registry, Sandbox};
 use stanchion_lua::lua_class;
-use stanchion_lua::{Lua, Result, StdLib, Table};
-use stanchion::tests::common::{first_failure, probe_source, write_plugin};
+use stanchion_lua::mlua::{Lua, Result, StdLib, Table};
+use tempfile::TempDir;
 
-type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
-type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+use common::{Fallible, TestResult, first_failure, probe_source, with_lua, write_plugin};
 
 #[lua_class]
 pub trait Probe {
     fn new(config: Table, deps: Table) -> Result<Self>;
     fn run(&self, input: String) -> Result<String>;
-}
-
-fn probe_source(body: &str) -> String {
-    format!(
-        r#"
-local P = {{}}
-P.__index = P
-function P.new(config, deps) return setmetatable({{}}, P) end
-function P:run(input)
-  {body}
-end
-return P
-"#
-    )
-}
-
-fn write_plugin(root: &Path, name: &str, manifest: &str, source: &str) -> TestResult {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join("plugin.toml"), manifest)?;
-    fs::write(dir.join("init.lua"), source)?;
-    Ok(())
 }
 
 fn single_plugin(body: &str) -> Fallible<TempDir> {
@@ -195,9 +172,11 @@ fn ambient_setup_installs_host_functions_into_every_state() -> TestResult {
     let root = single_plugin(r#"return host_greeting()"#)?;
     let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
         .with_setup(|host| {
-            host.ambient("host_greeting", |lua| {
-                let greeting = lua.create_function(|_, ()| Ok("from the host"))?;
-                lua.globals().set("host_greeting", greeting)
+            host.ambient("host_greeting", |runtime| {
+                with_lua(runtime, |lua| {
+                    let greeting = lua.create_function(|_, ()| Ok("from the host"))?;
+                    lua.globals().set("host_greeting", greeting)
+                })
             });
             Ok(())
         });

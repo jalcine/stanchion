@@ -4481,6 +4481,7 @@ dependencies = [
  "flate2",
  "mlua",
  "serde_json",
+ "stanchion-abi",
  "stanchion-dist",
  "stanchion-index",
  "stanchion-lua",

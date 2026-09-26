@@ -57,10 +57,7 @@ pub struct WasmPluginInstance {
 
 impl PluginInstance for WasmPluginInstance {
     fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
-        let mut runtime = self
-            .runtime
-            .lock()
-            .map_err(|e| Error::Wasm(format!("Mutex poisoned: {e}")))?;
+        let mut runtime = self.runtime.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // If the caller specifies a method name, use it as the export name;
         // otherwise fall back to the first exported function (the entry point).
         let export = if method.is_empty() { &self.entry } else { method };

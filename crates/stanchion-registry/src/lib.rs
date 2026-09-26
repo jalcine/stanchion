@@ -671,10 +671,13 @@ impl<C: LuaClass> Registry<C> {
             .install_ambient(runtime)
             .map_err(|err| RegistryError::Lua(mlua::Error::RuntimeError(err.to_string())))?;
         #[cfg(feature = "luarocks")]
-        if let Some(paths) = &self.rock_paths {
-            // Need a Lua state to prepend paths
-            // This will be a separate issue
-            unimplemented!("LuaRuntime::configure - luarocks paths")
+        if let Some(paths) = &self.rock_paths
+            && let Some(state) = runtime.lua_state()
+        {
+            let lua = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            prepend_module_paths(&lua, paths).map_err(RegistryError::Lua)?;
         }
         Ok(())
     }

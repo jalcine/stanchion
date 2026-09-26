@@ -1,7 +1,7 @@
 //! The synchronous half of `#[lua_class]`: constructors, methods, fields, optionals.
 
-use stanchion::mlua::{Error, Lua, Result};
-use stanchion::{LuaObject, load_class, lua_class};
+use stanchion_lua::{Error, Lua, Result};
+use stanchion_lua::{LuaObject, load_class, lua_class};
 
 /// Tests report failures as errors rather than panicking, so a broken assumption
 /// surfaces with its own message instead of a bare unwrap location.

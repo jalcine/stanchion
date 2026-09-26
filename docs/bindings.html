@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Language bindings · stanchion</title>
+    <meta property="og:image" content="../assets/stanchion-og.jpg">
 <meta name="description" content="Language bindings — stanchion, Lua plugins for Rust applications.">
 <link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
 
@@ -36,7 +37,7 @@
 <main>
   <article class="prose">
     <h1 id="language-bindings">Language bindings</h1>
-<p>Using stanchion from Python, Kotlin, Swift, Ruby and JavaScript.</p>
+<p>Using stanchion from foreign languages is planned via <code>stanchion-ffi</code>; Rust contracts are the only implemented host.</p>
 <p>The Rust API’s <code>Registry&lt;C: LuaClass&gt;</code> is generic over a contract <code>#[lua_class]</code> derives
 from a trait at compile time. No foreign language can supply one, so the bindings take
 the same path <a href="remote.html">out-of-process hosting</a> already takes: plugins load as
@@ -44,9 +45,9 @@ the same path <a href="remote.html">out-of-process hosting</a> already takes: pl
 <p><code>stanchion-ffi</code> is the seam every binding sits on. It carries no binding dependencies
 of its own, so nothing <code>pyo3</code> or <code>uniffi</code> finds convenient can leak into the shape the
 other four see.</p>
-<pre><code>                        ┌─ bindings/python  (pyo3 + maturin)     ── shipped
-                        ├─ bindings/uniffi  (Kotlin, Swift)      ── Kotlin runs; packaging pending
-stanchion-ffi ──────────┼─ bindings/ruby    (magnus)             ── runs; packaging pending
+<pre><code>                        ┌─ bindings/python  (pyo3 + maturin)     ── planned
+                        ├─ bindings/uniffi  (Kotlin, Swift)      ── planned
+stanchion-ffi ──────────┼─ bindings/ruby    (magnus)             ── planned
   Stanchion             └─ bindings/node    (neon)               ── planned
   Value
   Policy / CapabilityProvider

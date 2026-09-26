@@ -387,6 +387,10 @@ impl RocksConfig {
     /// built against. With `vendored`, Lua is statically linked into the host binary
     /// and a C rock can bring a second runtime's symbols into the process.
     pub fn load_c_modules(mut self, enabled: bool) -> Self {
+        assert!(
+            !enabled || self.lua_version == rock_lua_version(&self.tree),
+            "C rock LuaRocks version must match mlua lua_version"
+        );
         self.load_c_modules = enabled;
         self
     }

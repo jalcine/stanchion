@@ -21,6 +21,11 @@ tokio = { version = "1", default-features = false, features = ["sync"] }
 default = ["signatures"]
 async = ["stanchion-registry/async", "stanchion-lua/async"]
 signatures = ["stanchion-registry/signatures"]
+lua54 = ["stanchion-lua/lua54"]
+lua53 = ["stanchion-lua/lua53"]
+luajit = ["stanchion-lua/luajit"]
+luau = ["stanchion-lua/luau"]
+vendored = ["stanchion-lua/vendored"]
 
 [dev-dependencies]
 tempfile = "3"

@@ -606,13 +606,13 @@ impl<C: LuaClass> Registry<C> {
         if let Isolation::PerPlugin(sandbox) | Isolation::PerGroup(sandbox) = &self.isolation {
             let sandbox = sandbox.clone();
             let (lua, budget) = sandbox.build().map_err(RegistryError::Lua)?;
-            let runtime = crate::runtime::LuaRuntime::new(&lua);
+            let runtime = crate::runtime::LuaRuntime::new(lua.clone());
             self.configure(&runtime)?;
             return Ok((lua, budget));
         }
 
         let lua = self.host.clone();
-        let runtime = crate::runtime::LuaRuntime::new(&lua);
+        let runtime = crate::runtime::LuaRuntime::new(lua.clone());
         if !self.shared_configured {
             self.configure(&runtime)?;
             self.shared_configured = true;
@@ -784,7 +784,7 @@ impl<C: LuaClass> Registry<C> {
 
             let (lua, budget, group) =
                 self.group_state(components.as_ref(), &mut group_states, &manifest)?;
-            let runtime = crate::runtime::LuaRuntime::new(&lua);
+            let runtime = crate::runtime::LuaRuntime::new(lua.clone());
             // Evaluating a chunk and running a constructor is plugin code, so a panic
             // there is this plugin's failure rather than the whole load's.
             let built = panics::guard(|| {
@@ -877,7 +877,7 @@ impl<C: LuaClass> Registry<C> {
         #[cfg(feature = "signatures")]
         let (signer, digest) = self.verify_plugin(&manifest).map_err(&fail)?;
 
-        let runtime = crate::runtime::LuaRuntime::new(&lua);
+        let runtime = crate::runtime::LuaRuntime::new(lua.clone());
         let built = panics::guard(|| {
                 self.instantiate(
                     &lua,

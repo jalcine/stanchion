@@ -69,6 +69,8 @@ pub enum SourceError {
     Transport(String),
     /// The response was not a plugin package.
     Malformed(String),
+    /// The reference uses an insecure scheme (`http://`) the source refuses to fetch.
+    Insecure(String),
 }
 
 impl fmt::Display for SourceError {
@@ -80,6 +82,10 @@ impl fmt::Display for SourceError {
             }
             SourceError::Transport(message) => write!(f, "fetching: {message}"),
             SourceError::Malformed(message) => write!(f, "{message}"),
+            SourceError::Insecure(reference) => write!(
+                f,
+                "refusing insecure `{reference}`: enable allow_http to fetch over plain http"
+            ),
         }
     }
 }

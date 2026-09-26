@@ -24,11 +24,19 @@ use crate::index::{
     validate_name,
 };
 
+/// Largest index document this client will read into memory, unless raised.
+///
+/// The 30 s timeout bounds how *long* a fetch takes, not how *much* is read, so a
+/// hostile or compromised index could otherwise stream an unbounded catalog and
+/// exhaust memory. A real catalog or release document is far smaller than this.
+pub const DEFAULT_INDEX_LIMIT: u64 = 8 * 1024 * 1024;
+
 /// An index served over HTTP.
 pub struct HttpIndex {
     client: reqwest::blocking::Client,
     base: String,
     freshness: Freshness,
+    limit: u64,
 }
 
 impl HttpIndex {
@@ -47,6 +55,7 @@ impl HttpIndex {
             client,
             base: base.into().trim_end_matches('/').to_string(),
             freshness: Freshness::Required,
+            limit: DEFAULT_INDEX_LIMIT,
         })
     }
 
@@ -56,12 +65,19 @@ impl HttpIndex {
             client,
             base: base.into().trim_end_matches('/').to_string(),
             freshness: Freshness::Required,
+            limit: DEFAULT_INDEX_LIMIT,
         }
     }
 
     /// How strictly to treat document expiry.
     pub fn freshness(mut self, freshness: Freshness) -> Self {
         self.freshness = freshness;
+        self
+    }
+
+    /// Caps how large an index document may be, in bytes.
+    pub fn limit(mut self, bytes: u64) -> Self {
+        self.limit = bytes;
         self
     }
 
@@ -83,9 +99,29 @@ impl HttpIndex {
                 response.status()
             )));
         }
-        response
-            .text()
-            .map_err(|err| IndexError::Transport(format!("{url}: {err}")))
+
+        // Cap the read: a declared length is only a claim, so the body is bounded as it
+        // is read, one byte over the limit is enough to reject. See #39.
+        if let Some(length) = response.content_length()
+            && length > self.limit
+        {
+            return Err(IndexError::Malformed(format!(
+                "{url}: the document declares {length} bytes, over the {} byte limit",
+                self.limit
+            )));
+        }
+        let mut body = Vec::new();
+        let mut reader = std::io::Read::take(response, self.limit.saturating_add(1));
+        std::io::Read::read_to_end(&mut reader, &mut body)
+            .map_err(|err| IndexError::Transport(format!("{url}: {err}")))?;
+        if body.len() as u64 > self.limit {
+            return Err(IndexError::Malformed(format!(
+                "{url}: the document exceeds the {} byte limit",
+                self.limit
+            )));
+        }
+        String::from_utf8(body)
+            .map_err(|err| IndexError::Malformed(format!("{url}: not valid UTF-8: {err}")))
     }
 }
 
@@ -121,23 +157,39 @@ impl PluginIndex for HttpIndex {
 pub struct HttpSource {
     client: reqwest::blocking::Client,
     limit: u64,
+    allow_http: bool,
 }
 
 /// Largest package this source will hold in memory, unless raised.
 pub const DEFAULT_PACKAGE_LIMIT: u64 = 64 * 1024 * 1024;
 
 impl HttpSource {
-    /// A source with a default client and package-size cap.
+    /// A source with a default client (30 s request timeout) and package-size cap.
+    ///
+    /// The timeout matters because a release's `source` URL is chosen by the index: a
+    /// slow or stalled server must not hang installation indefinitely. See #39.
     pub fn new() -> Self {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .user_agent(concat!("stanchion-dist/", env!("CARGO_PKG_VERSION")))
+            .build()
+            // A builder with only a timeout does not fail in practice; fall back to the
+            // default client rather than panicking or complicating the signature.
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
         HttpSource {
-            client: reqwest::blocking::Client::new(),
+            client,
             limit: DEFAULT_PACKAGE_LIMIT,
+            allow_http: false,
         }
     }
 
     /// A source using a caller-supplied client, for proxies, timeouts or pinned roots.
     pub fn with_client(client: reqwest::blocking::Client) -> Self {
-        HttpSource { client, limit: DEFAULT_PACKAGE_LIMIT }
+        HttpSource {
+            client,
+            limit: DEFAULT_PACKAGE_LIMIT,
+            allow_http: false,
+        }
     }
 
     /// Caps how large a package may be.
@@ -147,6 +199,17 @@ impl HttpSource {
     /// unpacking it may produce.
     pub fn limit(mut self, bytes: u64) -> Self {
         self.limit = bytes;
+        self
+    }
+
+    /// Permits fetching `http://` source URLs.
+    ///
+    /// The `source` URL of each release is chosen by the (untrusted) index. Plain
+    /// `http://` is refused by default, so a hostile index cannot downgrade a fetch or
+    /// steer it at a cleartext internal address; enable this only for a trusted local
+    /// mirror. Package integrity is verified against the digest regardless. See #39.
+    pub fn allow_http(mut self, allow: bool) -> Self {
+        self.allow_http = allow;
         self
     }
 }
@@ -163,6 +226,10 @@ impl PluginSource for HttpSource {
         // scheme is `Unsupported` rather than a failure.
         if !(reference.starts_with("https://") || reference.starts_with("http://")) {
             return Err(SourceError::Unsupported(reference.to_string()));
+        }
+        // The index picks this URL; refuse a cleartext downgrade unless opted in.
+        if reference.starts_with("http://") && !self.allow_http {
+            return Err(SourceError::Insecure(reference.to_string()));
         }
 
         let response = self
@@ -231,5 +298,34 @@ mod tests {
     fn the_package_limit_is_configurable_and_defaulted() {
         assert_eq!(HttpSource::new().limit, DEFAULT_PACKAGE_LIMIT);
         assert_eq!(HttpSource::new().limit(1024).limit, 1024);
+    }
+
+    #[test]
+    fn a_plain_http_source_is_refused_unless_opted_in() {
+        // The index chooses this URL, so a cleartext downgrade is refused by default and
+        // reported distinctly (not Unsupported, which would silently try another source).
+        let source = HttpSource::new();
+        match source.fetch("http://169.254.169.254/latest/meta-data/") {
+            Err(SourceError::Insecure(reference)) => {
+                assert_eq!(reference, "http://169.254.169.254/latest/meta-data/");
+            }
+            other => panic!("expected Insecure, got {other:?}"),
+        }
+        // Opting in changes the refusal into an ordinary (here, transport) attempt.
+        let permissive = HttpSource::new().allow_http(true);
+        assert!(
+            !matches!(
+                permissive.fetch("http://127.0.0.1:1/x"),
+                Err(SourceError::Insecure(_)) | Err(SourceError::Unsupported(_))
+            ),
+            "allow_http should let an http:// reference be attempted"
+        );
+    }
+
+    #[test]
+    fn the_index_document_limit_is_configurable_and_defaulted() {
+        let index = HttpIndex::new("https://example.test").expect("build index");
+        assert_eq!(index.limit, DEFAULT_INDEX_LIMIT);
+        assert_eq!(index.limit(2048).limit, 2048);
     }
 }

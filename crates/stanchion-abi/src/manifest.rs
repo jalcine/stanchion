@@ -4,7 +4,7 @@
 //! into that crate's richer error types); the manifest *types* live here so a
 //! backend such as WASM can read one without linking Lua.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use semver::{Version, VersionReq};
 use serde::Deserialize;
@@ -140,8 +140,14 @@ impl DependencySpec {
 }
 
 impl Manifest {
-    /// Validates that the manifest's entry file matches its plugin type.
+    /// Validates that the manifest's entry file matches its plugin type and names a
+    /// file *inside* the plugin directory.
+    ///
+    /// The entry must be a relative path with no `..` and no root/prefix component, so
+    /// `entry` cannot point at `../elsewhere/x.wasm` or an absolute path that the
+    /// plugin's digest never covers. Enforced for every backend. See #35.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_entry_path()?;
         match &self.plugin_type {
             PluginType::Lua if !self.entry.ends_with(".lua") => Err(format!(
                 "Lua plugin entry must end with '.lua', got '{}'",
@@ -155,6 +161,33 @@ impl Manifest {
         }
     }
 
+    /// Confirms `entry` is a relative path confined to the plugin directory.
+    fn validate_entry_path(&self) -> Result<(), String> {
+        use std::path::Component;
+        if self.entry.is_empty() {
+            return Err("plugin entry must not be empty".to_string());
+        }
+        let path = Path::new(&self.entry);
+        for component in path.components() {
+            match component {
+                Component::Normal(_) | Component::CurDir => {}
+                Component::ParentDir => {
+                    return Err(format!(
+                        "plugin entry '{}' must not contain '..'",
+                        self.entry
+                    ));
+                }
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!(
+                        "plugin entry '{}' must be a relative path inside the plugin",
+                        self.entry
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Absolute path of the plugin's entry chunk.
     pub fn entry_path(&self) -> PathBuf {
         self.dir.join(&self.entry)
@@ -165,5 +198,43 @@ impl Manifest {
         self.version
             .clone()
             .unwrap_or_else(|| Version::new(0, 0, 0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(plugin_type: &str, entry: &str) -> Manifest {
+        let raw = format!("name = \"p\"\nplugin_type = \"{plugin_type}\"\nentry = \"{entry}\"\n");
+        toml::from_str(&raw).expect("manifest parses")
+    }
+
+    #[test]
+    fn accepts_a_relative_entry_inside_the_plugin() {
+        assert!(manifest("lua", "init.lua").validate().is_ok());
+        assert!(manifest("lua", "src/init.lua").validate().is_ok());
+        assert!(manifest("wasm", "plugin.wasm").validate().is_ok());
+        assert!(manifest("wasm", "./build/plugin.wasm").validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_entries_that_escape_the_plugin_directory() {
+        // Traversal, absolute paths and empty entries never reach a backend, so the
+        // digest cannot be sidestepped by pointing `entry` outside the plugin (#35).
+        for entry in ["../elsewhere/x.wasm", "../../etc/init.lua", ""] {
+            assert!(
+                manifest("wasm", entry).validate().is_err(),
+                "`{entry}` must be refused"
+            );
+        }
+        // Absolute paths differ by platform; build one directly.
+        let mut m = manifest("wasm", "plugin.wasm");
+        m.entry = if cfg!(windows) {
+            "C:\\evil\\x.wasm".to_string()
+        } else {
+            "/etc/evil.wasm".to_string()
+        };
+        assert!(m.validate().is_err(), "absolute entry must be refused");
     }
 }

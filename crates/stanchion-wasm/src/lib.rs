@@ -26,11 +26,28 @@ impl PluginBackend for WasmBackend {
                 reason: format!("Failed to read {}: {}", wasm_path.display(), e),
             }
         })?;
-        let runtime =
-            WasmRuntime::new(&wasm_binary).map_err(|e| Error::Plugin {
-                plugin: manifest.name.clone(),
-                reason: e,
-            })?;
+        self.compile(manifest, &wasm_binary)
+    }
+
+    /// Compiles from the bytes the host already read and verified against the digest,
+    /// so the module that runs is exactly the one that was hashed (see #35).
+    fn load_bytes(
+        &self,
+        manifest: &Manifest,
+        _dir: &Path,
+        entry_bytes: &[u8],
+    ) -> Result<Box<dyn PluginInstance>> {
+        self.compile(manifest, entry_bytes)
+    }
+}
+
+impl WasmBackend {
+    /// Builds a [`WasmPluginInstance`] from module bytes.
+    fn compile(&self, manifest: &Manifest, wasm_binary: &[u8]) -> Result<Box<dyn PluginInstance>> {
+        let runtime = WasmRuntime::new(wasm_binary).map_err(|e| Error::Plugin {
+            plugin: manifest.name.clone(),
+            reason: e,
+        })?;
 
         // Use the first exported function as the entry point.
         let entry = runtime

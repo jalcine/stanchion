@@ -29,6 +29,24 @@ pub trait PluginBackend: Send + Sync {
 
     /// Loads a plugin from its directory and returns an instance handle.
     fn load(&self, manifest: &Manifest, dir: &Path) -> Result<Box<dyn PluginInstance>>;
+
+    /// Loads a plugin from entry bytes the host has already read and verified against
+    /// the plugin's digest.
+    ///
+    /// A backend that reads the entry file itself should override this to build from
+    /// `entry_bytes` rather than re-reading from disk, closing the window between the
+    /// host verifying the bytes and the backend loading them (a verify→load TOCTOU; see
+    /// #35). The default ignores the bytes and calls [`PluginBackend::load`], which is
+    /// correct only for backends that do not read the entry from disk.
+    fn load_bytes(
+        &self,
+        manifest: &Manifest,
+        dir: &Path,
+        entry_bytes: &[u8],
+    ) -> Result<Box<dyn PluginInstance>> {
+        let _ = entry_bytes;
+        self.load(manifest, dir)
+    }
 }
 
 /// A registry of backends, keyed by [`PluginType`].

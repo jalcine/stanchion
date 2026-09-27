@@ -371,7 +371,7 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
                 stanchion_registry::Isolation::PerPlugin(_) => "per-plugin".to_string(),
                 stanchion_registry::Isolation::PerGroup(_) => "per-group".to_string(),
             },
-            signatures_required: false,
+            signatures_required: registry.signatures_required(),
         }),
         method::SHUTDOWN => Ok(Json::Null),
         other => Err(frame::error(
@@ -445,5 +445,31 @@ mod tests {
     fn a_long_message_is_truncated() {
         let sanitized = sanitize_log(&"a".repeat(MAX_LOG_MESSAGE * 2));
         assert!(sanitized.ends_with("…(truncated)"), "should be truncated");
+    }
+
+    /// `host/info` must report the registry's real signature posture, not a constant, so
+    /// a supervising application can trust what the host attests about itself. See #46.
+    #[cfg(feature = "signatures")]
+    #[test]
+    fn info_reports_the_real_signature_posture() {
+        use super::{build_registry, handle, HostChannel};
+        use crate::frame::Request;
+        use crate::protocol::{method, HostInfo};
+        use stanchion_registry::config::HostConfig;
+
+        let posture = |required: bool| -> bool {
+            let mut config = HostConfig::default();
+            config.signatures.required = required;
+            // The channel is unused by `host/info`; empty pipes suffice.
+            let channel = HostChannel::new(std::io::empty(), std::io::sink());
+            let mut registry = build_registry(&config, &channel).expect("build registry");
+            let request = Request::new(1, method::INFO, serde_json::Value::Null);
+            let value = handle(&mut registry, request).expect("info should succeed");
+            let info: HostInfo = serde_json::from_value(value).expect("decode HostInfo");
+            info.signatures_required
+        };
+
+        assert!(posture(true), "a host requiring signatures must report it");
+        assert!(!posture(false), "a permissive host must not claim to require them");
     }
 }

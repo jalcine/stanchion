@@ -537,6 +537,23 @@ impl<C: LuaClass> Registry<C> {
         self
     }
 
+    /// Whether this registry refuses to load an unsigned plugin.
+    ///
+    /// Reflects [`require_signatures`](Self::require_signatures), so a supervisor (such
+    /// as the out-of-process host reporting `host/info`) can attest the real posture
+    /// rather than a constant. Always `false` when the `signatures` feature is off,
+    /// since nothing is verified.
+    pub fn signatures_required(&self) -> bool {
+        #[cfg(feature = "signatures")]
+        {
+            self.require_signatures
+        }
+        #[cfg(not(feature = "signatures"))]
+        {
+            false
+        }
+    }
+
     /// Refuses builds or signers on a revocation list.
     ///
     /// Checked after verification, because a withdrawn plugin's signature is still

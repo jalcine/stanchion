@@ -20,9 +20,12 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest, FailureReason> {
     let source = fs::read_to_string(&path)?;
     let mut manifest: Manifest =
         toml::from_str(&source).map_err(|err| FailureReason::Manifest(err.to_string()))?;
-    // The name becomes part of filesystem paths, log lines and protocol messages, so it
-    // is held to a strict grammar at the earliest point it is read. See #42.
-    stanchion_abi::validate_name(&manifest.name).map_err(FailureReason::Manifest)?;
+    // The name becomes part of filesystem paths, log lines and protocol messages, and
+    // `entry` is joined onto the plugin directory and read as the plugin's chunk. Both
+    // are held to their strict grammars at the earliest point the manifest is read, so
+    // an absolute or `..`-laced `entry` cannot escape the plugin directory on the core
+    // load path (the FFI host validates separately; the registry must too). See #42, #45.
+    manifest.validate().map_err(FailureReason::Manifest)?;
     // Catch a malformed requirement at discovery rather than at load.
     #[cfg(feature = "luarocks")]
     for (rock, requirement) in &manifest.rocks {
@@ -198,4 +201,38 @@ pub fn resolve_order(manifests: Vec<Manifest>) -> (Vec<Manifest>, Vec<LoadFailur
         .filter_map(|name| by_name.remove(&name))
         .collect();
     (sorted, failures)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A manifest whose `entry` escapes the plugin directory must be refused the moment
+    /// it is read, on the core registry path — not only on the FFI host path. See #45.
+    #[test]
+    fn read_manifest_refuses_an_escaping_entry() {
+        let dir = std::env::temp_dir().join(format!("stanchion-manifest-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp plugin dir");
+
+        for entry in ["../../etc/passwd", "/etc/passwd", "../sibling/init.lua"] {
+            fs::write(
+                dir.join(MANIFEST_FILE),
+                format!("name = \"p\"\nentry = \"{entry}\"\n"),
+            )
+            .expect("write manifest");
+            let result = read_manifest(&dir);
+            assert!(
+                result.is_err(),
+                "entry `{entry}` should be refused at read time, got {result:?}"
+            );
+        }
+
+        // A well-formed entry inside the directory is still accepted.
+        fs::write(dir.join(MANIFEST_FILE), "name = \"p\"\nentry = \"init.lua\"\n")
+            .expect("write manifest");
+        assert!(read_manifest(&dir).is_ok(), "an in-directory entry must load");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

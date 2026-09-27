@@ -1,6 +1,7 @@
 # Language bindings
 
-Using stanchion from Python, Kotlin, Swift, Ruby and JavaScript.
+Using stanchion from Python, Ruby and Kotlin today, with Swift generated but not yet
+run and a JavaScript binding still planned.
 
 The Rust API's `Registry<C: LuaClass>` is generic over a contract `#[lua_class]` derives
 from a trait at compile time. No foreign language can supply one, so the bindings take
@@ -9,7 +10,7 @@ the same path [out-of-process hosting](remote.md) already takes: plugins load as
 
 `stanchion-ffi` is the seam every binding sits on. It carries no binding dependencies
 of its own, so nothing `pyo3` or `uniffi` finds convenient can leak into the shape the
-other four see.
+others see.
 
 ```
                         ┌─ bindings/python  (pyo3 + maturin)     ── shipped

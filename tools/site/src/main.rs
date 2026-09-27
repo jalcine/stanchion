@@ -312,6 +312,11 @@ fn write_site(root: &Path, out: &Path, guides: &[Guide]) -> Result<(), String> {
     write(out.join("CNAME"), &format!("{DOMAIN}\n"))?;
     write(out.join("assets/site.css"), include_str!("../assets/site.css"))?;
     write(out.join("assets/stanchion.svg"), include_str!("../assets/stanchion.svg"))?;
+    // The social-card image is binary, so it is written directly rather than through the
+    // string-typed `write` helper above.
+    let og_path = out.join("assets/stanchion-og.jpg");
+    fs::write(&og_path, include_bytes!("../assets/stanchion-og.jpg") as &[u8])
+        .map_err(|err| format!("{}: {err}", og_path.display()))?;
 
     let landing = include_str!("../templates/index.html")
         .replace("{{nav}}", &nav(guides, None))

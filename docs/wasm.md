@@ -1,8 +1,16 @@
 # WASM plugins
 
-Stanchion supports WASM-based plugins alongside Lua plugins. Both run in the same
-registry and are callable through the same [`Stanchion`](../bindings.md) API, with
-the manifest's `plugin_type` field selecting the runtime.
+Stanchion has an **experimental** WASM backend that loads WASM plugins alongside Lua
+ones. Both run in the same registry and are reached through the same
+[`Stanchion`](../bindings.md) API, with the manifest's `plugin_type` field selecting
+the runtime.
+
+It is early and deliberately minimal. Today it marshals only scalar numbers across the
+boundary — an export takes and returns `i32`/`i64`/`f32`/`f64` and nothing else. There
+is no string, bytes, list or map marshalling yet (those need linear-memory access that
+is not wired up), so a contract like the `String`-typed greeter used elsewhere in these
+guides cannot run under WASM as written. Lua remains the fully supported runtime; reach
+for WASM when a plugin's interface is numeric, or to experiment.
 
 ## Quick start
 
@@ -22,7 +30,7 @@ use stanchion_ffi::{Stanchion, PluginInstance};
 use stanchion_wasm::WasmBackend;
 
 Stanchion::builder()
-    .backend(Box::new(WasmBackend))
+    .backend(Box::new(WasmBackend::new()))
     .build()?;
 ```
 
@@ -36,17 +44,22 @@ Stanchion::builder()
 ## The WASM interface
 
 A WASM plugin exports functions by name. Arguments and return values use the same
-[`Value`] type that Lua plugins use, with these constraints:
+[`Value`] type that Lua plugins use, but only the scalar numeric variants cross the
+boundary today. An out-of-range `Int` (one that does not fit the target `i32`) is
+rejected rather than silently truncated, and anything unsupported is refused with an
+error rather than passed as a wrong value:
 
-| Value type  | WASM type |
-|-------------|-----------|
-| `Int`       | `i32` / `i64` |
-| `Float`     | `f32` / `f64` |
-| `Str`       | Requires memory access (advanced) |
-| `Nil`       | No return value |
-| `Bool`      | Not supported |
-| `Bytes`     | Not supported |
-| `List` / `Map` | Not yet supported |
+| `Value` variant | WASM type | Status |
+|-----------------|-----------|--------|
+| `Int`           | `i32` / `i64` | supported |
+| `Float`         | `f32` / `f64` | supported |
+| `Nil`           | — (no return value) | supported as an empty result |
+| `Str`           | needs linear-memory marshalling | not supported yet |
+| `Bool`          | — | not supported |
+| `List` / `Map`  | needs linear-memory marshalling | not supported yet |
+
+A call whose argument count does not match the export's signature, or that passes an
+unsupported variant, fails before the function runs.
 
 ## Backend architecture
 
@@ -60,8 +73,9 @@ pub trait PluginBackend: Send + Sync {
 }
 ```
 
-Implement it for any runtime — WASM, Python, JavaScript — and register it with
-[`Builder::backend`]. The Lua backend is built-in and registered automatically.
+The Lua backend is built-in and registered automatically; the WASM backend is the one
+other implementation that ships today. The trait is the seam a future runtime would
+plug into — implement it and register the backend with [`Builder::backend`].
 
 ## Isolation
 

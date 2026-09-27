@@ -133,18 +133,23 @@ pub fn write<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io::Result<
 ///
 /// Blank lines are skipped so a stream stays readable when something echoes one.
 pub fn read<R: BufRead>(reader: &mut R) -> io::Result<Option<Incoming>> {
-    let mut line = String::new();
+    let mut line = Vec::new();
     loop {
         line.clear();
         let read = read_limited(reader, &mut line)?;
         if read == 0 {
             return Ok(None);
         }
-        if line.trim().is_empty() {
+        // Decode the whole line at once: a multi-byte UTF-8 sequence can straddle two
+        // pipe reads, so decoding per chunk would corrupt it. Reject invalid UTF-8
+        // rather than lossily replacing it, since a JSON-RPC frame must be valid UTF-8.
+        let text = std::str::from_utf8(&line)
+            .map_err(|err| io::Error::other(format!("frame is not valid UTF-8: {err}")))?;
+        if text.trim().is_empty() {
             continue;
         }
 
-        let value: Json = serde_json::from_str(&line).map_err(io::Error::other)?;
+        let value: Json = serde_json::from_str(text).map_err(io::Error::other)?;
         // Shape, not a tag: that is how JSON-RPC separates the two.
         let has_method = value.get("method").is_some();
         let has_reply = value.get("result").is_some() || value.get("error").is_some();
@@ -159,8 +164,11 @@ pub fn read<R: BufRead>(reader: &mut R) -> io::Result<Option<Incoming>> {
     }
 }
 
-/// Reads a line, refusing one long enough to exhaust memory.
-fn read_limited<R: BufRead>(reader: &mut R, out: &mut String) -> io::Result<usize> {
+/// Reads a line's raw bytes, refusing one long enough to exhaust memory.
+///
+/// Bytes are accumulated undecoded; the caller decodes the completed line in one shot,
+/// so a UTF-8 sequence split across two reads is not mangled.
+fn read_limited<R: BufRead>(reader: &mut R, out: &mut Vec<u8>) -> io::Result<usize> {
     let mut total = 0usize;
     loop {
         let available = reader.fill_buf()?;
@@ -170,14 +178,14 @@ fn read_limited<R: BufRead>(reader: &mut R, out: &mut String) -> io::Result<usiz
         match available.iter().position(|byte| *byte == b'\n') {
             Some(end) => {
                 let chunk = available.get(..=end).unwrap_or_default();
-                out.push_str(&String::from_utf8_lossy(chunk));
+                out.extend_from_slice(chunk);
                 let consumed = end.saturating_add(1);
                 reader.consume(consumed);
                 return Ok(total.saturating_add(consumed));
             }
             None => {
                 let len = available.len();
-                out.push_str(&String::from_utf8_lossy(available));
+                out.extend_from_slice(available);
                 reader.consume(len);
                 total = total.saturating_add(len);
                 if total > MAX_FRAME_BYTES {
@@ -271,6 +279,42 @@ mod tests {
     fn malformed_json_is_an_error_not_a_silent_skip() {
         let mut cursor = io::Cursor::new(b"{not json}\n".to_vec());
         assert!(read(&mut cursor).is_err());
+    }
+
+    /// A multi-byte character split across two reads must survive: the bytes are
+    /// decoded once the whole line is in hand, not per chunk. See #48.
+    #[test]
+    fn a_multibyte_char_split_across_reads_round_trips() {
+        // A `BufRead` whose internal buffer is one byte, so every fill_buf hands back a
+        // single byte and every multi-byte sequence straddles a boundary.
+        struct OneByteAtATime<R>(io::BufReader<R>);
+        let request = Request::new(1, "plugins/call", serde_json::json!({ "text": "héllo café ☃" }));
+        let mut buffer = Vec::new();
+        write(&mut buffer, &request).unwrap();
+
+        let inner = io::BufReader::with_capacity(1, io::Cursor::new(buffer));
+        let mut reader = OneByteAtATime(inner);
+        impl<R: io::Read> BufRead for OneByteAtATime<R> {
+            fn fill_buf(&mut self) -> io::Result<&[u8]> {
+                self.0.fill_buf()
+            }
+            fn consume(&mut self, amount: usize) {
+                self.0.consume(amount)
+            }
+        }
+        impl<R: io::Read> io::Read for OneByteAtATime<R> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.0.read(buf)
+            }
+        }
+
+        match read(&mut reader).unwrap().unwrap() {
+            Incoming::Request(got) => {
+                let text = got.params.unwrap();
+                assert_eq!(text["text"], serde_json::json!("héllo café ☃"));
+            }
+            other => panic!("expected a request, got {other:?}"),
+        }
     }
 
     #[test]

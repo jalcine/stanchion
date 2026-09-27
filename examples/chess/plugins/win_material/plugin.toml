@@ -1,0 +1,7 @@
+name = "win_material"
+version = "1.0.0"
+
+[config]
+# Ignore captures worth less than this, so the plugin does not chase pawns when a
+# piece is on offer. Raise it for a pickier engine.
+min_value = 1

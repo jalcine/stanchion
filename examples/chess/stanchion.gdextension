@@ -1,0 +1,26 @@
+; Registers the stanchion-godot binding as a GDExtension.
+;
+; The library paths are relative to this project (res:// == examples/chess), pointing
+; up at the workspace's cargo target directory. Build it with, from the repo root:
+;
+;     cargo build -p stanchion-godot                 # debug
+;     cargo build -p stanchion-godot --release       # release
+;
+; then open this project in Godot 4.2+.
+
+[configuration]
+
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.2
+reloadable = true
+
+[libraries]
+
+linux.debug.x86_64 = "res://../../target/debug/libstanchion_godot.so"
+linux.release.x86_64 = "res://../../target/release/libstanchion_godot.so"
+macos.debug = "res://../../target/debug/libstanchion_godot.dylib"
+macos.release = "res://../../target/release/libstanchion_godot.dylib"
+macos.debug.arm64 = "res://../../target/debug/libstanchion_godot.dylib"
+macos.release.arm64 = "res://../../target/release/libstanchion_godot.dylib"
+windows.debug.x86_64 = "res://../../target/debug/stanchion_godot.dll"
+windows.release.x86_64 = "res://../../target/release/stanchion_godot.dll"

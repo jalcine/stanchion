@@ -1,0 +1,6 @@
+name = "center_control"
+version = "1.0.0"
+
+[config]
+# Only worth playing while the opening is still being set up.
+until_move = 8

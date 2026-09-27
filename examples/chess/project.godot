@@ -1,0 +1,24 @@
+; Godot 4 project file for the Stanchion Chess example.
+; Engine-managed; edited by hand here only to set the essentials.
+
+config_version=5
+
+[application]
+
+config/name="Stanchion Chess"
+config/description="Chess whose rules live in Godot and whose plays are sandboxed Lua plugins loaded through Stanchion."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.2")
+
+[display]
+
+window/size/viewport_width=1120
+window/size/viewport_height=700
+window/size/resizable=true
+; Scale the whole game up or down to fill a resized window, keeping the aspect ratio.
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+
+[rendering]
+
+textures/canvas_textures/default_texture_filter=0

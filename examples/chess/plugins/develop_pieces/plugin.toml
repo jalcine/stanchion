@@ -1,0 +1,5 @@
+name = "develop_pieces"
+version = "1.0.0"
+
+[config]
+until_move = 12

@@ -19,7 +19,7 @@ capabilities and signatures on the other.
 | [`stanchion-remote`](crates/stanchion-remote)     | out-of-process hosting: JSON-RPC protocol, client, host                         |
 | [`stanchion-ffi`](crates/stanchion-ffi)           | the seam the language bindings sit on: dynamic calls, values, capabilities      |
 | [`stanchion-wasm`](crates/stanchion-wasm)         | a WASM runtime backend for <code>stanchion-ffi</code>                              |
-| [`bindings/`](bindings)                           | Python, Kotlin/Swift and Ruby over that seam                                    |
+| [`bindings/`](bindings)                           | Python, Kotlin/Swift, Ruby and Godot (GDScript) over that seam                   |
 
 Depend on `stanchion` and pick features; generated code refers to `::stanchion`, so use
 the macro through the facade.

@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Out-of-process hosting · stanchion</title>
-    <meta property="og:image" content="../assets/stanchion-og.jpg">
-<meta name="description" content="Out-of-process hosting — stanchion, Lua plugins for Rust applications.">
+<meta name="description" content="Out-of-process hosting — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:title" content="Out-of-process hosting · stanchion">
+<meta property="og:description" content="Out-of-process hosting — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:type" content="article">
+<meta property="og:image" content="../assets/stanchion-og.jpg">
 <link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -30,7 +33,7 @@
     stanchion
   </a>
   <span class="spacer"></span>
-  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html" aria-current="page">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html" aria-current="page">Out-of-process hosting</a><a href="wasm.html">WASM plugins</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
   <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
 </header>
 
@@ -112,9 +115,14 @@ let mut remote = RemoteRegistry::launch(options)?.on_callback(|call: &amp;Callba
 </code></pre>
 <p>Three properties worth knowing:</p>
 <ul>
-<li><strong>The approved grant travels with every call.</strong> <code>call.grant</code> carries the parameters
-the host’s policy approved, so your application re-checks rather than trusting the
-host to have narrowed correctly.</li>
+<li><strong>The host process is untrusted; enforce your own policy.</strong> Every field of a
+<code>CallbackCall</code> — <code>plugin</code>, <code>capability</code>, <code>grant</code> and <code>args</code> — comes from the child, so
+a child a plugin has compromised can send any <code>plugin</code> name, any <code>capability</code> and any
+<code>grant</code>. “Re-checking” <code>call.grant</code> proves nothing, because the child chose it. Key
+your decision on what <em>your application</em> approved for a given <code>plugin</code>/<code>capability</code>,
+and treat <code>call.grant</code> as an untrusted hint. <code>RemoteRegistry::allow_capabilities</code> adds
+a coarse client-side gate, and a per-call deadline (<code>RemoteOptions::call_timeout</code>,
+default 30 s) kills a host that stops responding rather than blocking your thread.</li>
 <li><strong>Declaration still governs.</strong> A plugin that does not request <code>kv</code> in its manifest
 never gets it, even though the host offers it — capabilities stay declared-only
 across the process line.</li>

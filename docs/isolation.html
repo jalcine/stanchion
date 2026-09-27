@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Isolation · stanchion</title>
-    <meta property="og:image" content="../assets/stanchion-og.jpg">
-<meta name="description" content="Isolation — stanchion, Lua plugins for Rust applications.">
+<meta name="description" content="Isolation — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:title" content="Isolation · stanchion">
+<meta property="og:description" content="Isolation — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:type" content="article">
+<meta property="og:image" content="../assets/stanchion-og.jpg">
 <link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -30,7 +33,7 @@
     stanchion
   </a>
   <span class="spacer"></span>
-  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html" aria-current="page">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html" aria-current="page">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="wasm.html">WASM plugins</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
   <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
 </header>
 
@@ -61,10 +64,17 @@ let registry = Registry::grouped(Lua::new(), policy);
 <tr><td>Cost</td><td>one state</td><td>one state per group</td><td>one state per plugin</td></tr>
 </tbody></table>
 <p>Under <strong>shared</strong> isolation each chunk is evaluated with its own environment table whose
-<code>__index</code> is the real globals: a plugin <strong>reads</strong> globals normally but its <strong>writes</strong>
-stay local, so one plugin cannot redefine <code>string.format</code> for the others. That is
-namespace hygiene, not a security boundary — <code>rawset(_G, ...)</code> still reaches the shared
-state, and nothing bounds CPU or memory.</p>
+<code>__index</code> is the real globals: a plugin <strong>reads</strong> globals normally, and a plain global
+assignment (<code>x = ...</code>) stays local to its environment. Each environment also gets its
+own shallow copy of the core library tables (<code>string</code>, <code>table</code>, <code>math</code>, <code>coroutine</code>,
+<code>os</code>, <code>io</code>), so <code>string.format = ...</code> mutates only that plugin’s copy.</p>
+<p>This is namespace hygiene, <strong>not a security boundary.</strong> In one shared state the string
+metatable, the method tables reached by <code>s:upper()</code> syntax, and every value passed
+between plugins are the same objects, so a determined plugin can still reach and mutate
+what others use (for example through <code>getmetatable("")</code>). <code>rawset(_G, ...)</code> reaches the
+shared globals directly, and nothing bounds CPU or memory. Run untrusted plugins under
+<strong>per-plugin</strong> isolation, where each plugin has its own <code>Lua</code> state and none of this is
+shared.</p>
 <p>Under <strong>per-plugin</strong> isolation the boundary is real. Memory and instruction limits are
 properties of a <code>Lua</code>, which is exactly why they cannot be applied inside a shared
 state. The price is that Lua values cannot cross states, so a <code>[dependencies]</code> entry

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WASM plugins · stanchion</title>
+<meta name="description" content="WASM plugins — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:title" content="WASM plugins · stanchion">
+<meta property="og:description" content="WASM plugins — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:type" content="article">
+<meta property="og:image" content="../assets/stanchion-og.jpg">
+<link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/600.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5.3.0/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/webawesome.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist/styles/themes/default.css">
+<script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.13.0/dist-cdn/webawesome.loader.js"></script>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="../index.html">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M8 4h4v24H8z" fill="currentColor" opacity=".9"/>
+      <path d="M20 4h4v24h-4z" fill="currentColor" opacity=".9"/>
+      <path d="M12 10c2.5 3 5.5 3 8 0" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle cx="10" cy="4" r="2.5" fill="currentColor"/><circle cx="22" cy="4" r="2.5" fill="currentColor"/>
+    </svg>
+    stanchion
+  </a>
+  <span class="spacer"></span>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="wasm.html" aria-current="page">WASM plugins</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html">Testing</a></nav>
+  <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
+</header>
+
+<main>
+  <article class="prose">
+    <h1 id="wasm-plugins">WASM plugins</h1>
+<p>Stanchion has an <strong>experimental</strong> WASM backend that loads WASM plugins alongside Lua
+ones. Both run in the same registry and are reached through the same
+<a href="https://github.com/jalcine/stanchion/blob/main/bindings.md"><code>Stanchion</code></a> API, with the manifest’s <code>plugin_type</code> field selecting
+the runtime.</p>
+<p>It is early and deliberately minimal. Today it marshals only scalar numbers across the
+boundary — an export takes and returns <code>i32</code>/<code>i64</code>/<code>f32</code>/<code>f64</code> and nothing else. There
+is no string, bytes, list or map marshalling yet (those need linear-memory access that
+is not wired up), so a contract like the <code>String</code>-typed greeter used elsewhere in these
+guides cannot run under WASM as written. Lua remains the fully supported runtime; reach
+for WASM when a plugin’s interface is numeric, or to experiment.</p>
+<h2 id="quick-start">Quick start</h2>
+<pre><code class="language-toml"># plugins/my_wasm_plugin/plugin.toml
+name = "my_wasm_plugin"
+version = "0.1.0"
+plugin_type = "wasm"
+entry = "plugin.wasm"
+</code></pre>
+<p>Register the WASM backend before building the host:</p>
+<pre><code class="language-rust">use std::sync::Arc;
+use stanchion_ffi::{Stanchion, PluginInstance};
+use stanchion_wasm::WasmBackend;
+
+Stanchion::builder()
+    .backend(Box::new(WasmBackend::new()))
+    .build()?;
+</code></pre>
+<h2 id="manifest-fields">Manifest fields</h2><table><thead><tr><th>Field</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>plugin_type</code></td><td><code>"wasm"</code> selects the WASM backend</td></tr>
+<tr><td><code>entry</code></td><td>Path to the <code>.wasm</code> binary, relative to the plugin directory</td></tr>
+</tbody></table>
+<h2 id="the-wasm-interface">The WASM interface</h2>
+<p>A WASM plugin exports functions by name. Arguments and return values use the same
+<a href="https://docs.rs/stanchion-ffi/latest/stanchion_ffi/enum.Value.html"><code>Value</code></a> type that Lua plugins use, but only the scalar numeric variants cross the
+boundary today. An out-of-range <code>Int</code> (one that does not fit the target <code>i32</code>) is
+rejected rather than silently truncated, and anything unsupported is refused with an
+error rather than passed as a wrong value:</p>
+<table><thead><tr><th><code>Value</code> variant</th><th>WASM type</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>Int</code></td><td><code>i32</code> / <code>i64</code></td><td>supported</td></tr>
+<tr><td><code>Float</code></td><td><code>f32</code> / <code>f64</code></td><td>supported</td></tr>
+<tr><td><code>Nil</code></td><td>— (no return value)</td><td>supported as an empty result</td></tr>
+<tr><td><code>Str</code></td><td>needs linear-memory marshalling</td><td>not supported yet</td></tr>
+<tr><td><code>Bool</code></td><td>—</td><td>not supported</td></tr>
+<tr><td><code>List</code> / <code>Map</code></td><td>needs linear-memory marshalling</td><td>not supported yet</td></tr>
+</tbody></table>
+<p>A call whose argument count does not match the export’s signature, or that passes an
+unsupported variant, fails before the function runs.</p>
+<h2 id="backend-architecture">Backend architecture</h2>
+<p>The <a href="https://docs.rs/stanchion-ffi/latest/stanchion_ffi/trait.PluginBackend.html"><code>PluginBackend</code></a> trait makes the dispatch extensible:</p>
+<pre><code class="language-rust">pub trait PluginBackend: Send + Sync {
+    fn plugin_type(&amp;self) -&gt; PluginType;
+    fn load(&amp;self, manifest: &amp;Manifest, dir: &amp;Path)
+        -&gt; Result&lt;Box&lt;dyn PluginInstance&gt;&gt;;
+}
+</code></pre>
+<p>The Lua backend is built-in and registered automatically; the WASM backend is the one
+other implementation that ships today. The trait is the seam a future runtime would
+plug into — implement it and register the backend with <a href="https://docs.rs/stanchion-ffi/latest/stanchion_ffi/struct.Builder.html#method.backend"><code>Builder::backend</code></a>.</p>
+<h2 id="isolation">Isolation</h2>
+<p>WASM plugins run in their own sandboxed instance via <a href="https://wasmtime.dev/">wasmtime</a>, under host-set
+resource limits (<a href="https://docs.rs/stanchion-wasm/latest/stanchion_wasm/struct.WasmLimits.html"><code>WasmLimits</code></a>): a per-call fuel ceiling, so an infinite loop traps
+instead of hanging the calling thread, and a linear-memory ceiling enforced by a
+store limiter. The limits are the host’s — registered on the backend with
+<a href="https://docs.rs/stanchion-wasm/latest/stanchion_wasm/struct.WasmBackend.html#method.with_limits"><code>WasmBackend::with_limits</code></a> — and a plugin manifest’s <code>budget.max_instructions</code> may
+only <em>lower</em> the fuel ceiling, never raise it. <code>WasmBackend::new()</code> uses secure
+defaults (1e9 fuel, 64 MiB). Plugins cannot reach the host filesystem unless WASI
+capabilities are explicitly granted through the capability system.</p>
+
+    <div class="pagefoot">
+      <a href="https://github.com/jalcine/stanchion/blob/main/docs/wasm.md">Edit this page on GitHub</a> · <a href="index.html">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer>
+  stanchion · dual-licensed
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-MIT">MIT</a> or
+  <a href="https://github.com/jalcine/stanchion/blob/main/LICENSE-APACHE">Apache-2.0</a>
+</footer>
+
+</body>
+</html>

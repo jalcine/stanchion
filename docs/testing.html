@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Testing · stanchion</title>
-    <meta property="og:image" content="../assets/stanchion-og.jpg">
-<meta name="description" content="Testing — stanchion, Lua plugins for Rust applications.">
+<meta name="description" content="Testing — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:title" content="Testing · stanchion">
+<meta property="og:description" content="Testing — stanchion, securely typed plugin infrastructure for applications and library.">
+<meta property="og:type" content="article">
+<meta property="og:image" content="../assets/stanchion-og.jpg">
 <link rel="icon" href="../assets/stanchion.svg" type="image/svg+xml">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -30,7 +33,7 @@
     stanchion
   </a>
   <span class="spacer"></span>
-  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html" aria-current="page">Testing</a></nav>
+  <nav class="guides" aria-label="Guides"><a href="lua-class.html">Typed class bindings</a><a href="registry.html">Plugin registry</a><a href="isolation.html">Isolation</a><a href="capabilities.html">Capabilities</a><a href="signatures.html">Signatures</a><a href="dependencies.html">Dependency chains</a><a href="luarocks.html">LuaRocks</a><a href="remote.html">Out-of-process hosting</a><a href="wasm.html">WASM plugins</a><a href="distribution.html">Distribution</a><a href="index-server.html">Serving an index</a><a href="bindings.html">Language bindings</a><a href="testing.html" aria-current="page">Testing</a></nav>
   <wa-button size="small" appearance="outlined" href="https://github.com/jalcine/stanchion">GitHub</wa-button>
 </header>
 
@@ -79,6 +82,19 @@ longer works:</p>
 </code></pre>
 <p>Each declares <code>required-features</code>, so a build with a narrower feature set skips
 the ones it cannot compile rather than failing.</p>
+<h2 id="coverage">Coverage</h2>
+<p>Code coverage can be generated using <a href="https://github.com/xd009642/tarpaulin">cargo-tarpaulin</a>:</p>
+<pre><code class="language-sh">mise run test:coverage
+</code></pre>
+<p>This runs the full test suite and generates:</p>
+<ul>
+<li>HTML report: <code>target/coverage/index.html</code></li>
+<li>Lcov report: <code>target/coverage/lcov.info</code> (for tools like Codecov)</li>
+</ul>
+<p>For faster iteration (excludes slow tests like luarocks and UI tests):</p>
+<pre><code class="language-sh">mise run test:coverage:quick
+</code></pre>
+<p>The coverage job runs automatically in CI and produces an artifact named <code>coverage</code>.</p>
 <hr />
 <p><a href="../index.html#documentation">← Documentation index</a></p>
 

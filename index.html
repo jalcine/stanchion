@@ -58,9 +58,11 @@
     <h2 style="margin-top:0">Describe the contract in <span class="word-rotator" data-words='["Rust"]'>Rust</span></h2>
     <p style="color:var(--ink-soft)">
       Write a contract. In Rust the <code>#[lua_class]</code> macro generates the class
-      handle, instance handle, and conversions — foreign-language bindings are planned
-      via the <code>stanchion-ffi</code> crate with the same guarantees. Either way,
-      validation runs when a plugin <em>loads</em>, not when a method is finally called at 3am.
+      handle, instance handle, and conversions. The contract itself is Rust-only —
+      no foreign language supplies one — but Python, Ruby and Kotlin applications can
+      <em>host</em> plugins through the <code>stanchion-ffi</code> bindings, resolving
+      methods by name. Either way, a plugin's methods are checked when it
+      <em>loads</em>, not when one is finally called at 3am.
     </p>
 <pre><code>#[lua_class]
 pub trait Greeter {
@@ -79,10 +81,12 @@ pub trait Greeter {
   <div>
     <h2 style="margin-top:0">Implement it in Lua</h2>
     <p style="color:var(--ink-soft)">
-      An ordinary Lua class. Every method the contract expects is verified at
-      load time — missing fields surface before the first call. A native
-      implementation in any supported language lives alongside Lua in the same
-      <code>Vec</code>, and the dispatch layer resolves to whichever one you gave it.
+      An ordinary Lua class. Every method the contract expects is verified at load
+      time — a missing field surfaces before the first call. A native implementation
+      in Rust lives alongside Lua in the same <code>Vec</code>, and the dispatch layer
+      resolves to whichever one you gave it. An <a href="docs/wasm.html">experimental
+      WASM backend</a> loads <code>.wasm</code> plugins too, though today it marshals
+      only numbers across the boundary.
     </p>
 <pre><code>local Greeter = {}
 Greeter.__index = Greeter
@@ -173,12 +177,11 @@ return Greeter</code></pre>
     <thead><tr><th>Crate</th><th>Holds</th></tr></thead>
     <tbody>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion"><code>stanchion</code></a></td><td>the facade, and the <code>plugin-host</code> binary</td></tr>
-      <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-abi"><code>stanchion-abi</code></a></td><td>the <code>#[lua_class]</code> contract</td></tr>
+      <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-lua"><code>stanchion-lua</code></a></td><td>the <code>#[lua_class]</code> contract, LuaRocks trees and version constraints</td></tr>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-macros"><code>stanchion-macros</code></a></td><td>the attribute macro</td></tr>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-ffi"><code>stanchion-ffi</code></a></td><td>a dynamic facade for building foreign-language bindings (Python, Kotlin, …)</td></tr>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-wasm"><code>stanchion-wasm</code></a></td><td>a WASM runtime backend for <code>stanchion-ffi</code></td></tr>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-registry"><code>stanchion-registry</code></a></td><td>manifests, sandboxing, capabilities, signatures, reload</td></tr>
-      <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-lua"><code>stanchion-lua</code></a></td><td>Lua plugin loading and runtime</td></tr>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-sigstore"><code>stanchion-sigstore</code></a></td><td>keyless verification, quarantining a large graph</td></tr>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-remote"><code>stanchion-remote</code></a></td><td>out-of-process hosting over JSON-RPC 2.0</td></tr>
       <tr><td><a href="https://github.com/jalcine/stanchion/tree/main/crates/stanchion-dist"><code>stanchion-dist</code></a></td><td>packages, the index protocol, pinned installs</td></tr>
@@ -191,7 +194,7 @@ return Greeter</code></pre>
 <section class="band" id="documentation">
   <h2>Guides</h2>
   <p class="sub">Rendered from the repository's own documentation, so they cannot drift from it.</p>
-  <nav class="guides" aria-label="Guides"><a href="docs/lua-class.html">Typed class bindings</a><a href="docs/registry.html">Plugin registry</a><a href="docs/isolation.html">Isolation</a><a href="docs/capabilities.html">Capabilities</a><a href="docs/signatures.html">Signatures</a><a href="docs/dependencies.html">Dependency chains</a><a href="docs/luarocks.html">LuaRocks</a><a href="docs/remote.html">Out-of-process hosting</a><a href="docs/distribution.html">Distribution</a><a href="docs/index-server.html">Serving an index</a><a href="docs/bindings.html">Language bindings</a><a href="docs/testing.html">Testing</a></nav>
+  <nav class="guides" aria-label="Guides"><a href="docs/lua-class.html">Typed class bindings</a><a href="docs/registry.html">Plugin registry</a><a href="docs/isolation.html">Isolation</a><a href="docs/capabilities.html">Capabilities</a><a href="docs/signatures.html">Signatures</a><a href="docs/dependencies.html">Dependency chains</a><a href="docs/luarocks.html">LuaRocks</a><a href="docs/remote.html">Out-of-process hosting</a><a href="docs/wasm.html">WASM plugins</a><a href="docs/distribution.html">Distribution</a><a href="docs/index-server.html">Serving an index</a><a href="docs/bindings.html">Language bindings</a><a href="docs/testing.html">Testing</a></nav>
 </section>
 
 </main>

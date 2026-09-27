@@ -9,6 +9,7 @@
 <meta property="og:title" content="stanchion">
 <meta property="og:description" content="Securely typed plugin infrastructure for applications and library. Typed contracts and dependency wiring on one side; sandboxing, capabilities and signatures on the other.">
 <meta property="og:type" content="website">
+<meta property="og:image" content="assets/stanchion-og.jpg">
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/fira-sans@5.3.0/400.css">
@@ -54,14 +55,14 @@
 
 <div class="split">
   <div>
-    <h2 style="margin-top:0">Describe the contract in <span class="word-rotator" data-words='["Rust","Python","Kotlin","JavaScript","Go","Swift","Zig"]'>Rust</span></h2>
+    <h2 style="margin-top:0">Describe the contract in <span class="word-rotator" data-words='["Rust"]'>Rust</span></h2>
     <p style="color:var(--ink-soft)">
       Write a contract. In Rust the <code>#[lua_class]</code> macro generates the class
-      handle, instance handle, and conversions — Python and Kotlin hosts hook in via
-      the <code>stanchion-ffi</code> crate with the same guarantees. Any language
-      that compiles to WASM can implement the plugin from the other side.
-      Either way, validation runs when a plugin <em>loads</em>, not when a method
-      is finally called at 3am.
+      handle, instance handle, and conversions. The contract itself is Rust-only —
+      no foreign language supplies one — but Python, Ruby and Kotlin applications can
+      <em>host</em> plugins through the <code>stanchion-ffi</code> bindings, resolving
+      methods by name. Either way, a plugin's methods are checked when it
+      <em>loads</em>, not when one is finally called at 3am.
     </p>
 <pre><code>#[lua_class]
 pub trait Greeter {
@@ -78,16 +79,16 @@ pub trait Greeter {
 }</code></pre>
   </div>
   <div>
-    <h2 style="margin-top:0">Implement it in Lua, or compile to WASM</h2>
+    <h2 style="margin-top:0">Implement it in Lua</h2>
     <p style="color:var(--ink-soft)">
-      An ordinary Lua class, or a binary compiled to WASM from any language —
-      JavaScript, Swift, Go, Zig, Rust itself. Every method the contract expects
-      is verified at load time. Native implementations in any supported runtime
-      live alongside each other in the same <code>Vec</code>, and the dispatch
-      layer resolves to whichever one you gave it.
+      An ordinary Lua class. Every method the contract expects is verified at load
+      time — a missing field surfaces before the first call. A native implementation
+      in Rust lives alongside Lua in the same <code>Vec</code>, and the dispatch layer
+      resolves to whichever one you gave it. An <a href="docs/wasm.html">experimental
+      WASM backend</a> loads <code>.wasm</code> plugins too, though today it marshals
+      only numbers across the boundary.
     </p>
-<pre><code>-- Lua:
-local Greeter = {}
+<pre><code>local Greeter = {}
 Greeter.__index = Greeter
 
 function Greeter.new(greeting)
@@ -98,15 +99,7 @@ function Greeter:greet(who)
   return self.greeting .. ", " .. who
 end
 
-return Greeter
-</code></pre>
-<pre class="no-lang"><code># manifest (any WASM language):
-name = "greeter"
-plugin_type = "wasm"
-entry = "greeter.wasm"
-
-# The .wasm exports greet(…) and greeting, exactly
-# like the Lua class — same calls, different runtime.</code></pre>
+return Greeter</code></pre>
   </div>
 </div>
 

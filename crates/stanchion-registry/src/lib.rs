@@ -472,9 +472,22 @@ impl<C: LuaClass> Registry<C> {
 
     /// Declares everything plugins can reach.
     ///
-    /// Runs once, before the first plugin loads. Capabilities registered here are
+    /// Runs before the first plugin loads. Capabilities registered here are
     /// gated: a plugin gets one only by declaring it and passing [`Policy`]. Anything
     /// registered with [`HostSetup::ambient`] is ungated and reaches every plugin.
+    ///
+    /// **Additive.** Calling `with_setup` more than once accumulates onto the
+    /// capabilities already registered rather than replacing them, so a host built
+    /// by a helper (e.g. the remote host's `build_registry`) can be extended with
+    /// application-specific capabilities:
+    ///
+    /// ```ignore
+    /// build_registry(&config, &channel)?
+    ///     .with_setup(|host| {
+    ///         host.capability("xml", |lua, _grant| { /* ... */ });
+    ///         Ok(())
+    ///     })
+    /// ```
     ///
     /// ```ignore
     /// Registry::isolated(Lua::new(), Sandbox::restricted())
@@ -491,9 +504,11 @@ impl<C: LuaClass> Registry<C> {
     ///     .with_policy(Rules::deny_all().allow("log"))
     /// ```
     pub fn with_setup(mut self, setup: impl FnOnce(&mut HostSetup) -> mlua::Result<()>) -> Self {
-        let mut host_setup = HostSetup::default();
-        // Collected immediately so `audit` can report the host's offer before any
-        // plugin loads. A failure is held and surfaced by the next fallible call.
+        // Start from what earlier `with_setup` calls registered so capabilities
+        // accumulate. Collected immediately so `audit` can report the host's offer
+        // before any plugin loads; a failure is held and surfaced by the next
+        // fallible call.
+        let mut host_setup = std::mem::take(&mut self.host_setup);
         match setup(&mut host_setup) {
             Ok(()) => self.host_setup = host_setup,
             Err(err) => self.setup_error = Some(err),

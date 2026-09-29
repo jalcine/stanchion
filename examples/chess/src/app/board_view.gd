@@ -29,32 +29,15 @@ const Geo = preload("res://src/board/geometry.gd")
 
 var game = null  # game.gd — untyped to keep the dependency one-directional
 var board_font: Font
-var overlay: Node2D
-var pieces_layer: Node2D
+
+@onready var overlay: Node2D = $Overlay
+@onready var pieces_layer: Node2D = $Pieces
 
 
 func setup(g) -> void:
 	game = g
-	texture = load("res://assets/board.png")
-	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	stretch_mode = TextureRect.STRETCH_SCALE
-	custom_minimum_size = Vector2(BOARD_PX, BOARD_PX)
-	size = Vector2(BOARD_PX, BOARD_PX)
-	position = Vector2(24, 24)
-	mouse_filter = Control.MOUSE_FILTER_STOP
-	gui_input.connect(_on_gui_input)
+	# The one thing the scene cannot declare: a font comes from the theme at runtime.
 	board_font = ThemeDB.get_fallback_font()
-
-	# Highlights below, pieces on top, both drawn by hand so glyphs land dead-centre in
-	# their squares (a Label centres on the font's line box, not the glyph, so chess
-	# glyphs drift high and left).
-	overlay = Node2D.new()
-	overlay.draw.connect(_draw_overlay)
-	add_child(overlay)
-
-	pieces_layer = Node2D.new()
-	pieces_layer.draw.connect(_draw_pieces)
-	add_child(pieces_layer)
 
 
 func refresh() -> void:

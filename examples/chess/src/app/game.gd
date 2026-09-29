@@ -24,31 +24,14 @@ var selected_moves: Array = []  # legal moves from the selected square
 var hint_move: Dictionary = {}  # the top combination suggestion for the human
 var ai_last_move: Dictionary = {}  # from/to of Black's last move, tinted while shown
 var game_over := ""
-
-var view: BoardView
-var panel: SidePanel
 var move_log: Array[String] = []
+
+@onready var view: BoardView = %BoardView
+@onready var panel: SidePanel = %SidePanel
 
 
 func _ready() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
-	var bg := ColorRect.new()
-	bg.color = Color(0.09, 0.10, 0.13)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
-
-	view = BoardView.new()
 	view.setup(self)
-	add_child(view)
-	view.square_picked.connect(_on_square)
-
-	panel = SidePanel.new()
-	panel.setup(BoardView.BOARD_PX, difficulty, Config.DIFFICULTY.keys())
-	add_child(panel)
-	panel.difficulty_chosen.connect(_on_difficulty)
-	panel.restart_requested.connect(_on_restart)
-	panel.reload_requested.connect(_on_reload)
-
 	var err: String = client.open_engine(ProjectSettings.globalize_path("res://plugins"))
 	if err != "":
 		_note(err)

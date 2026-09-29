@@ -10,7 +10,8 @@
 ## while the player is shown every combination available to them as a hint.
 
 extends Control
-const ChessBoard = preload("res://src/board.gd")
+const ChessBoard = preload("res://src/board/board.gd")
+const Geo = preload("res://src/board/geometry.gd")
 
 # The board art is 142×142 with a 7px frame, so the playable 8×8 grid is 16px cells
 # inset by 7px (7 + 8*16 + 7 = 142). We render the whole texture at BOARD_PX and derive
@@ -273,7 +274,7 @@ func _square_at(pos: Vector2) -> int:
 
 
 func _cell_pos(sq: int) -> Vector2:
-	return Vector2(ORIGIN + ChessBoard.file_of(sq) * CELL, ORIGIN + (7 - ChessBoard.rank_of(sq)) * CELL)
+	return Vector2(ORIGIN + Geo.file_of(sq) * CELL, ORIGIN + (7 - Geo.rank_of(sq)) * CELL)
 
 
 # ---- rendering --------------------------------------------------------------
@@ -392,7 +393,7 @@ func _describe(move: Dictionary, color: String) -> String:
 	var promo: String = ""
 	if move.get("promote", "") != "":
 		promo = "=" + str(move["promote"])
-	return "%s%s%s%s%s" % [prefix, ChessBoard.square_name(move["from"]), take, ChessBoard.square_name(move["to"]), promo]
+	return "%s%s%s%s%s" % [prefix, Geo.square_name(move["from"]), take, Geo.square_name(move["to"]), promo]
 
 
 # ---- UI construction (kept in code so the .tscn stays a single node) --------

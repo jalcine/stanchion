@@ -8,7 +8,6 @@
 ## Squares are indexed 0..63 as `rank * 8 + file`, with rank 0 the white back rank
 ## (a1..h1) and file 0 the a-file. Pieces are two-character codes like "wP" or "bK";
 ## an empty square is the empty string.
-class_name ChessBoard
 extends RefCounted
 
 ## Centipawn-ish worth of each piece type, used to rank captures. The king is scored
@@ -46,8 +45,8 @@ func setup_start() -> void:
 	history_san = []
 
 ## A deep copy, so a move can be tried without disturbing the live game.
-func clone() -> ChessBoard:
-	var other := ChessBoard.new()
+func clone():
+	var other = get_script().new()
 	other.squares = squares.duplicate()
 	other.side_to_move = side_to_move
 	other.castling = castling.duplicate()
@@ -83,8 +82,10 @@ func king_square(color: String) -> int:
 
 # ---- attack detection -------------------------------------------------------
 
-## Whether `by_color` attacks `sq` (used for check and castling-through-check).
-func is_attacked(sq: int, by_color: String) -> bool:
+## Squares holding `by_color` pieces that attack `sq`. Single source behind
+## is_attacked and the defender-graph annotations.
+func _attackers_of(sq: int, by_color: String) -> Array:
+	var out: Array = []
 	var tf := file_of(sq)
 	var tr := rank_of(sq)
 
@@ -92,29 +93,33 @@ func is_attacked(sq: int, by_color: String) -> bool:
 	# direction it pushes.
 	var pawn_rank := tr - 1 if by_color == "w" else tr + 1
 	for df in [-1, 1]:
-		if in_board(tf + df, pawn_rank) and squares[pawn_rank * 8 + tf + df] == by_color + "P":
-			return true
+		if in_board(tf + df, pawn_rank):
+			var psq = pawn_rank * 8 + tf + df
+			if squares[psq] == by_color + "P":
+				out.append(psq)
 
 	const KNIGHT := [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]]
 	for step in KNIGHT:
-		if in_board(tf + step[0], tr + step[1]) and squares[(tr + step[1]) * 8 + tf + step[0]] == by_color + "N":
-			return true
+		if in_board(tf + step[0], tr + step[1]):
+			var nsq = (tr + step[1]) * 8 + tf + step[0]
+			if squares[nsq] == by_color + "N":
+				out.append(nsq)
 
 	const KING := [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]]
 	for step in KING:
-		if in_board(tf + step[0], tr + step[1]) and squares[(tr + step[1]) * 8 + tf + step[0]] == by_color + "K":
-			return true
+		if in_board(tf + step[0], tr + step[1]):
+			var ksq = (tr + step[1]) * 8 + tf + step[0]
+			if squares[ksq] == by_color + "K":
+				out.append(ksq)
 
 	# Sliding pieces: rays until the board edge or the first piece.
 	const ROOK_DIRS := [[1, 0], [-1, 0], [0, 1], [0, -1]]
-	if _ray_hits(tf, tr, ROOK_DIRS, by_color, ["R", "Q"]):
-		return true
+	_collect_ray_attackers(tf, tr, ROOK_DIRS, by_color, ["R", "Q"], out)
 	const BISHOP_DIRS := [[1, 1], [1, -1], [-1, 1], [-1, -1]]
-	if _ray_hits(tf, tr, BISHOP_DIRS, by_color, ["B", "Q"]):
-		return true
-	return false
+	_collect_ray_attackers(tf, tr, BISHOP_DIRS, by_color, ["B", "Q"], out)
+	return out
 
-func _ray_hits(tf: int, tr: int, dirs: Array, by_color: String, types: Array) -> bool:
+func _collect_ray_attackers(tf: int, tr: int, dirs: Array, by_color: String, types: Array, out: Array) -> void:
 	for dir in dirs:
 		var f: int = tf + int(dir[0])
 		var r: int = tr + int(dir[1])
@@ -122,11 +127,14 @@ func _ray_hits(tf: int, tr: int, dirs: Array, by_color: String, types: Array) ->
 			var code := squares[r * 8 + f]
 			if code != "":
 				if color_of(code) == by_color and types.has(type_of(code)):
-					return true
+					out.append(r * 8 + f)
 				break
 			f += int(dir[0])
 			r += int(dir[1])
-	return false
+
+## Whether `by_color` attacks `sq` (used for check and castling-through-check).
+func is_attacked(sq: int, by_color: String) -> bool:
+	return not _attackers_of(sq, by_color).is_empty()
 
 func in_check(color: String) -> bool:
 	var ks := king_square(color)
@@ -139,7 +147,7 @@ func in_check(color: String) -> bool:
 func legal_moves(color: String) -> Array:
 	var legal: Array = []
 	for move in _pseudo_moves(color):
-		var trial := clone()
+		var trial = clone()
 		trial._make(move)
 		if not trial.in_check(color):
 			legal.append(move)
@@ -340,7 +348,7 @@ func _san(move: Dictionary, legal: Array) -> String:
 func _san_suffix(move: Dictionary, base: String) -> String:
 	var mover := color_of(squares[move["from"]])
 	var foe := opponent(mover)
-	var trial := clone()
+	var trial = clone()
 	trial._make(move)
 	if trial.in_check(foe):
 		return base + ("#" if trial.legal_moves(foe).is_empty() else "+")
@@ -360,25 +368,32 @@ func annotated_moves(color: String) -> Array:
 		if move.get("en_passant", false):
 			capture = opponent(color) + "P"
 		var san := _san(move, legal)
-		var trial := clone()
+		var trial = clone()
 		trial._make(move)
 		var foe := opponent(color)
 		# What the moved piece attacks from its destination — the raw material a fork
 		# or pin plugin reasons over.
 		var landed: int = move["to"]
-		var attacks := trial.attacked_targets(landed)
+		var attacks = trial.attacked_targets(landed)
 		var valuable := 0
 		for t in attacks:
 			if VALUE.get(t, 0) >= 3:
 				valuable += 1
-		var gives_check := trial.in_check(foe)
+		var gives_check = trial.in_check(foe)
 		# Discovered check: the side gives check, but not with the piece that moved.
-		var is_discovered := gives_check and not attacks.has("K")
+		var is_discovered = gives_check and not attacks.has("K")
 		# Whether the destination is attacked by the opponent — i.e. the piece would hang
 		# there. Tactics that leave the piece en prise are usually not worth it.
-		var to_is_attacked := trial.is_attacked(landed, foe)
+		var to_is_attacked = trial.is_attacked(landed, foe)
 		# Pins and skewers created by a sliding piece landing here.
-		var tactic := trial._slider_tactic(landed)
+		var tactic = trial._slider_tactic(landed)
+		# Defender-graph facts: what the mover is worth, whether the prize is
+		# guarded, who recaptures on the destination, and double check.
+		var mover_value: int = VALUE.get(type_of(squares[move["from"]]), 0)
+		var captured_defended := not _attackers_of(to, foe).is_empty()
+		var attackers_of_to = trial._attackers_of(landed, foe)
+		var foe_king = trial.king_square(foe)
+		var is_double = gives_check and foe_king != -1 and trial._attackers_of(foe_king, color).size() >= 2
 		out.append({
 			"attacks": attacks,
 			"attacks_valuable": valuable,
@@ -397,6 +412,10 @@ func annotated_moves(color: String) -> Array:
 			"creates_skewer": tactic["skewer"],
 			"tactic_value": tactic["value"],
 			"to_is_attacked": to_is_attacked,
+			"mover_value": mover_value,
+			"captured_defended": captured_defended,
+			"attackers_of_to": attackers_of_to,
+			"is_double_check": is_double,
 			"san": san,
 			"from_sq": square_name(move["from"]),
 			"to_sq": square_name(to),
@@ -520,6 +539,16 @@ func material(color: String) -> int:
 			total += VALUE.get(type_of(code), 0)
 	return total
 
+## Squares each `by_color` piece attacks, as `{sq: [attacker_sqs]}`. Built once per
+## position (not per move) — the defender graph plugins reason over.
+func _attack_map(by_color: String) -> Dictionary:
+	var map := {}
+	for sq in 64:
+		var hit := _attackers_of(sq, by_color)
+		if not hit.is_empty():
+			map[sq] = hit
+	return map
+
 ## A plain Dictionary snapshot for a plugin: the board, whose move it is, material,
 ## check state and the annotated legal moves.
 func position_for(color: String) -> Dictionary:
@@ -530,5 +559,7 @@ func position_for(color: String) -> Dictionary:
 		"in_check": in_check(color),
 		"material": {"w": material("w"), "b": material("b")},
 		"history": history_san.duplicate(),
+		"foe_attacks": _attack_map(opponent(color)),
+		"own_attacks": _attack_map(color),
 		"moves": annotated_moves(color),
 	}

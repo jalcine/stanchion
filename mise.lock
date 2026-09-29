@@ -52,6 +52,11 @@ version = "0.37.4"
 backend = "cargo:cargo-tarpaulin"
 specifiers = ["0.37"]
 
+[[tools.godot]]
+version = "4.7.2-stable"
+backend = "aqua:godotengine/godot"
+specifiers = ["4.7.2-stable"]
+
 [[tools.java]]
 version = "20.0.2"
 backend = "core:java"
@@ -155,6 +160,11 @@ url = "https://nodejs.org/dist/v26.3.0/node-v26.3.0-darwin-x64.tar.gz"
 [tools.node."platforms.windows-x64"]
 checksum = "sha256:ec6d0f6b056c89498a9b26c4d5c77a31fd0b7fe45ba8a45fa87d26f66c3ebce4"
 url = "https://nodejs.org/dist/v26.3.0/node-v26.3.0-win-x64.zip"
+
+[[tools."pipx:gdtoolkit"]]
+version = "4.5.0"
+backend = "pipx:gdtoolkit"
+specifiers = ["4.5.0"]
 
 [[tools.python]]
 version = "3.14.2"

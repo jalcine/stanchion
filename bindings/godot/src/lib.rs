@@ -304,7 +304,11 @@ impl Stanchion {
                 for entry in &entries {
                     let mut item = VarDictionary::new();
                     dset(&mut item, "plugin", entry.plugin.to_variant());
-                    dset(&mut item, "capabilities", strings_to_array(&entry.capabilities));
+                    dset(
+                        &mut item,
+                        "capabilities",
+                        strings_to_array(&entry.capabilities),
+                    );
                     dset(&mut item, "signer", entry.signer.to_variant());
                     array.push(&item.to_variant());
                 }
@@ -361,7 +365,10 @@ impl Stanchion {
             }
         };
         match host.names() {
-            Ok(names) => names.iter().map(|name| GString::from(name.as_str())).collect(),
+            Ok(names) => names
+                .iter()
+                .map(|name| GString::from(name.as_str()))
+                .collect(),
             Err(error) => {
                 self.record(describe(&error));
                 PackedStringArray::new()

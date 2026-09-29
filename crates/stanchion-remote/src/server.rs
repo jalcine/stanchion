@@ -68,16 +68,15 @@ pub fn build_registry(
         // that launched the host already captures.
         host.capability("log", |lua, grant| {
             let plugin = grant.plugin().to_string();
-let lua_state = lua.lua_state().expect("Lua runtime expected");
-                let lua_guard = lua_state.lock().unwrap();
-                let func = lua_guard.create_function(
-                    move |_, message: String| {
-                        eprintln!("[{}] {}", sanitize_log(&plugin), sanitize_log(&message));
-                        Ok(())
-                    },
-                )
+            let lua_state = lua.lua_state().expect("Lua runtime expected");
+            let lua_guard = lua_state.lock().unwrap();
+            let func = lua_guard
+                .create_function(move |_, message: String| {
+                    eprintln!("[{}] {}", sanitize_log(&plugin), sanitize_log(&message));
+                    Ok(())
+                })
                 .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
-                Ok(lua_to_abi(&*lua_guard, &Value::Function(func)))
+            Ok(lua_to_abi(&*lua_guard, &Value::Function(func)))
         });
 
         for capability in forwarded {
@@ -92,8 +91,8 @@ let lua_state = lua.lua_state().expect("Lua runtime expected");
 
                 let lua_state = lua.lua_state().expect("Lua runtime expected");
                 let lua_guard = lua_state.lock().unwrap();
-                let func = lua_guard.create_function(
-                    move |lua, args: mlua::MultiValue| {
+                let func = lua_guard
+                    .create_function(move |lua, args: mlua::MultiValue| {
                         let mut json_args = Vec::with_capacity(args.len());
                         for arg in args {
                             json_args.push(lua.from_value::<Json>(arg)?);
@@ -108,9 +107,8 @@ let lua_state = lua.lua_state().expect("Lua runtime expected");
                             .map_err(|err| mlua::Error::RuntimeError(err))?;
                         let value_lua = lua.to_value(&value);
                         Ok(value_lua)
-                    },
-                )
-                .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
+                    })
+                    .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
                 Ok(lua_to_abi(&*lua_guard, &Value::Function(func)))
             });
         }
@@ -425,7 +423,7 @@ fn audit_signer(_entry: &stanchion_registry::PluginAudit) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_log, MAX_LOG_MESSAGE};
+    use super::{MAX_LOG_MESSAGE, sanitize_log};
 
     #[test]
     fn escapes_newlines_and_escape_sequences() {
@@ -433,7 +431,10 @@ mod tests {
         let sanitized = sanitize_log("ok\n[trusted] granted admin\x1b[2J");
         assert!(!sanitized.contains('\n'), "newline survived: {sanitized:?}");
         assert!(!sanitized.contains('\x1b'), "ESC survived: {sanitized:?}");
-        assert!(sanitized.contains("\\n"), "newline should be escaped: {sanitized:?}");
+        assert!(
+            sanitized.contains("\\n"),
+            "newline should be escaped: {sanitized:?}"
+        );
     }
 
     #[test]
@@ -452,9 +453,9 @@ mod tests {
     #[cfg(feature = "signatures")]
     #[test]
     fn info_reports_the_real_signature_posture() {
-        use super::{build_registry, handle, HostChannel};
+        use super::{HostChannel, build_registry, handle};
         use crate::frame::Request;
-        use crate::protocol::{method, HostInfo};
+        use crate::protocol::{HostInfo, method};
         use stanchion_registry::config::HostConfig;
 
         let posture = |required: bool| -> bool {
@@ -470,6 +471,9 @@ mod tests {
         };
 
         assert!(posture(true), "a host requiring signatures must report it");
-        assert!(!posture(false), "a permissive host must not claim to require them");
+        assert!(
+            !posture(false),
+            "a permissive host must not claim to require them"
+        );
     }
 }

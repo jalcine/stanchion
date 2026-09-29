@@ -10,8 +10,8 @@
 
 use std::path::PathBuf;
 
+use serde_json::{Value as Json, json};
 use stanchion::remote::{CallbackCall, RemoteOptions, RemoteRegistry};
-use serde_json::{json, Value as Json};
 
 fn example_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/remote"))
@@ -60,7 +60,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     });
 
     for plugin in remote.list()? {
-        println!("loaded: {} {:?} granted {:?}", plugin.name, plugin.version, plugin.granted);
+        println!(
+            "loaded: {} {:?} granted {:?}",
+            plugin.name, plugin.version, plugin.granted
+        );
     }
 
     println!("\n-- a plugin calling back into this process --");

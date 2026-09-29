@@ -51,8 +51,7 @@ use std::path::{Path, PathBuf};
 use semver::VersionReq;
 use stanchion_registry::upgrade::UpgradeReview;
 use stanchion_registry::{
-    DirectoryDigest, LockError, LockedPlugin, Lockfile, Manifest, MANIFEST_FILE,
-    read_manifest,
+    DirectoryDigest, LockError, LockedPlugin, Lockfile, MANIFEST_FILE, Manifest, read_manifest,
 };
 
 use crate::index::{IndexError, PluginIndex, Release};
@@ -193,7 +192,12 @@ pub struct Installer<I, S> {
 impl<I: PluginIndex, S: PluginSource> Installer<I, S> {
     /// Installs into `root`, resolving through `index` and fetching through `source`.
     pub fn new(index: I, source: S, root: impl Into<PathBuf>) -> Self {
-        Installer { index, source, root: root.into(), limits: Limits::default() }
+        Installer {
+            index,
+            source,
+            root: root.into(),
+            limits: Limits::default(),
+        }
     }
 
     /// Bounds what an archive may expand to.
@@ -225,24 +229,24 @@ impl<I: PluginIndex, S: PluginSource> Installer<I, S> {
         lockfile: &Lockfile,
     ) -> Result<Staged, InstallError> {
         let releases = self.index.releases(name)?;
-        let release = match lockfile.get(name).and_then(|pin| pin.version.clone()) {
-            Some(pinned) => releases
-                .exact(&pinned)
-                .ok_or_else(|| {
-                    InstallError::Index(IndexError::NoMatch {
+        let release =
+            match lockfile.get(name).and_then(|pin| pin.version.clone()) {
+                Some(pinned) => releases
+                    .exact(&pinned)
+                    .ok_or_else(|| {
+                        InstallError::Index(IndexError::NoMatch {
+                            name: name.to_string(),
+                            requirement: format!("={pinned}"),
+                        })
+                    })?
+                    .clone(),
+                None => releases.best_match(requirement).cloned().ok_or_else(|| {
+                    IndexError::NoMatch {
                         name: name.to_string(),
-                        requirement: format!("={pinned}"),
-                    })
-                })?
-                .clone(),
-            None => releases
-                .best_match(requirement)
-                .cloned()
-                .ok_or_else(|| IndexError::NoMatch {
-                    name: name.to_string(),
-                    requirement: requirement.to_string(),
+                        requirement: requirement.to_string(),
+                    }
                 })?,
-        };
+            };
         self.stage_release(name, release, lockfile)
     }
 
@@ -471,8 +475,8 @@ impl Staged {
             let _ = fs::remove_dir_all(&previous);
         }
 
-        let mut pin = LockedPlugin::from_digest(&self.digest)
-            .at_version(self.manifest.effective_version());
+        let mut pin =
+            LockedPlugin::from_digest(&self.digest).at_version(self.manifest.effective_version());
         if let Some(signer) = &self.release.signer {
             pin = pin.signed_by(signer.clone());
         }

@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "name": "acme example plugins",
+  "updated": "2026-09-29T00:00:00Z",
+  "expires": "2026-10-06T00:00:00Z",
+  "plugins": ["formatter"]
+}

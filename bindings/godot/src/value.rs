@@ -119,9 +119,11 @@ fn array_elements(variant: &Variant) -> Result<Vec<Variant>, String> {
     if let Ok(array) = variant.try_to::<Array<VarDictionary>>() {
         return Ok(array.iter_shared().map(|item| item.to_variant()).collect());
     }
-    Err("cannot read this typed Array; use an untyped Array or one of String, \
+    Err(
+        "cannot read this typed Array; use an untyped Array or one of String, \
          int, float, bool or Dictionary elements"
-        .to_string())
+            .to_string(),
+    )
 }
 
 /// Turns a Godot conversion error into the flat string the whole binding reports.

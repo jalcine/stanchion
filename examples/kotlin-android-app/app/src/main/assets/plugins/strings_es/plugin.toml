@@ -1,0 +1,4 @@
+name = "strings_es"
+entry = "init.lua"
+
+[capabilities.locale]

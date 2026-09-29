@@ -5,10 +5,10 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result};
 use stanchion::registry::rocks::RocksConfig;
 use stanchion::registry::{FailureReason, Registry};
+use stanchion_lua::lua_class;
+use stanchion_lua::mlua::{Lua, Result};
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;

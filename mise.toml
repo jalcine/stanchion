@@ -39,6 +39,13 @@ java = "20.0.2"
 kotlin = "2.2.20"
 "aqua:ktlint" = "1.8.0"
 
+# examples/kotlin-android-app: mise-pinned Android toolchain. The NDK itself
+# comes from sdkmanager (pinned below via ANDROID_NDK_VERSION), so mise only
+# pins the SDK command-line tools and the Rust NDK driver.
+android-sdk = "23.0"
+"cargo:cargo-ndk" = "4.1.2"
+gradle = "8.9"
+
 # bindings/ruby, and bindings/node once it is written. Pinned so the versions a
 # binding is built against are a decision rather than whatever happened to be on the
 # machine that day.
@@ -54,6 +61,11 @@ node = "26.3.0"
 # project means macOS; mise would install one here and then have nothing to do.
 
 [env]
+# Pinned by `android:build:ffi` via sdkmanager; minimal ABI set is arm64-v8a
+# (device) + x86_64 (emulator). LTS r27d; keep in sync with app/build.gradle.kts.
+ANDROID_NDK_VERSION = "27.3.13750724"
+ANDROID_API = "34"
+
 # The feature set `test` and `lint` share.
 #
 # One variable rather than two literals because they drifted: `lint` carried only
@@ -117,6 +129,10 @@ depends = ["smoke:uniffi", "smoke:kotlin", "test:python", "test:ruby"]
 dir = "examples/chess"
 run = "godot ."
 
+[tasks."chess:editor"]
+dir = "examples/chess"
+run = "godot --editor ."
+
 [tasks."chess:lint"]
 description = "Lint the chess example scripts with gdlint"
 dir = "examples/chess"
@@ -126,3 +142,24 @@ run = "gdlint src/"
 description = "Format the chess example scripts with gdformat"
 dir = "examples/chess"
 run = "gdformat src/"
+
+[tasks."android:lint"]
+description = "ktlint check the Android example"
+dir = "examples/kotlin-android-app"
+run = "ktlint 'app/src/**/*.kt' --relative"
+
+[tasks."android:build:ffi"]
+description = "Build libstanchion_uniffi.so for arm64-v8a + x86_64 and generate UniFFI Kotlin into app/build (never committed)"
+run = [
+  "rustup target add aarch64-linux-android x86_64-linux-android",
+  "sdkmanager --install \"ndk;$ANDROID_NDK_VERSION\" \"platforms;android-$ANDROID_API\" \"build-tools;$ANDROID_API.0.0\"",
+  "cargo build -p stanchion-uniffi",
+  "cargo run -q -p stanchion-uniffi --bin uniffi-bindgen -- generate --library target/debug/libstanchion_uniffi.so --language kotlin --out-dir examples/kotlin-android-app/app/build/generated/uniffi",
+  "ANDROID_NDK_HOME=\"$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION\" cargo ndk -t arm64-v8a -t x86_64 -o examples/kotlin-android-app/app/build/jniLibs build -p stanchion-uniffi --release",
+]
+
+[tasks."android:build"]
+description = "Assemble the Android example (bindings regenerate at build time via android:build:ffi)"
+depends = ["android:build:ffi"]
+dir = "examples/kotlin-android-app"
+run = "gradle assembleDebug"

@@ -1,0 +1,6 @@
+name = "unsigned"
+version = "1.0.0"
+
+[capabilities.kv]
+optional = true
+namespace = "tenant-7"

@@ -1,0 +1,5 @@
+name = "shipped"
+version = "1.0.0"
+
+[capabilities.kv]
+namespace = "tenant-7"

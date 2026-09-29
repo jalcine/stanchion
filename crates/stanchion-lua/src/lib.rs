@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use mlua::chunk::AsChunk;
 use mlua::{FromLua, Lua, ObjectLike, Result as LuaResult, Table, Value};
-use stanchion_abi::{Result as AbiResult, Value as AbiValue};
 use stanchion_abi::runtime::Runtime;
+use stanchion_abi::{Result as AbiResult, Value as AbiValue};
 
 pub use stanchion_macros::lua_class;
 
@@ -230,7 +230,11 @@ pub trait LuaClass: FromLua + Sized {
 /// let class: GreeterClass = load_class(&lua, &source, "greeter.lua")?;
 /// let greeter = class.new("hello".to_string())?;
 /// ```
-pub fn load_class<'a, C: LuaClass>(lua: &Lua, chunk: impl AsChunk + 'a, name: &str) -> LuaResult<C> {
+pub fn load_class<'a, C: LuaClass>(
+    lua: &Lua,
+    chunk: impl AsChunk + 'a,
+    name: &str,
+) -> LuaResult<C> {
     lua.load(chunk).set_name(name).eval()
 }
 
@@ -343,7 +347,11 @@ impl stanchion_abi::PluginBackend for LuaBackend {
         stanchion_abi::PluginType::Lua
     }
 
-    fn load(&self, _manifest: &stanchion_abi::Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
+    fn load(
+        &self,
+        _manifest: &stanchion_abi::Manifest,
+        _dir: &Path,
+    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
         // Implementation uses mlua to load and instantiate the plugin class.
         // This is a placeholder - the full implementation would:
         // 1. Create a Lua state
@@ -354,11 +362,19 @@ impl stanchion_abi::PluginBackend for LuaBackend {
 }
 
 impl Runtime for LuaBackend {
-    fn load(&self, manifest: &stanchion_abi::Manifest, dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
+    fn load(
+        &self,
+        manifest: &stanchion_abi::Manifest,
+        dir: &Path,
+    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
         <Self as stanchion_abi::PluginBackend>::load(self, manifest, dir)
     }
 
-    fn verify(&self, _manifest: &stanchion_abi::Manifest, _dir: &Path) -> stanchion_abi::Result<()> {
+    fn verify(
+        &self,
+        _manifest: &stanchion_abi::Manifest,
+        _dir: &Path,
+    ) -> stanchion_abi::Result<()> {
         Ok(())
     }
 

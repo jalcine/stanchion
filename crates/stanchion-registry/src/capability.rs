@@ -195,10 +195,12 @@ impl fmt::Debug for Rules {
 }
 
 #[cfg(feature = "send")]
-pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value> + Send + Sync>;
+pub type ProviderFn =
+    Box<dyn Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value> + Send + Sync>;
 /// Builds the stanchion value a granted capability binds to.
 #[cfg(not(feature = "send"))]
-pub type ProviderFn = Box<dyn Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value> + Send + Sync>;
+pub type ProviderFn =
+    Box<dyn Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value> + Send + Sync>;
 
 /// Installs a value into every plugin state, ungated.
 #[cfg(feature = "send")]
@@ -229,7 +231,8 @@ impl HostSetup {
         &mut self,
         name: impl Into<String>,
         provider: impl Fn(&dyn Runtime, &Grant) -> stanchion_abi::Result<stanchion_abi::Value>
-        + Send + Sync
+        + Send
+        + Sync
         + 'static,
     ) -> &mut Self {
         self.providers.insert(name.into(), Box::new(provider));

@@ -3,8 +3,8 @@
 //! Mirrors `stanchion_registry::sandbox::Budget` but holds a copy in the entry
 //! so call-time enforcement works without requiring the Lua state machinery.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Instruction/meters budget reset per call, enforced at the dispatch boundary.
 #[derive(Debug, Clone)]
@@ -24,13 +24,23 @@ impl CallBudget {
     pub fn reset(&self) {
         self.used.store(0, Ordering::Relaxed);
     }
-    pub fn limit(&self) -> u64 { self.limit }
-    pub fn used(&self) -> u64 { self.used.load(Ordering::Relaxed) }
+    pub fn limit(&self) -> u64 {
+        self.limit
+    }
+    pub fn used(&self) -> u64 {
+        self.used.load(Ordering::Relaxed)
+    }
     /// Charge `amount`; returns `Err` if over limit.
     pub fn consume(&self, amount: u64) -> Result<(), String> {
-        let used = self.used.fetch_add(amount, Ordering::Relaxed).saturating_add(amount);
+        let used = self
+            .used
+            .fetch_add(amount, Ordering::Relaxed)
+            .saturating_add(amount);
         if used > self.limit {
-            return Err(format!("call exceeded budget of {} instructions", self.limit));
+            return Err(format!(
+                "call exceeded budget of {} instructions",
+                self.limit
+            ));
         }
         Ok(())
     }

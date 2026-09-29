@@ -1,6 +1,6 @@
 //! Tests for the [`Value`] type and its conversions.
 
-use stanchion_abi::value::{table_to_map, toml_to_value, value_to_toml, Value};
+use stanchion_abi::value::{Value, table_to_map, toml_to_value, value_to_toml};
 use std::collections::BTreeMap;
 
 #[test]
@@ -55,7 +55,7 @@ fn float_round_trips_through_toml() {
     let back = toml_to_value(&toml);
     // f64::NAN is a float that round-trips (NaN != NaN by design, so skip PartialEq check)
     assert!(matches!(back, Value::Float(_)));
-    
+
     // f64::INFINITY and f64::NEG_INFINITY are valid floats that round-trip
     let pos_inf = Value::Float(f64::INFINITY);
     let neg_inf = Value::Float(f64::NEG_INFINITY);
@@ -117,7 +117,10 @@ fn nested_structures_round_trip() {
     let mut inner = BTreeMap::new();
     inner.insert("nested".to_string(), Value::Int(42));
     let val = Value::Map(BTreeMap::from([
-        ("list".to_string(), Value::List(vec![Value::Int(1), Value::Int(2)])),
+        (
+            "list".to_string(),
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        ),
         ("map".to_string(), Value::Map(inner)),
     ]));
 
@@ -155,7 +158,11 @@ fn empty_map_is_map_not_list() {
 
 #[test]
 fn toml_datetime_becomes_string() {
-    let dt = toml::value::Datetime::from("2024-01-15T10:30:00Z".parse::<toml::value::Datetime>().unwrap());
+    let dt = toml::value::Datetime::from(
+        "2024-01-15T10:30:00Z"
+            .parse::<toml::value::Datetime>()
+            .unwrap(),
+    );
     let toml_val = toml::Value::Datetime(dt);
     let val = toml_to_value(&toml_val);
     assert!(matches!(val, Value::Str(_)));

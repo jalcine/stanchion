@@ -13,20 +13,51 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 use stanchion_ffi::{
-    CapabilityCall as FfiCall, CapabilityProvider, CapabilityRequest as FfiRequest, Decision as FfiDecision,
-    Error as FfiError, HostConfig, Policy as FfiPolicy, Stanchion as Host, Value,
+    CapabilityCall as FfiCall, CapabilityProvider, CapabilityRequest as FfiRequest,
+    Decision as FfiDecision, Error as FfiError, HostConfig, Policy as FfiPolicy, Stanchion as Host,
+    Value,
 };
 
 mod value;
 
 use value::{from_py, to_py};
 
-create_exception!(_stanchion, StanchionError, PyException, "Base for every stanchion failure.");
-create_exception!(_stanchion, UnknownPluginError, StanchionError, "No plugin by that name is loaded.");
-create_exception!(_stanchion, PluginError, StanchionError, "A plugin failed to load, reload or verify.");
-create_exception!(_stanchion, LuaError, StanchionError, "A plugin's Lua raised.");
-create_exception!(_stanchion, ConfigError, StanchionError, "The host's own configuration is wrong.");
-create_exception!(_stanchion, CapabilityError, StanchionError, "A capability provider refused or failed.");
+create_exception!(
+    _stanchion,
+    StanchionError,
+    PyException,
+    "Base for every stanchion failure."
+);
+create_exception!(
+    _stanchion,
+    UnknownPluginError,
+    StanchionError,
+    "No plugin by that name is loaded."
+);
+create_exception!(
+    _stanchion,
+    PluginError,
+    StanchionError,
+    "A plugin failed to load, reload or verify."
+);
+create_exception!(
+    _stanchion,
+    LuaError,
+    StanchionError,
+    "A plugin's Lua raised."
+);
+create_exception!(
+    _stanchion,
+    ConfigError,
+    StanchionError,
+    "The host's own configuration is wrong."
+);
+create_exception!(
+    _stanchion,
+    CapabilityError,
+    StanchionError,
+    "A capability provider refused or failed."
+);
 create_exception!(
     _stanchion,
     ReentrantError,
@@ -184,15 +215,16 @@ struct PyPolicy {
 impl FfiPolicy for PyPolicy {
     fn decide(&self, request: &FfiRequest) -> FfiDecision {
         Python::attach(|py| {
-            let built = to_py(py, &request.params)
-                .map(Bound::unbind)
-                .map(|params| CapabilityRequest {
-                    plugin: request.plugin.clone(),
-                    capability: request.capability.clone(),
-                    params,
-                    optional: request.optional,
-                    signer: request.signer.clone(),
-                });
+            let built =
+                to_py(py, &request.params)
+                    .map(Bound::unbind)
+                    .map(|params| CapabilityRequest {
+                        plugin: request.plugin.clone(),
+                        capability: request.capability.clone(),
+                        params,
+                        optional: request.optional,
+                        signer: request.signer.clone(),
+                    });
 
             // A policy that raises denies. Letting the exception escape would unwind
             // through Lua and the registry, and a host whose policy is broken should
@@ -225,7 +257,10 @@ pub struct Failure {
 #[pymethods]
 impl Failure {
     fn __repr__(&self) -> String {
-        format!("Failure(plugin={:?}, reason={:?})", self.plugin, self.reason)
+        format!(
+            "Failure(plugin={:?}, reason={:?})",
+            self.plugin, self.reason
+        )
     }
 }
 
@@ -619,7 +654,10 @@ fn _stanchion(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Outcome>()?;
 
     module.add("StanchionError", module.py().get_type::<StanchionError>())?;
-    module.add("UnknownPluginError", module.py().get_type::<UnknownPluginError>())?;
+    module.add(
+        "UnknownPluginError",
+        module.py().get_type::<UnknownPluginError>(),
+    )?;
     module.add("PluginError", module.py().get_type::<PluginError>())?;
     module.add("LuaError", module.py().get_type::<LuaError>())?;
     module.add("ConfigError", module.py().get_type::<ConfigError>())?;

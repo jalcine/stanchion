@@ -11,7 +11,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use http::{header, HeaderValue, Request, Response, StatusCode};
+use http::{HeaderValue, Request, Response, StatusCode, header};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use tower_service::Service;
@@ -29,13 +29,17 @@ pub struct IndexService<S> {
 impl<S> IndexService<S> {
     /// Wraps an [`IndexServer`].
     pub fn new(server: IndexServer<S>) -> Self {
-        IndexService { server: Arc::new(server) }
+        IndexService {
+            server: Arc::new(server),
+        }
     }
 }
 
 impl<S> Clone for IndexService<S> {
     fn clone(&self) -> Self {
-        IndexService { server: Arc::clone(&self.server) }
+        IndexService {
+            server: Arc::clone(&self.server),
+        }
     }
 }
 

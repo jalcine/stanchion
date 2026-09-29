@@ -19,8 +19,7 @@ use mlua::{Lua, LuaOptions, StdLib, Table, Value};
 /// but paired with a `load` that accepts bytecode it is half of a VM-corruption
 /// primitive, so it is removed here and [`Sandbox::restricted`] also forces `load` to
 /// text-only mode (see [`harden_load`]).
-pub const RESTRICTED_DENY_LIST: &[&str] =
-    &["dofile", "loadfile", "package.loadlib", "string.dump"];
+pub const RESTRICTED_DENY_LIST: &[&str] = &["dofile", "loadfile", "package.loadlib", "string.dump"];
 
 /// Libraries present in every supported Lua version, minus `io`, `os` and `debug`.
 fn core_libs() -> StdLib {
@@ -293,7 +292,9 @@ mod tests {
 
     #[test]
     fn restricted_load_rejects_bytecode() {
-        let (lua, _) = Sandbox::restricted().build().expect("build restricted state");
+        let (lua, _) = Sandbox::restricted()
+            .build()
+            .expect("build restricted state");
         // Under a permissive-style state string.dump is available to produce bytecode;
         // build it there so the test does not depend on string.dump surviving.
         let (donor, _) = Sandbox::permissive().build().expect("build donor state");
@@ -318,7 +319,9 @@ mod tests {
 
     #[test]
     fn restricted_load_still_accepts_text() {
-        let (lua, _) = Sandbox::restricted().build().expect("build restricted state");
+        let (lua, _) = Sandbox::restricted()
+            .build()
+            .expect("build restricted state");
         let result: i64 = lua
             .load(r#"return load("return 7")()"#)
             .eval()
@@ -328,8 +331,15 @@ mod tests {
 
     #[test]
     fn restricted_denies_string_dump() {
-        let (lua, _) = Sandbox::restricted().build().expect("build restricted state");
-        let dump: Value = lua.globals().get::<Table>("string").unwrap().get("dump").unwrap();
+        let (lua, _) = Sandbox::restricted()
+            .build()
+            .expect("build restricted state");
+        let dump: Value = lua
+            .globals()
+            .get::<Table>("string")
+            .unwrap()
+            .get("dump")
+            .unwrap();
         assert!(
             matches!(dump, Value::Nil),
             "string.dump must be removed under restricted()"

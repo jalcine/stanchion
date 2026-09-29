@@ -2,6 +2,32 @@
 
 lockfile_version = 2
 
+[[tools.android-sdk]]
+version = "23.0"
+backend = "vfox:android-sdk"
+specifiers = ["23.0"]
+
+[tools.android-sdk."platforms.linux-arm64"]
+url = "https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip"
+
+[tools.android-sdk."platforms.linux-arm64-musl"]
+url = "https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip"
+
+[tools.android-sdk."platforms.linux-x64"]
+url = "https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip"
+
+[tools.android-sdk."platforms.linux-x64-musl"]
+url = "https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip"
+
+[tools.android-sdk."platforms.macos-arm64"]
+url = "https://dl.google.com/android/repository/commandlinetools-mac_arm64-16111833_latest.zip"
+
+[tools.android-sdk."platforms.macos-x64"]
+url = "https://dl.google.com/android/repository/commandlinetools-mac_x86_64-16111833_latest.zip"
+
+[tools.android-sdk."platforms.windows-x64"]
+url = "https://dl.google.com/android/repository/commandlinetools-win-16111833_latest.zip"
+
 [[tools."aqua:ktlint"]]
 version = "1.8.0"
 backend = "aqua:ktlint"
@@ -42,6 +68,11 @@ checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8
 url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
 url_api = "https://api.github.com/repos/ktlint/ktlint/releases/assets/316074523"
 
+[[tools."cargo:cargo-ndk"]]
+version = "4.1.2"
+backend = "cargo:cargo-ndk"
+specifiers = ["4.1.2"]
+
 [[tools."cargo:cargo-nextest"]]
 version = "0.9.115"
 backend = "cargo:cargo-nextest"
@@ -56,6 +87,75 @@ specifiers = ["0.37"]
 version = "4.7.2-stable"
 backend = "aqua:godotengine/godot"
 specifiers = ["4.7.2-stable"]
+
+[tools.godot."platforms.linux-arm64"]
+checksum = "sha256:5dd0d86405cf7e8adf79fb6377b38ba682a2846cb378ffe5364f38c01ad29b9d"
+url = "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.arm64.zip"
+url_api = "https://api.github.com/repos/godotengine/godot/releases/assets/519687458"
+
+[tools.godot."platforms.linux-arm64-musl"]
+checksum = "sha256:5dd0d86405cf7e8adf79fb6377b38ba682a2846cb378ffe5364f38c01ad29b9d"
+url = "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.arm64.zip"
+url_api = "https://api.github.com/repos/godotengine/godot/releases/assets/519687458"
+
+[tools.godot."platforms.linux-x64"]
+checksum = "sha256:cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4"
+url = "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
+url_api = "https://api.github.com/repos/godotengine/godot/releases/assets/519687862"
+
+[tools.godot."platforms.linux-x64-musl"]
+checksum = "sha256:cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4"
+url = "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
+url_api = "https://api.github.com/repos/godotengine/godot/releases/assets/519687862"
+
+[tools.godot."platforms.macos-arm64"]
+checksum = "sha256:c58a24e31d720be9d62f60cb5627c4e695fb72f21b0cfe1bc9ccaa9a3b3ba63e"
+url = "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip"
+url_api = "https://api.github.com/repos/godotengine/godot/releases/assets/519687883"
+
+[tools.godot."platforms.macos-x64"]
+checksum = "sha256:c58a24e31d720be9d62f60cb5627c4e695fb72f21b0cfe1bc9ccaa9a3b3ba63e"
+url = "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip"
+url_api = "https://api.github.com/repos/godotengine/godot/releases/assets/519687883"
+
+[tools.godot."platforms.windows-x64"]
+checksum = "sha256:731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953"
+url = "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip"
+url_api = "https://api.github.com/repos/godotengine/godot/releases/assets/519688475"
+
+[[tools.gradle]]
+version = "8.9.0"
+backend = "aqua:gradle/gradle-distributions"
+specifiers = ["8.9"]
+
+[tools.gradle."platforms.linux-arm64"]
+url = "https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip"
+url_api = "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/178998845"
+
+[tools.gradle."platforms.linux-arm64-musl"]
+url = "https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip"
+url_api = "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/178998845"
+
+[tools.gradle."platforms.linux-x64"]
+checksum = "blake3:341656cea4c71e08d5df94e1fda47417f272f4b50017bf46148833af3b6d78e3"
+url = "https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip"
+url_api = "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/178998845"
+
+[tools.gradle."platforms.linux-x64-musl"]
+url = "https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip"
+url_api = "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/178998845"
+
+[tools.gradle."platforms.macos-arm64"]
+url = "https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip"
+url_api = "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/178998845"
+
+[tools.gradle."platforms.macos-x64"]
+url = "https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip"
+url_api = "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/178998845"
+
+[tools.gradle."platforms.windows-x64"]
+url = "https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip"
+url_api = "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/178998845"
 
 [[tools.java]]
 version = "20.0.2"

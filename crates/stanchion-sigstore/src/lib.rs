@@ -84,9 +84,7 @@ impl<P: VerificationPolicy> SigstoreVerifier<P> {
     }
 }
 
-impl<P: VerificationPolicy + Send + Sync> PluginVerifier
-    for SigstoreVerifier<P>
-{
+impl<P: VerificationPolicy + Send + Sync> PluginVerifier for SigstoreVerifier<P> {
     fn verify(&self, digest: &DirectoryDigest, dir: &Path) -> Result<Signer, VerifyError> {
         let path = dir.join(BUNDLE_FILE);
         let raw = match fs::read_to_string(&path) {

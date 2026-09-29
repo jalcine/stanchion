@@ -31,6 +31,22 @@ required-features = ["registry"]
 name = "remote_host"
 required-features = ["remote"]
 
+[[example]]
+name = "signed"
+required-features = ["signatures"]
+
+[[example]]
+name = "hot_reload"
+required-features = ["registry"]
+
+[[example]]
+name = "pinned"
+required-features = ["signatures"]
+
+[[example]]
+name = "rocks"
+required-features = ["luarocks"]
+
 [dependencies]
 stanchion-dist = { workspace = true, optional = true }
 stanchion-index = { workspace = true, optional = true }

@@ -10,12 +10,12 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
 use stanchion::registry::{
     Decision, DirectoryDigest, FailureReason, PluginVerifier, Registry, Rules, SIGNATURE_FILE,
     Sandbox, Signer, VerifyError,
 };
+use stanchion_lua::lua_class;
+use stanchion_lua::mlua::{Lua, Result, Table};
 use tempfile::TempDir;
 
 use common::lua_function;
@@ -509,7 +509,11 @@ fn a_prefixed_revocation_digest_still_matches() -> TestResult {
 
     let report = registry.load_dir(root.path())?;
     assert!(report.loaded.is_empty());
-    assert!(first_failure(&report)?.to_string().contains("prefixed form"));
+    assert!(
+        first_failure(&report)?
+            .to_string()
+            .contains("prefixed form")
+    );
     Ok(())
 }
 
@@ -598,7 +602,9 @@ fn a_revocation_arriving_after_load_unloads_the_running_plugin() -> TestResult {
     // slot.
     assert_eq!(registry.len(), 1);
     assert!(registry.get("probe").is_none());
-    let other = registry.get("other").ok_or("`other` should still be loaded")?;
+    let other = registry
+        .get("other")
+        .ok_or("`other` should still be loaded")?;
     assert_eq!(other.name(), "other");
     assert_eq!(other.instance().run(String::new())?, "fine");
     Ok(())

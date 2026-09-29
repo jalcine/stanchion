@@ -13,8 +13,15 @@ impl PluginBackend for DummyBackend {
         self.ty.clone()
     }
 
-    fn load(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        Err(stanchion_abi::Error::Plugin { plugin: "dummy".to_string(), reason: "not implemented".to_string() })
+    fn load(
+        &self,
+        _manifest: &Manifest,
+        _dir: &Path,
+    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
+        Err(stanchion_abi::Error::Plugin {
+            plugin: "dummy".to_string(),
+            reason: "not implemented".to_string(),
+        })
     }
 }
 
@@ -26,8 +33,15 @@ impl PluginBackend for LuaBackend {
         PluginType::Lua
     }
 
-    fn load(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        Err(stanchion_abi::Error::Plugin { plugin: "lua".to_string(), reason: "not implemented".to_string() })
+    fn load(
+        &self,
+        _manifest: &Manifest,
+        _dir: &Path,
+    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
+        Err(stanchion_abi::Error::Plugin {
+            plugin: "lua".to_string(),
+            reason: "not implemented".to_string(),
+        })
     }
 }
 
@@ -36,8 +50,15 @@ impl PluginBackend for WasmBackend {
         PluginType::Wasm
     }
 
-    fn load(&self, _manifest: &Manifest, _dir: &Path) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        Err(stanchion_abi::Error::Plugin { plugin: "wasm".to_string(), reason: "not implemented".to_string() })
+    fn load(
+        &self,
+        _manifest: &Manifest,
+        _dir: &Path,
+    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
+        Err(stanchion_abi::Error::Plugin {
+            plugin: "wasm".to_string(),
+            reason: "not implemented".to_string(),
+        })
     }
 }
 
@@ -71,7 +92,9 @@ fn register_replaces_previous_backend_for_same_type() {
     assert_eq!(registry.len(), 1);
 
     // Register another Lua backend - replaces the first
-    registry.register(Box::new(DummyBackend { ty: PluginType::Lua }));
+    registry.register(Box::new(DummyBackend {
+        ty: PluginType::Lua,
+    }));
     assert_eq!(registry.len(), 1);
 }
 
@@ -102,7 +125,9 @@ fn register_preserves_last_write_for_same_type() {
     let mut registry = BackendRegistry::new();
     registry.register(Box::new(LuaBackend));
     let second_ty = PluginType::Lua;
-    registry.register(Box::new(DummyBackend { ty: second_ty.clone() }));
+    registry.register(Box::new(DummyBackend {
+        ty: second_ty.clone(),
+    }));
     assert_eq!(registry.len(), 1);
     assert!(registry.get(&second_ty).is_some());
 }
@@ -145,6 +170,8 @@ fn load_returns_error_for_unimplemented_backends() {
     let wasm = WasmBackend;
     assert!(wasm.load(&manifest, dir).is_err());
 
-    let dummy = DummyBackend { ty: PluginType::Lua };
+    let dummy = DummyBackend {
+        ty: PluginType::Lua,
+    };
     assert!(dummy.load(&manifest, dir).is_err());
 }

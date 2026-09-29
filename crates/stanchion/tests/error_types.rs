@@ -16,7 +16,10 @@ const SOURCE: &str = include_str!("lua/greeter.lua");
 #[derive(Debug)]
 enum HostError {
     Lua(stanchion_lua::mlua::Error),
-    #[expect(dead_code, reason = "present to prove the type is a real enum, not a wrapper")]
+    #[expect(
+        dead_code,
+        reason = "present to prove the type is a real enum, not a wrapper"
+    )]
     Policy(String),
 }
 

@@ -69,13 +69,13 @@ pub mod install;
 pub mod http;
 
 pub use index::{
-    Catalog, DirectoryIndex, Freshness, IndexDocument, IndexError, PluginIndex, PluginReleases,
-    Release, CATALOG_PATH, INDEX_SCHEMA, releases_path, validate_name,
+    CATALOG_PATH, Catalog, DirectoryIndex, Freshness, INDEX_SCHEMA, IndexDocument, IndexError,
+    PluginIndex, PluginReleases, Release, releases_path, validate_name,
 };
-pub use package::{Limits, PackageError, PACKAGE_MEDIA_TYPE};
+pub use package::{Limits, PACKAGE_MEDIA_TYPE, PackageError};
 
 #[cfg(feature = "package")]
 pub use install::{InstallError, Installer, PluginSource, SourceError, Staged};
 
 #[cfg(feature = "http")]
-pub use http::{HttpIndex, HttpSource, DEFAULT_PACKAGE_LIMIT};
+pub use http::{DEFAULT_PACKAGE_LIMIT, HttpIndex, HttpSource};

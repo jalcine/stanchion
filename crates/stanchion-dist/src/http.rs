@@ -18,11 +18,11 @@
 
 use std::time::Duration;
 
-use crate::install::{PluginSource, SourceError};
 use crate::index::{
-    Catalog, Freshness, IndexError, PluginIndex, PluginReleases, CATALOG_PATH, releases_path,
+    CATALOG_PATH, Catalog, Freshness, IndexError, PluginIndex, PluginReleases, releases_path,
     validate_name,
 };
+use crate::install::{PluginSource, SourceError};
 
 /// Largest index document this client will read into memory, unless raised.
 ///
@@ -138,8 +138,8 @@ impl PluginIndex for HttpIndex {
 
     fn catalog(&self) -> Result<Catalog, IndexError> {
         let raw = self.get(CATALOG_PATH, "<catalog>")?;
-        let catalog: Catalog = serde_json::from_str(&raw)
-            .map_err(|err| IndexError::Malformed(err.to_string()))?;
+        let catalog: Catalog =
+            serde_json::from_str(&raw).map_err(|err| IndexError::Malformed(err.to_string()))?;
         self.freshness.check(&catalog, "the catalog")?;
         Ok(catalog)
     }
@@ -286,7 +286,12 @@ mod tests {
     #[test]
     fn a_foreign_scheme_is_unsupported_rather_than_an_error() {
         let source = HttpSource::new();
-        for reference in ["oci://ghcr.io/acme/p:1", "ftp://host/p.tar.gz", "p.tar.gz", ""] {
+        for reference in [
+            "oci://ghcr.io/acme/p:1",
+            "ftp://host/p.tar.gz",
+            "p.tar.gz",
+            "",
+        ] {
             match source.fetch(reference) {
                 Err(SourceError::Unsupported(named)) => assert_eq!(named, reference),
                 other => panic!("expected Unsupported for `{reference}`, got {other:?}"),

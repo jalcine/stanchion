@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use poem::http::{header, HeaderValue, StatusCode};
+use poem::http::{HeaderValue, StatusCode, header};
 use poem::{Endpoint, Request, Response};
 use stanchion_index::{Body, IndexServer, IndexSource, Served};
 
@@ -31,7 +31,9 @@ pub fn index_endpoint<S>(server: IndexServer<S>) -> IndexEndpoint<S>
 where
     S: IndexSource + Send + Sync + 'static,
 {
-    IndexEndpoint { server: Arc::new(server) }
+    IndexEndpoint {
+        server: Arc::new(server),
+    }
 }
 
 /// A Poem endpoint serving a plugin index.
@@ -41,7 +43,9 @@ pub struct IndexEndpoint<S> {
 
 impl<S> Clone for IndexEndpoint<S> {
     fn clone(&self) -> Self {
-        IndexEndpoint { server: Arc::clone(&self.server) }
+        IndexEndpoint {
+            server: Arc::clone(&self.server),
+        }
     }
 }
 
@@ -67,7 +71,9 @@ where
             server.serve(&method, &path, if_none_match.as_deref())
         })
         .await
-        .map_err(|err| poem::Error::from_string(err.to_string(), StatusCode::INTERNAL_SERVER_ERROR))?;
+        .map_err(|err| {
+            poem::Error::from_string(err.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
 
         Ok(into_response(served))
     }
@@ -97,8 +103,8 @@ pub fn into_response(served: Served) -> Response {
     match served.body {
         Body::Bytes(bytes) => builder.body(bytes),
         // Read on a blocking worker, delivered through a bounded channel.
-        Body::Reader(reader) => {
-            builder.body(poem::Body::from_bytes_stream(stanchion_index::chunks(reader)))
-        }
+        Body::Reader(reader) => builder.body(poem::Body::from_bytes_stream(
+            stanchion_index::chunks(reader),
+        )),
     }
 }

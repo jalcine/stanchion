@@ -51,12 +51,18 @@ impl Blob {
     /// A package a source already holds in memory.
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         let len = bytes.len() as u64;
-        Blob { reader: Box::new(std::io::Cursor::new(bytes)), len: Some(len) }
+        Blob {
+            reader: Box::new(std::io::Cursor::new(bytes)),
+            len: Some(len),
+        }
     }
 
     /// A package read from anywhere, with a length if it is known.
     pub fn from_reader(reader: impl Read + Send + 'static, len: Option<u64>) -> Self {
-        Blob { reader: Box::new(reader), len }
+        Blob {
+            reader: Box::new(reader),
+            len,
+        }
     }
 }
 

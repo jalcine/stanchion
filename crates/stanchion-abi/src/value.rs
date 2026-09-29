@@ -55,7 +55,10 @@ pub fn value_to_toml(value: &Value) -> Result<toml::Value, String> {
         Value::Float(value) => toml::Value::Float(*value),
         Value::Str(value) => toml::Value::String(value.clone()),
         Value::List(items) => toml::Value::Array(
-            items.iter().map(value_to_toml).collect::<Result<Vec<_>, _>>()?,
+            items
+                .iter()
+                .map(value_to_toml)
+                .collect::<Result<Vec<_>, _>>()?,
         ),
         Value::Map(entries) => {
             let mut table = toml::Table::new();
@@ -81,22 +84,30 @@ pub fn toml_to_value(value: &toml::Value) -> Value {
         toml::Value::Datetime(value) => Value::Str(value.to_string()),
         toml::Value::Array(items) => Value::List(items.iter().map(toml_to_value).collect()),
         toml::Value::Table(table) => Value::Map(
-            table.iter().map(|(key, value)| (key.clone(), toml_to_value(value))).collect(),
+            table
+                .iter()
+                .map(|(key, value)| (key.clone(), toml_to_value(value)))
+                .collect(),
         ),
     }
 }
 
 /// Converts a whole manifest table, the form a grant's parameters arrive in.
 pub fn table_to_map(table: &toml::Table) -> Value {
-    Value::Map(table.iter().map(|(key, value)| (key.clone(), toml_to_value(value))).collect())
+    Value::Map(
+        table
+            .iter()
+            .map(|(key, value)| (key.clone(), toml_to_value(value)))
+            .collect(),
+    )
 }
 
 #[cfg(feature = "lua")]
 pub mod lua {
     use super::Value;
     use mlua::{Lua, LuaString, Table, Value as LuaValue};
-    use std::collections::BTreeMap;
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
 
     thread_local! {
         pub static FUNCTION_CACHE: RefCell<Option<LuaValue>> = RefCell::new(None);
@@ -126,7 +137,11 @@ pub mod lua {
             }
             Value::Function => FUNCTION_CACHE.with(|cache| {
                 cache.borrow_mut().take().map_or_else(
-                    || Err(mlua::Error::RuntimeError("cached function not found".to_string())),
+                    || {
+                        Err(mlua::Error::RuntimeError(
+                            "cached function not found".to_string(),
+                        ))
+                    },
                     Ok,
                 )
             }),
@@ -148,7 +163,11 @@ pub mod lua {
                 });
                 Value::Function
             }
-            LuaValue::UserData(_) | LuaValue::Thread(_) | LuaValue::LightUserData(_) | LuaValue::Error(_) | LuaValue::Other(_) => {
+            LuaValue::UserData(_)
+            | LuaValue::Thread(_)
+            | LuaValue::LightUserData(_)
+            | LuaValue::Error(_)
+            | LuaValue::Other(_) => {
                 // FFI cannot represent these types, use Nil as fallback
                 Value::Nil
             }

@@ -10,8 +10,8 @@ use stanchion::dist::index::{DirectoryIndex, Freshness, PluginReleases, Release}
 use stanchion::dist::install::{PluginSource, SourceError};
 use stanchion::dist::package::{self, Limits};
 use stanchion::dist::{IndexError, Installer, PluginIndex};
-use stanchion_lua::lua_class;
 use stanchion::registry::{DirectoryDigest, LockError, Lockfile, Registry, Sandbox};
+use stanchion_lua::lua_class;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;

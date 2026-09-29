@@ -390,8 +390,10 @@ fn a_group_shares_one_instruction_budget() -> TestResult {
         &wired_source("island", None),
     )?;
 
-    let mut registry: Registry<ProbeClass> =
-        Registry::grouped(Lua::new(), Sandbox::restricted().instruction_limit(10_000_000));
+    let mut registry: Registry<ProbeClass> = Registry::grouped(
+        Lua::new(),
+        Sandbox::restricted().instruction_limit(10_000_000),
+    );
     assert!(registry.load_dir(root.path())?.is_clean());
 
     let used = |name: &str| {

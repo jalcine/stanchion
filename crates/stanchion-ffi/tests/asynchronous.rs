@@ -1,7 +1,12 @@
 //! The async surface: plugin methods that yield, and the guard that survives it.
 
 #![cfg(feature = "async")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 
 use std::fs;
 use std::path::Path;
@@ -70,7 +75,8 @@ async fn an_async_call_drives_a_yielding_method() -> TestResult {
         Value::Str("awake".to_string())
     );
     assert_eq!(
-        host.call_async("sleeper", "double", &[Value::Int(21)]).await?,
+        host.call_async("sleeper", "double", &[Value::Int(21)])
+            .await?,
         Value::Int(42)
     );
     Ok(())
@@ -155,7 +161,10 @@ async fn re_entry_from_an_async_call_is_caught_across_threads() -> TestResult {
     });
     let host = Arc::new(
         Stanchion::builder()
-            .capability("greet", Arc::clone(&provider) as Arc<dyn CapabilityProvider>)
+            .capability(
+                "greet",
+                Arc::clone(&provider) as Arc<dyn CapabilityProvider>,
+            )
             .build()?,
     );
     *provider.host.lock().unwrap() = Some(Arc::clone(&host));

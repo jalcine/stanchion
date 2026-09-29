@@ -155,11 +155,20 @@ impl fmt::Display for Change {
         match self {
             Change::CapabilityAdded { name } => write!(f, "+ capability `{name}`"),
             Change::CapabilityRemoved { name } => write!(f, "- capability `{name}`"),
-            Change::CapabilityParams { name, before, after, narrowed } => {
+            Change::CapabilityParams {
+                name,
+                before,
+                after,
+                narrowed,
+            } => {
                 let marker = if *narrowed { "~" } else { "!" };
                 write!(f, "{marker} capability `{name}`: {before} -> {after}")
             }
-            Change::CapabilityOptionality { name, before, after } => {
+            Change::CapabilityOptionality {
+                name,
+                before,
+                after,
+            } => {
                 let render = |optional: bool| if optional { "optional" } else { "required" };
                 write!(
                     f,
@@ -173,7 +182,10 @@ impl fmt::Display for Change {
             }
             Change::DependencyRemoved { name } => write!(f, "- dependency `{name}`"),
             Change::RockAdded { name, requirement } => {
-                write!(f, "+ rock `{name}` {requirement} (unsigned, outside the sandbox)")
+                write!(
+                    f,
+                    "+ rock `{name}` {requirement} (unsigned, outside the sandbox)"
+                )
             }
             Change::RockRemoved { name } => write!(f, "- rock `{name}`"),
             Change::EntryChanged { before, after } => {
@@ -183,7 +195,10 @@ impl fmt::Display for Change {
                 write!(f, "! signer: {before} -> {after}")
             }
             Change::NotNewer { before, after } => {
-                write!(f, "! version {after} does not follow the installed {before}")
+                write!(
+                    f,
+                    "! version {after} does not follow the installed {before}"
+                )
             }
         }
     }
@@ -213,7 +228,10 @@ impl UpgradeReview {
         let mut changes = Vec::new();
 
         if to <= from {
-            changes.push(Change::NotNewer { before: from.clone(), after: to.clone() });
+            changes.push(Change::NotNewer {
+                before: from.clone(),
+                after: to.clone(),
+            });
         }
 
         if installed.entry != candidate.entry {
@@ -231,20 +249,24 @@ impl UpgradeReview {
             .chain(candidate.dependencies.keys())
             .collect();
         for name in names {
-            match (installed.dependencies.get(name), candidate.dependencies.get(name)) {
+            match (
+                installed.dependencies.get(name),
+                candidate.dependencies.get(name),
+            ) {
                 (None, Some(spec)) => changes.push(Change::DependencyAdded {
                     name: name.clone(),
                     requirement: spec.requirement().to_string(),
                 }),
-                (Some(_), None) => {
-                    changes.push(Change::DependencyRemoved { name: name.clone() })
-                }
+                (Some(_), None) => changes.push(Change::DependencyRemoved { name: name.clone() }),
                 _ => {}
             }
         }
 
-        let rocks: BTreeSet<&String> =
-            installed.rocks.keys().chain(candidate.rocks.keys()).collect();
+        let rocks: BTreeSet<&String> = installed
+            .rocks
+            .keys()
+            .chain(candidate.rocks.keys())
+            .collect();
         for name in rocks {
             match (installed.rocks.get(name), candidate.rocks.get(name)) {
                 (None, Some(requirement)) => changes.push(Change::RockAdded {
@@ -256,7 +278,12 @@ impl UpgradeReview {
             }
         }
 
-        UpgradeReview { name: installed.name.clone(), from, to, changes }
+        UpgradeReview {
+            name: installed.name.clone(),
+            from,
+            to,
+            changes,
+        }
     }
 
     /// Records that the upgrade is signed by a different identity.
@@ -369,7 +396,9 @@ fn narrows(before: &toml::Table, after: &toml::Table) -> bool {
     }
     // A key that constrained the old request and is gone from the new one is a
     // widening, not a simplification.
-    before.keys().all(|key| key == OPTIONAL_KEY || after.contains_key(key))
+    before
+        .keys()
+        .all(|key| key == OPTIONAL_KEY || after.contains_key(key))
 }
 
 /// Renders a parameter table on one line, for a diff a person reads.

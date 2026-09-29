@@ -170,7 +170,9 @@ impl Freshness {
         };
 
         let deadline = OffsetDateTime::parse(expires, &Rfc3339).map_err(|err| {
-            IndexError::Malformed(format!("{what}: `{expires}` is not an RFC 3339 timestamp: {err}"))
+            IndexError::Malformed(format!(
+                "{what}: `{expires}` is not an RFC 3339 timestamp: {err}"
+            ))
         })?;
         if now > deadline {
             return Err(IndexError::Stale {
@@ -472,7 +474,10 @@ impl DirectoryIndex {
     /// Defaults to [`Freshness::Lenient`]: a directory you generated yourself has no
     /// separate party who could withhold an update from you.
     pub fn new(base: impl Into<PathBuf>) -> Self {
-        DirectoryIndex { base: base.into(), freshness: Freshness::Lenient }
+        DirectoryIndex {
+            base: base.into(),
+            freshness: Freshness::Lenient,
+        }
     }
 
     /// How strictly to treat document expiry.

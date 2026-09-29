@@ -73,17 +73,11 @@ mod guard;
 mod host;
 mod value;
 
+pub use backend::{BackendRegistry, LuaBackend, PluginBackend, PluginInstance};
 pub use budget::CallBudget;
-pub use backend::{
-    BackendRegistry, LuaBackend, PluginBackend, PluginInstance,
-};
-pub use callback::{
-    CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Policy,
-};
+pub use callback::{CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Policy};
 pub use error::{Error, Result};
-pub use host::{
-    AuditEntry, Builder, Failure, LoadReport, Outcome, PluginInfo, Stanchion,
-};
+pub use host::{AuditEntry, Builder, Failure, LoadReport, Outcome, PluginInfo, Stanchion};
 pub use value::Value;
 
 /// The declarative configuration a host is built from.

@@ -4,13 +4,11 @@ use std::time::Duration;
 
 use http::{Method, StatusCode};
 use sha2::{Digest, Sha256};
-use stanchion_dist::{
-    validate_name, IndexError, CATALOG_PATH, INDEX_SCHEMA,
-};
-use time::format_description::well_known::Rfc3339;
+use stanchion_dist::{CATALOG_PATH, INDEX_SCHEMA, IndexError, validate_name};
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
-use crate::source::{Blob, IndexSource, BLOBS_PREFIX};
+use crate::source::{BLOBS_PREFIX, Blob, IndexSource};
 
 /// How long a served document stays believable, unless configured otherwise.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(3600);
@@ -108,7 +106,10 @@ pub struct IndexServer<S> {
 impl<S: IndexSource> IndexServer<S> {
     /// Serves `source` with [`DEFAULT_TTL`].
     pub fn new(source: S) -> Self {
-        IndexServer { source, ttl: DEFAULT_TTL }
+        IndexServer {
+            source,
+            ttl: DEFAULT_TTL,
+        }
     }
 
     /// Sets how long a served document stays believable.
@@ -170,7 +171,10 @@ impl<S: IndexSource> IndexServer<S> {
         if method == Method::HEAD {
             // The headers, and nothing read: a HEAD on a package must not pull it
             // off the disk.
-            return Served { body: Body::empty(), ..served };
+            return Served {
+                body: Body::empty(),
+                ..served
+            };
         }
         served
     }
@@ -249,9 +253,8 @@ impl<S: IndexSource> IndexServer<S> {
     /// client refetches at least once per window rather than riding a 304 past expiry.
     fn window(&self, now: OffsetDateTime) -> (String, String) {
         let start = self.window_start(now);
-        let expires = start.saturating_add(
-            time::Duration::try_from(self.ttl).unwrap_or(time::Duration::HOUR),
-        );
+        let expires = start
+            .saturating_add(time::Duration::try_from(self.ttl).unwrap_or(time::Duration::HOUR));
         (
             start.format(&Rfc3339).unwrap_or_default(),
             expires.format(&Rfc3339).unwrap_or_default(),

@@ -61,11 +61,9 @@ impl PluginBackend for WasmBackend {
 
     fn load(&self, manifest: &Manifest, dir: &Path) -> Result<Box<dyn PluginInstance>> {
         let wasm_path = dir.join(&manifest.entry);
-        let wasm_binary = std::fs::read(&wasm_path).map_err(|e| {
-            Error::Plugin {
-                plugin: manifest.name.clone(),
-                reason: format!("Failed to read {}: {}", wasm_path.display(), e),
-            }
+        let wasm_binary = std::fs::read(&wasm_path).map_err(|e| Error::Plugin {
+            plugin: manifest.name.clone(),
+            reason: format!("Failed to read {}: {}", wasm_path.display(), e),
         })?;
         self.compile(manifest, &wasm_binary)
     }
@@ -85,11 +83,12 @@ impl PluginBackend for WasmBackend {
 impl WasmBackend {
     /// Builds a [`WasmPluginInstance`] from module bytes.
     fn compile(&self, manifest: &Manifest, wasm_binary: &[u8]) -> Result<Box<dyn PluginInstance>> {
-        let runtime =
-            WasmRuntime::new(wasm_binary, self.limits_for(manifest)).map_err(|e| Error::Plugin {
+        let runtime = WasmRuntime::new(wasm_binary, self.limits_for(manifest)).map_err(|e| {
+            Error::Plugin {
                 plugin: manifest.name.clone(),
                 reason: e,
-            })?;
+            }
+        })?;
 
         // Pick the entry point deterministically. `exports()` iterates a HashMap, whose
         // order is unspecified, so "the first export" could resolve to a different
@@ -132,10 +131,17 @@ pub struct WasmPluginInstance {
 
 impl PluginInstance for WasmPluginInstance {
     fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
-        let mut runtime = self.runtime.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut runtime = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // If the caller specifies a method name, use it as the export name;
         // otherwise fall back to the module's default entry-point export.
-        let export = if method.is_empty() { &self.entry } else { method };
+        let export = if method.is_empty() {
+            &self.entry
+        } else {
+            method
+        };
         runtime.call(export, args).map_err(Error::Wasm)
     }
 

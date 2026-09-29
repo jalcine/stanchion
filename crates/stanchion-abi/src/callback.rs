@@ -67,6 +67,10 @@ pub struct Grant {
 impl Grant {
     /// Creates a new `Grant`.
     pub fn new(plugin: String, name: String, params: Value) -> Self {
-        Self { plugin, name, params }
+        Self {
+            plugin,
+            name,
+            params,
+        }
     }
 }

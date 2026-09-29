@@ -4,9 +4,9 @@
 use std::fs;
 use std::path::Path;
 
+use stanchion::registry::{FailureReason, LoadFailure, Outcome, Registry};
 use stanchion_lua::lua_class;
 use stanchion_lua::mlua::{Lua, Result, Table};
-use stanchion::registry::{FailureReason, LoadFailure, Outcome, Registry};
 use tempfile::TempDir;
 
 /// Tests report failures as errors rather than panicking, so a broken assumption

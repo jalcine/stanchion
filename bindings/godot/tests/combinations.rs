@@ -42,7 +42,12 @@ fn s(text: &str) -> Value {
 }
 
 fn map(pairs: &[(&str, Value)]) -> Value {
-    Value::Map(pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect())
+    Value::Map(
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect(),
+    )
 }
 
 /// One annotated move, with the fields `annotated_moves` fills and sane defaults.
@@ -112,7 +117,10 @@ impl Move {
             Value::List(self.attacks.iter().map(|a| s(a)).collect()),
         );
         entries.insert("san".into(), s(self.san));
-        entries.insert("is_discovered_check".into(), Value::Bool(self.is_discovered_check));
+        entries.insert(
+            "is_discovered_check".into(),
+            Value::Bool(self.is_discovered_check),
+        );
         entries.insert("creates_pin".into(), Value::Bool(self.creates_pin));
         entries.insert("creates_skewer".into(), Value::Bool(self.creates_skewer));
         entries.insert("tactic_value".into(), Value::Int(self.tactic_value));
@@ -129,8 +137,14 @@ fn position_with_history(fullmove: i64, history: &[&str], moves: &[Move]) -> Val
         ("side", s("w")),
         ("fullmove", Value::Int(fullmove)),
         ("in_check", Value::Bool(false)),
-        ("history", Value::List(history.iter().map(|m| s(m)).collect())),
-        ("moves", Value::List(moves.iter().map(Move::value).collect())),
+        (
+            "history",
+            Value::List(history.iter().map(|m| s(m)).collect()),
+        ),
+        (
+            "moves",
+            Value::List(moves.iter().map(Move::value).collect()),
+        ),
     ])
 }
 
@@ -156,10 +170,25 @@ fn picked(value: &Value) -> Option<(i64, i64)> {
 fn checkmate_prefers_the_mating_move() {
     let host = host();
     let moves = [
-        Move { from: 10, to: 26, ..Default::default() },
-        Move { from: 3, to: 39, piece: "Q", to_sq: "h5", is_mate: true, ..Default::default() },
+        Move {
+            from: 10,
+            to: 26,
+            ..Default::default()
+        },
+        Move {
+            from: 3,
+            to: 39,
+            piece: "Q",
+            to_sq: "h5",
+            is_mate: true,
+            ..Default::default()
+        },
     ];
-    let picked = picked(&host.call("checkmate", "suggest", &[position(10, &moves)]).unwrap());
+    let picked = picked(
+        &host
+            .call("checkmate", "suggest", &[position(10, &moves)])
+            .unwrap(),
+    );
     assert_eq!(picked, Some((3, 39)), "should play the mate");
 }
 
@@ -167,27 +196,78 @@ fn checkmate_prefers_the_mating_move() {
 fn win_material_takes_the_biggest_piece() {
     let host = host();
     let moves = [
-        Move { from: 12, to: 20, ..Default::default() },
-        Move { from: 12, to: 28, capture: "P", captured_value: 1, to_sq: "e5", ..Default::default() },
-        Move { from: 33, to: 54, piece: "B", capture: "Q", captured_value: 9, to_sq: "g7", ..Default::default() },
+        Move {
+            from: 12,
+            to: 20,
+            ..Default::default()
+        },
+        Move {
+            from: 12,
+            to: 28,
+            capture: "P",
+            captured_value: 1,
+            to_sq: "e5",
+            ..Default::default()
+        },
+        Move {
+            from: 33,
+            to: 54,
+            piece: "B",
+            capture: "Q",
+            captured_value: 9,
+            to_sq: "g7",
+            ..Default::default()
+        },
     ];
-    let picked = picked(&host.call("win_material", "suggest", &[position(10, &moves)]).unwrap());
-    assert_eq!(picked, Some((33, 54)), "should grab the queen, not the pawn");
+    let picked = picked(
+        &host
+            .call("win_material", "suggest", &[position(10, &moves)])
+            .unwrap(),
+    );
+    assert_eq!(
+        picked,
+        Some((33, 54)),
+        "should grab the queen, not the pawn"
+    );
 }
 
 #[test]
 fn knight_fork_needs_two_valuable_targets() {
     let host = host();
-    let single = [Move { from: 1, to: 18, piece: "N", to_sq: "c3", attacks_valuable: 1, attacks: vec!["R"], ..Default::default() }];
+    let single = [Move {
+        from: 1,
+        to: 18,
+        piece: "N",
+        to_sq: "c3",
+        attacks_valuable: 1,
+        attacks: vec!["R"],
+        ..Default::default()
+    }];
     assert_eq!(
-        picked(&host.call("knight_fork", "suggest", &[position(15, &single)]).unwrap()),
+        picked(
+            &host
+                .call("knight_fork", "suggest", &[position(15, &single)])
+                .unwrap()
+        ),
         None,
         "one target is not a fork"
     );
 
-    let fork = [Move { from: 1, to: 20, piece: "N", to_sq: "e3", attacks_valuable: 2, attacks: vec!["Q", "R"], ..Default::default() }];
+    let fork = [Move {
+        from: 1,
+        to: 20,
+        piece: "N",
+        to_sq: "e3",
+        attacks_valuable: 2,
+        attacks: vec!["Q", "R"],
+        ..Default::default()
+    }];
     assert_eq!(
-        picked(&host.call("knight_fork", "suggest", &[position(15, &fork)]).unwrap()),
+        picked(
+            &host
+                .call("knight_fork", "suggest", &[position(15, &fork)])
+                .unwrap()
+        ),
         Some((1, 20)),
         "two valuable targets is a fork"
     );
@@ -197,10 +277,25 @@ fn knight_fork_needs_two_valuable_targets() {
 fn castle_safety_castles_when_it_can() {
     let host = host();
     let moves = [
-        Move { from: 8, to: 16, ..Default::default() },
-        Move { from: 4, to: 6, piece: "K", to_sq: "g1", is_castle: true, ..Default::default() },
+        Move {
+            from: 8,
+            to: 16,
+            ..Default::default()
+        },
+        Move {
+            from: 4,
+            to: 6,
+            piece: "K",
+            to_sq: "g1",
+            is_castle: true,
+            ..Default::default()
+        },
     ];
-    let picked = picked(&host.call("castle_safety", "suggest", &[position(8, &moves)]).unwrap());
+    let picked = picked(
+        &host
+            .call("castle_safety", "suggest", &[position(8, &moves)])
+            .unwrap(),
+    );
     assert_eq!(picked, Some((4, 6)));
 }
 
@@ -208,16 +303,34 @@ fn castle_safety_castles_when_it_can() {
 fn center_control_pushes_a_central_pawn_early_and_stays_quiet_late() {
     let host = host();
     let moves = [
-        Move { from: 8, to: 16, to_sq: "a3", ..Default::default() },
-        Move { from: 12, to: 28, to_sq: "e4", ..Default::default() },
+        Move {
+            from: 8,
+            to: 16,
+            to_sq: "a3",
+            ..Default::default()
+        },
+        Move {
+            from: 12,
+            to: 28,
+            to_sq: "e4",
+            ..Default::default()
+        },
     ];
     assert_eq!(
-        picked(&host.call("center_control", "suggest", &[position(1, &moves)]).unwrap()),
+        picked(
+            &host
+                .call("center_control", "suggest", &[position(1, &moves)])
+                .unwrap()
+        ),
         Some((12, 28)),
         "in the opening it takes the centre"
     );
     assert_eq!(
-        picked(&host.call("center_control", "suggest", &[position(20, &moves)]).unwrap()),
+        picked(
+            &host
+                .call("center_control", "suggest", &[position(20, &moves)])
+                .unwrap()
+        ),
         None,
         "past its window it declines"
     );
@@ -227,10 +340,26 @@ fn center_control_pushes_a_central_pawn_early_and_stays_quiet_late() {
 fn develop_pieces_brings_a_minor_off_the_back_rank() {
     let host = host();
     let moves = [
-        Move { from: 12, to: 28, to_sq: "e4", ..Default::default() },
-        Move { from: 6, to: 21, piece: "N", from_sq: "g1", to_sq: "f3", ..Default::default() },
+        Move {
+            from: 12,
+            to: 28,
+            to_sq: "e4",
+            ..Default::default()
+        },
+        Move {
+            from: 6,
+            to: 21,
+            piece: "N",
+            from_sq: "g1",
+            to_sq: "f3",
+            ..Default::default()
+        },
     ];
-    let picked = picked(&host.call("develop_pieces", "suggest", &[position(3, &moves)]).unwrap());
+    let picked = picked(
+        &host
+            .call("develop_pieces", "suggest", &[position(3, &moves)])
+            .unwrap(),
+    );
     assert_eq!(picked, Some((6, 21)), "develop the knight");
 }
 
@@ -239,19 +368,48 @@ fn openings_follow_the_book_line() {
     let host = host();
     // After 1.e4, the book (Ruy Lopez is first) wants 1...e5; offer it and a sideline.
     let moves = [
-        Move { from: 8, to: 16, to_sq: "a3", san: "a3", ..Default::default() },
-        Move { from: 52, to: 36, to_sq: "e5", san: "e5", ..Default::default() },
+        Move {
+            from: 8,
+            to: 16,
+            to_sq: "a3",
+            san: "a3",
+            ..Default::default()
+        },
+        Move {
+            from: 52,
+            to: 36,
+            to_sq: "e5",
+            san: "e5",
+            ..Default::default()
+        },
     ];
     let reply = picked(
-        &host.call("openings", "suggest", &[position_with_history(1, &["e4"], &moves)]).unwrap(),
+        &host
+            .call(
+                "openings",
+                "suggest",
+                &[position_with_history(1, &["e4"], &moves)],
+            )
+            .unwrap(),
     );
     assert_eq!(reply, Some((52, 36)), "reply into a book line");
 
     // Off every line, it declines.
-    let off = [Move { from: 8, to: 16, san: "a3", ..Default::default() }];
+    let off = [Move {
+        from: 8,
+        to: 16,
+        san: "a3",
+        ..Default::default()
+    }];
     assert_eq!(
         picked(
-            &host.call("openings", "suggest", &[position_with_history(2, &["h4", "h5"], &off)]).unwrap()
+            &host
+                .call(
+                    "openings",
+                    "suggest",
+                    &[position_with_history(2, &["h4", "h5"], &off)]
+                )
+                .unwrap()
         ),
         None,
         "no book line, no suggestion"
@@ -262,10 +420,26 @@ fn openings_follow_the_book_line() {
 fn discovered_check_prefers_the_unveiling_move() {
     let host = host();
     let moves = [
-        Move { from: 12, to: 20, ..Default::default() },
-        Move { from: 28, to: 44, piece: "N", san: "Nd6+", is_discovered_check: true, attacks_valuable: 1, ..Default::default() },
+        Move {
+            from: 12,
+            to: 20,
+            ..Default::default()
+        },
+        Move {
+            from: 28,
+            to: 44,
+            piece: "N",
+            san: "Nd6+",
+            is_discovered_check: true,
+            attacks_valuable: 1,
+            ..Default::default()
+        },
     ];
-    let picked = picked(&host.call("discovered_check", "suggest", &[position(15, &moves)]).unwrap());
+    let picked = picked(
+        &host
+            .call("discovered_check", "suggest", &[position(15, &moves)])
+            .unwrap(),
+    );
     assert_eq!(picked, Some((28, 44)));
 }
 
@@ -273,24 +447,64 @@ fn discovered_check_prefers_the_unveiling_move() {
 fn create_pin_takes_the_biggest_pin() {
     let host = host();
     let moves = [
-        Move { from: 5, to: 26, piece: "B", san: "Bc4", creates_pin: true, tactic_value: 3, ..Default::default() },
-        Move { from: 3, to: 39, piece: "Q", san: "Qh5", creates_pin: true, tactic_value: 9, ..Default::default() },
+        Move {
+            from: 5,
+            to: 26,
+            piece: "B",
+            san: "Bc4",
+            creates_pin: true,
+            tactic_value: 3,
+            ..Default::default()
+        },
+        Move {
+            from: 3,
+            to: 39,
+            piece: "Q",
+            san: "Qh5",
+            creates_pin: true,
+            tactic_value: 9,
+            ..Default::default()
+        },
     ];
-    let picked = picked(&host.call("create_pin", "suggest", &[position(12, &moves)]).unwrap());
+    let picked = picked(
+        &host
+            .call("create_pin", "suggest", &[position(12, &moves)])
+            .unwrap(),
+    );
     assert_eq!(picked, Some((3, 39)), "pin the more valuable piece");
 }
 
 #[test]
 fn skewer_fires_when_flagged() {
     let host = host();
-    let quiet = [Move { from: 8, to: 16, ..Default::default() }];
+    let quiet = [Move {
+        from: 8,
+        to: 16,
+        ..Default::default()
+    }];
     assert_eq!(
-        picked(&host.call("skewer", "suggest", &[position(20, &quiet)]).unwrap()),
+        picked(
+            &host
+                .call("skewer", "suggest", &[position(20, &quiet)])
+                .unwrap()
+        ),
         None,
     );
-    let moves = [Move { from: 0, to: 32, piece: "R", san: "Ra5", creates_skewer: true, tactic_value: 5, ..Default::default() }];
+    let moves = [Move {
+        from: 0,
+        to: 32,
+        piece: "R",
+        san: "Ra5",
+        creates_skewer: true,
+        tactic_value: 5,
+        ..Default::default()
+    }];
     assert_eq!(
-        picked(&host.call("skewer", "suggest", &[position(20, &moves)]).unwrap()),
+        picked(
+            &host
+                .call("skewer", "suggest", &[position(20, &moves)])
+                .unwrap()
+        ),
         Some((0, 32)),
     );
 }

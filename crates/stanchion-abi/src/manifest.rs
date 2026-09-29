@@ -252,13 +252,20 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_plugin_names() {
-        for name in ["", ".", "..", "a/b", "../evil", "has space", "a:b", &"x".repeat(129)] {
+        for name in [
+            "",
+            ".",
+            "..",
+            "a/b",
+            "../evil",
+            "has space",
+            "a:b",
+            &"x".repeat(129),
+        ] {
             assert!(validate_name(name).is_err(), "`{name}` must be refused");
         }
         // A manifest carrying a bad name fails validate() as a whole.
-        assert!(manifest("lua", "init.lua")
-            .validate()
-            .is_ok());
+        assert!(manifest("lua", "init.lua").validate().is_ok());
         let mut bad = manifest("lua", "init.lua");
         bad.name = "../evil".to_string();
         assert!(bad.validate().is_err(), "a path-like name must be refused");

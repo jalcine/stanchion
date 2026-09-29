@@ -99,6 +99,12 @@ documentation that no longer compiles:
 | [`event_bus`](crates/stanchion/examples/event_bus.rs)     | a plugin directory: dependency ordering, published `exports`, failure isolation at load and dispatch                                 |
 | [`untrusted`](crates/stanchion/examples/untrusted.rs)     | running code you did not write: sandbox, memory and instruction limits, a policy that narrows a capability, revocation, static audit |
 | [`remote_host`](crates/stanchion/examples/remote_host.rs) | plugins in a child process, calling back into the application — and surviving one that kills its host                                |
+| [`signed`](crates/stanchion/examples/signed.rs) | provenance tiers authority: a stub verifier, first-party `kv`, unsigned degradation, revocation                                         |
+| [`hot_reload`](crates/stanchion/examples/hot_reload.rs) | editing a provider and reloading it, with dependents following through the exports proxy                                              |
+| [`pinned`](crates/stanchion/examples/pinned.rs) | the lockfile as trust anchor: digest pins, substitution and sibling refusal, upgrade review                                           |
+| [`rocks`](crates/stanchion/examples/rocks.rs) | `[rocks]` fail-closed: no tree or an empty tree refuses the plugin without touching the network                                       |
+| [`add`](crates/stanchion-wasm/examples/add.rs) | the WASM boundary: numeric calls, strict argument checks, fuel trapping an infinite loop                                             |
+| [`plugin-index`](examples/plugin-index/) | a static index on disk: catalog and release documents a host resolves and pins                                                      |
 
 ```sh
 cargo run -p stanchion --features lua54,vendored,registry --example untrusted

@@ -1,0 +1,5 @@
+root = true
+
+[*.kt]
+# Composables are UpperCamelCase by convention; don't flag @Composable functions.
+ktlint_function_naming_ignore_when_annotated_with = Composable

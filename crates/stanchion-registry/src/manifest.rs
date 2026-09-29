@@ -229,9 +229,15 @@ mod tests {
         }
 
         // A well-formed entry inside the directory is still accepted.
-        fs::write(dir.join(MANIFEST_FILE), "name = \"p\"\nentry = \"init.lua\"\n")
-            .expect("write manifest");
-        assert!(read_manifest(&dir).is_ok(), "an in-directory entry must load");
+        fs::write(
+            dir.join(MANIFEST_FILE),
+            "name = \"p\"\nentry = \"init.lua\"\n",
+        )
+        .expect("write manifest");
+        assert!(
+            read_manifest(&dir).is_ok(),
+            "an in-directory entry must load"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

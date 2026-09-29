@@ -225,7 +225,13 @@ impl WasmInstance {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
 mod tests {
     use super::*;
     use stanchion_abi::Value;
@@ -233,7 +239,11 @@ mod tests {
     fn i32_ok(n: i64) {
         let val = Value::Int(n);
         let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::I32]);
-        assert!(res.is_ok(), "expected {n} to fit in i32, got {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "expected {n} to fit in i32, got {:?}",
+            res.err()
+        );
         let vals = res.unwrap();
         assert_eq!(vals.len(), 1, "expected one val");
         match vals.first().unwrap() {
@@ -256,7 +266,11 @@ mod tests {
     fn f32_ok(f: f64) {
         let val = Value::Float(f);
         let res = values_to_wasm(std::slice::from_ref(&val), &[ValType::F32]);
-        assert!(res.is_ok(), "expected {f} to fit in f32, got {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "expected {f} to fit in f32, got {:?}",
+            res.err()
+        );
     }
 
     fn f32_err(f: f64) {
@@ -329,7 +343,9 @@ mod tests {
         let ok = rt.call("id", &[Value::Int(42)]).expect("call ok");
         assert_eq!(ok, Value::Int(42));
         // out-of-range is rejected before the call
-        let err = rt.call("id", &[Value::Int(0x1_0000_0000)]).expect_err("should reject");
+        let err = rt
+            .call("id", &[Value::Int(0x1_0000_0000)])
+            .expect_err("should reject");
         assert!(err.contains("does not fit in an i32"), "err: {err}");
     }
 
@@ -386,4 +402,3 @@ mod tests {
         );
     }
 }
-

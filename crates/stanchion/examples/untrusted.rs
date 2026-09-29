@@ -7,9 +7,9 @@
 
 use std::path::PathBuf;
 
+use stanchion::registry::{CapabilityRequest, Decision, Registry, Rules, Sandbox, toml};
 use stanchion_lua::lua_class;
 use stanchion_lua::mlua::{Lua, Result, Table, Value};
-use stanchion::registry::{toml, CapabilityRequest, Decision, Registry, Rules, Sandbox};
 
 #[lua_class]
 pub trait Task {
@@ -45,20 +45,25 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .create_function(move |_, key: String| Ok(format!("{namespace}/{key}")))
                 .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
             // A function crosses the ABI by being parked in its cache.
-            Ok(stanchion_abi::value::lua::lua_to_abi(&lua, &Value::Function(kv)))
+            Ok(stanchion_abi::value::lua::lua_to_abi(
+                &lua,
+                &Value::Function(kv),
+            ))
         });
         Ok(())
     })
-    .with_policy(Rules::deny_all().allow_with("kv", |request: &CapabilityRequest| {
-        // The plugin asked for `tenant-7`. The host grants a namespace of its own
-        // choosing instead: a policy that can only say yes or no is a rubber stamp.
-        let mut narrowed = toml::Table::new();
-        narrowed.insert(
-            "namespace".to_string(),
-            toml::Value::String(format!("sandboxed/{}", request.plugin)),
-        );
-        Decision::GrantWith(narrowed)
-    }));
+    .with_policy(
+        Rules::deny_all().allow_with("kv", |request: &CapabilityRequest| {
+            // The plugin asked for `tenant-7`. The host grants a namespace of its own
+            // choosing instead: a policy that can only say yes or no is a rubber stamp.
+            let mut narrowed = toml::Table::new();
+            narrowed.insert(
+                "namespace".to_string(),
+                toml::Value::String(format!("sandboxed/{}", request.plugin)),
+            );
+            Decision::GrantWith(narrowed)
+        }),
+    );
 
     let report = registry.load_dir(plugin_root())?;
     println!("loaded: {:?}\n", report.loaded);
@@ -73,14 +78,22 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("\ngranted to `greedy`: {:?}", registry
-        .get("greedy")
-        .map(|plugin| plugin.granted_capabilities().collect::<Vec<_>>()));
+    println!(
+        "\ngranted to `greedy`: {:?}",
+        registry
+            .get("greedy")
+            .map(|plugin| plugin.granted_capabilities().collect::<Vec<_>>())
+    );
 
     // A capability can be taken back from a running plugin.
     registry.revoke("greedy", "kv")?;
     print!("after revoking kv:   ");
-    match registry.get("greedy").ok_or("greedy should be loaded")?.instance().run() {
+    match registry
+        .get("greedy")
+        .ok_or("greedy should be loaded")?
+        .instance()
+        .run()
+    {
         Ok(text) => println!("{text}"),
         Err(err) => println!("{}", err.to_string().lines().next().unwrap_or("")),
     }

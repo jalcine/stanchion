@@ -20,14 +20,14 @@ use std::sync::Arc;
 
 use magnus::value::{Opaque, ReprValue};
 use magnus::{
-    Error, ExceptionClass, Module, Object, RArray, RHash, Ruby, Symbol, TryConvert,
-    Value as Rb, function, method,
+    Error, ExceptionClass, Module, Object, RArray, RHash, Ruby, Symbol, TryConvert, Value as Rb,
+    function, method,
 };
 
 use stanchion_ffi::{
     CapabilityCall as FfiCall, CapabilityProvider, CapabilityRequest as FfiRequest,
-    Decision as FfiDecision, Error as FfiError, HostConfig, Policy as FfiPolicy,
-    Stanchion as Host, Value as FfiValue,
+    Decision as FfiDecision, Error as FfiError, HostConfig, Policy as FfiPolicy, Stanchion as Host,
+    Value as FfiValue,
 };
 
 mod value;
@@ -138,8 +138,7 @@ impl FfiPolicy for RubyPolicy {
         match <&Decision>::try_convert(answer) {
             Ok(decision) => decision.inner.clone(),
             Err(_) => FfiDecision::Deny(
-                "a policy must return a Stanchion::Decision: grant, grant_with or deny"
-                    .to_string(),
+                "a policy must return a Stanchion::Decision: grant, grant_with or deny".to_string(),
             ),
         }
     }
@@ -170,7 +169,10 @@ fn describe_call(ruby: &Ruby, call: &FfiCall) -> Result<RHash, Error> {
 fn describe_request(ruby: &Ruby, request: &FfiRequest) -> Result<RHash, Error> {
     let hash = ruby.hash_new();
     hash.aset(ruby.to_symbol("plugin"), ruby.str_new(&request.plugin))?;
-    hash.aset(ruby.to_symbol("capability"), ruby.str_new(&request.capability))?;
+    hash.aset(
+        ruby.to_symbol("capability"),
+        ruby.str_new(&request.capability),
+    )?;
     hash.aset(ruby.to_symbol("params"), to_ruby(ruby, &request.params)?)?;
     hash.aset(ruby.to_symbol("optional"), request.optional)?;
     hash.aset(ruby.to_symbol("signer"), ruby.str_new(&request.signer))?;
@@ -379,34 +381,46 @@ impl Registry {
     /// which the plain call cannot drive.
     fn call_async(ruby: &Ruby, rb_self: &Registry, args: &[Rb]) -> Result<Rb, Error> {
         let (plugin, method, arguments) = split_call(ruby, args)?;
-        let value = futures_executor::block_on(rb_self.inner.call_async(&plugin, &method, &arguments))
-            .map_err(|err| raise(ruby, err))?;
+        let value =
+            futures_executor::block_on(rb_self.inner.call_async(&plugin, &method, &arguments))
+                .map_err(|err| raise(ruby, err))?;
         to_ruby(ruby, &value)
     }
 
     /// Dispatches a yielding method to every plugin, in turn.
     fn dispatch_async(ruby: &Ruby, rb_self: &Registry, args: &[Rb]) -> Result<RArray, Error> {
         let (method, arguments) = split_dispatch(ruby, args)?;
-        let outcomes = futures_executor::block_on(rb_self.inner.dispatch_async(&method, &arguments))
-            .map_err(|err| raise(ruby, err))?;
+        let outcomes =
+            futures_executor::block_on(rb_self.inner.dispatch_async(&method, &arguments))
+                .map_err(|err| raise(ruby, err))?;
         outcomes_to_ruby(ruby, outcomes)
     }
 
     /// Re-reads one plugin from disk.
     fn reload(ruby: &Ruby, rb_self: &Registry, plugin: String) -> Result<(), Error> {
-        rb_self.inner.reload(&plugin).map_err(|err| raise(ruby, err))
+        rb_self
+            .inner
+            .reload(&plugin)
+            .map_err(|err| raise(ruby, err))
     }
 
     /// Unbinds a granted capability from a live plugin.
-    fn revoke(ruby: &Ruby, rb_self: &Registry, plugin: String, capability: String) -> Result<bool, Error> {
-        rb_self.inner
+    fn revoke(
+        ruby: &Ruby,
+        rb_self: &Registry,
+        plugin: String,
+        capability: String,
+    ) -> Result<bool, Error> {
+        rb_self
+            .inner
             .revoke(&plugin, &capability)
             .map_err(|err| raise(ruby, err))
     }
 
     /// Whether plugins share one Lua state: `"shared"` or `"per-plugin"`.
     fn isolation(ruby: &Ruby, rb_self: &Registry) -> Result<String, Error> {
-        rb_self.inner
+        rb_self
+            .inner
             .isolation()
             .map(str::to_string)
             .map_err(|err| raise(ruby, err))
@@ -417,7 +431,10 @@ impl Registry {
     }
 
     fn inspect(ruby: &Ruby, rb_self: &Registry) -> Result<String, Error> {
-        Ok(format!("#<Stanchion::Registry {} plugins>", Registry::length(ruby, rb_self)?))
+        Ok(format!(
+            "#<Stanchion::Registry {} plugins>",
+            Registry::length(ruby, rb_self)?
+        ))
     }
 }
 
@@ -449,8 +466,7 @@ fn outcomes_to_ruby(ruby: &Ruby, outcomes: Vec<stanchion_ffi::Outcome>) -> Resul
 
 /// `call(plugin, method, *args)`.
 fn split_call(ruby: &Ruby, args: &[Rb]) -> Result<(String, String, Vec<FfiValue>), Error> {
-    let parsed =
-        magnus::scan_args::scan_args::<(String, String), (), RArray, (), (), ()>(args)?;
+    let parsed = magnus::scan_args::scan_args::<(String, String), (), RArray, (), (), ()>(args)?;
     let (plugin, method) = parsed.required;
     Ok((plugin, method, convert(ruby, parsed.splat)?))
 }

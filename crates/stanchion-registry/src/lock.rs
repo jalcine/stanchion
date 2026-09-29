@@ -88,15 +88,27 @@ impl fmt::Display for LockError {
             LockError::Unlocked(name) => {
                 write!(f, "`{name}` is not in the lockfile")
             }
-            LockError::DigestMismatch { name, expected, found } => write!(
+            LockError::DigestMismatch {
+                name,
+                expected,
+                found,
+            } => write!(
                 f,
                 "`{name}` is pinned to {expected} but these bytes are {found}"
             ),
-            LockError::SignerMismatch { name, expected, found } => write!(
+            LockError::SignerMismatch {
+                name,
+                expected,
+                found,
+            } => write!(
                 f,
                 "`{name}` is pinned to signer `{expected}` but was signed by {found}"
             ),
-            LockError::VersionMismatch { name, expected, found } => {
+            LockError::VersionMismatch {
+                name,
+                expected,
+                found,
+            } => {
                 write!(f, "`{name}` is pinned at {expected} but declares {found}")
             }
             LockError::Malformed(message) => write!(f, "{message}"),
@@ -179,7 +191,9 @@ impl LockedPlugin {
 
     /// The pinned digest as bare lowercase hex, without the `sha256:` prefix.
     pub fn hex(&self) -> &str {
-        self.digest.strip_prefix(SHA256_PREFIX).unwrap_or(&self.digest)
+        self.digest
+            .strip_prefix(SHA256_PREFIX)
+            .unwrap_or(&self.digest)
     }
 }
 
@@ -211,7 +225,10 @@ fn default_lock_version() -> u32 {
 
 impl Default for Lockfile {
     fn default() -> Self {
-        Lockfile { version: LOCK_VERSION, plugins: BTreeMap::new() }
+        Lockfile {
+            version: LOCK_VERSION,
+            plugins: BTreeMap::new(),
+        }
     }
 }
 
@@ -235,9 +252,8 @@ impl Lockfile {
     /// Useful for the first run of a host that writes its lockfile as it installs.
     pub fn load_or_empty(path: impl AsRef<Path>) -> Result<Self, LockError> {
         match fs::read_to_string(path.as_ref()) {
-            Ok(source) => Lockfile::parse(&source).map_err(|err| {
-                LockError::Malformed(format!("{}: {err}", path.as_ref().display()))
-            }),
+            Ok(source) => Lockfile::parse(&source)
+                .map_err(|err| LockError::Malformed(format!("{}: {err}", path.as_ref().display()))),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Lockfile::new()),
             Err(err) => Err(LockError::Malformed(format!(
                 "{}: {err}",
@@ -279,9 +295,8 @@ impl Lockfile {
     /// Writes the lockfile to disk.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), LockError> {
         let rendered = self.to_toml()?;
-        fs::write(path.as_ref(), rendered).map_err(|err| {
-            LockError::Malformed(format!("{}: {err}", path.as_ref().display()))
-        })
+        fs::write(path.as_ref(), rendered)
+            .map_err(|err| LockError::Malformed(format!("{}: {err}", path.as_ref().display())))
     }
 
     /// Pins one plugin, replacing any existing entry.

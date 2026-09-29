@@ -702,7 +702,10 @@ mod tests {
             "",
         ] {
             assert!(
-                matches!(validate_rock_name(name), Err(RocksError::InvalidName { .. })),
+                matches!(
+                    validate_rock_name(name),
+                    Err(RocksError::InvalidName { .. })
+                ),
                 "`{name}` must be refused"
             );
         }
@@ -741,7 +744,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "cannot load into mlua built for Lua")]
     fn c_modules_for_another_lua_are_refused() {
-        let _ = RocksConfig::new("tree").lua_version("5.0").load_c_modules(true);
+        let _ = RocksConfig::new("tree")
+            .lua_version("5.0")
+            .load_c_modules(true);
     }
 
     #[test]

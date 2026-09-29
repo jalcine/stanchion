@@ -355,9 +355,19 @@ fn method_body_core(
     attrs: &[syn::Attribute],
     is_pub: bool,
 ) -> syn::Result<TokenStream2> {
-    let Method { ident, args, ret, is_async, .. } = method;
+    let Method {
+        ident,
+        args,
+        ret,
+        is_async,
+        ..
+    } = method;
     let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
-    let table_expr = if *is_async { quote!(&__handle) } else { quote!(__handle) };
+    let table_expr = if *is_async {
+        quote!(&__handle)
+    } else {
+        quote!(__handle)
+    };
     let body = call_expr(method, table_expr)?;
     let pub_prefix = if is_pub { quote!(pub) } else { quote!() };
     Ok(if *is_async {

@@ -23,8 +23,8 @@ use std::sync::Arc;
 use stanchion_ffi::{
     AuditEntry as FfiAudit, CapabilityCall as FfiCall, CapabilityProvider as FfiProvider,
     CapabilityRequest as FfiRequest, Decision as FfiDecision, Error as FfiError, HostConfig,
-    LoadReport as FfiReport, Outcome as FfiOutcome, PluginInfo as FfiInfo,
-    Policy as FfiPolicy, Stanchion as Host, Value as FfiValue,
+    LoadReport as FfiReport, Outcome as FfiOutcome, PluginInfo as FfiInfo, Policy as FfiPolicy,
+    Stanchion as Host, Value as FfiValue,
 };
 
 uniffi::setup_scaffolding!();
@@ -43,12 +43,24 @@ uniffi::setup_scaffolding!();
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum Value {
     Nil,
-    Bool { value: bool },
-    Int { value: i64 },
-    Float { value: f64 },
-    Str { value: String },
-    Seq { items: Vec<Value> },
-    Table { entries: std::collections::HashMap<String, Value> },
+    Bool {
+        value: bool,
+    },
+    Int {
+        value: i64,
+    },
+    Float {
+        value: f64,
+    },
+    Str {
+        value: String,
+    },
+    Seq {
+        items: Vec<Value>,
+    },
+    Table {
+        entries: std::collections::HashMap<String, Value>,
+    },
     Function,
 }
 
@@ -391,22 +403,13 @@ impl Stanchion {
     }
 
     /// Calls one method on one plugin.
-    pub fn call(
-        &self,
-        plugin: String,
-        method: String,
-        args: Vec<Value>,
-    ) -> Result<Value> {
+    pub fn call(&self, plugin: String, method: String, args: Vec<Value>) -> Result<Value> {
         let args: Vec<FfiValue> = args.iter().map(FfiValue::from).collect();
         Ok(Value::from(&self.inner.call(&plugin, &method, &args)?))
     }
 
     /// Calls the same method on every plugin, collecting one result each.
-    pub fn dispatch(
-        &self,
-        method: String,
-        args: Vec<Value>,
-    ) -> Result<Vec<Outcome>> {
+    pub fn dispatch(&self, method: String, args: Vec<Value>) -> Result<Vec<Outcome>> {
         let args: Vec<FfiValue> = args.iter().map(FfiValue::from).collect();
         Ok(outcomes(self.inner.dispatch(&method, &args)?))
     }
@@ -426,11 +429,7 @@ impl Stanchion {
     }
 
     /// Awaits the same method on every plugin, in turn.
-    pub async fn dispatch_async(
-        &self,
-        method: String,
-        args: Vec<Value>,
-    ) -> Result<Vec<Outcome>> {
+    pub async fn dispatch_async(&self, method: String, args: Vec<Value>) -> Result<Vec<Outcome>> {
         let args: Vec<FfiValue> = args.iter().map(FfiValue::from).collect();
         Ok(outcomes(self.inner.dispatch_async(&method, &args).await?))
     }

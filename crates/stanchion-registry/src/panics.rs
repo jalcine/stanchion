@@ -81,13 +81,13 @@ where
     use std::task::Poll;
 
     let mut future = Box::pin(future);
-    std::future::poll_fn(move |cx| {
-        match guard(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
+    std::future::poll_fn(
+        move |cx| match guard(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
             Ok(Poll::Pending) => Poll::Pending,
             Ok(Poll::Ready(value)) => Poll::Ready(Ok(value)),
             Err(panicked) => Poll::Ready(Err(panicked)),
-        }
-    })
+        },
+    )
     .await
 }
 

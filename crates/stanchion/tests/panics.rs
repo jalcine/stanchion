@@ -28,15 +28,16 @@ pub trait Probe {
     reason = "the panic is the subject under test, not a fallible path taking a shortcut"
 )]
 fn exploding_registry() -> Registry<ProbeClass> {
-    Registry::isolated(Lua::new(), Sandbox::restricted()).with_setup(|host| {
-        host.capability("boom", |runtime, _grant| {
-            lua_function(runtime, |_, ()| -> Result<()> {
-                panic!("the provider gave up")
-            })
-        });
-        Ok(())
-    })
-    .with_policy(Rules::deny_all().allow("boom"))
+    Registry::isolated(Lua::new(), Sandbox::restricted())
+        .with_setup(|host| {
+            host.capability("boom", |runtime, _grant| {
+                lua_function(runtime, |_, ()| -> Result<()> {
+                    panic!("the provider gave up")
+                })
+            });
+            Ok(())
+        })
+        .with_policy(Rules::deny_all().allow("boom"))
 }
 
 fn write_plugin(root: &std::path::Path, body: &str, manifest: &str) -> TestResult {

@@ -88,16 +88,18 @@ impl fmt::Display for PackageError {
                 "`{path}` would be written outside the destination directory"
             ),
             PackageError::UnsafeEntry { path, kind } => {
-                write!(f, "`{path}` is a {kind}, which a plugin package may not contain")
+                write!(
+                    f,
+                    "`{path}` is a {kind}, which a plugin package may not contain"
+                )
             }
             PackageError::DuplicateEntry(path) => {
                 write!(f, "`{path}` appears more than once in the archive")
             }
             PackageError::TooLarge(message) => write!(f, "{message}"),
-            PackageError::DigestMismatch { expected, found } => write!(
-                f,
-                "these bytes are {found}, not the expected {expected}"
-            ),
+            PackageError::DigestMismatch { expected, found } => {
+                write!(f, "these bytes are {found}, not the expected {expected}")
+            }
             PackageError::Io(source) => write!(f, "{source}"),
         }
     }
@@ -305,7 +307,8 @@ pub fn unpack(archive: impl Read, into: &Path, limits: Limits) -> Result<(), Pac
         total = total.saturating_add(written);
         if total > limits.total_bytes {
             return Err(PackageError::TooLarge(format!(
-                "archive expands past the {} byte limit", limits.total_bytes
+                "archive expands past the {} byte limit",
+                limits.total_bytes
             )));
         }
         file.flush()?;
@@ -375,7 +378,10 @@ mod tests {
 
     #[test]
     fn traversal_and_absolute_paths_are_refused() {
-        assert_eq!(safe_relative(Path::new("init.lua")).as_deref(), Some("init.lua"));
+        assert_eq!(
+            safe_relative(Path::new("init.lua")).as_deref(),
+            Some("init.lua")
+        );
         assert_eq!(
             safe_relative(Path::new("./lib/./util.lua")).as_deref(),
             Some("lib/util.lua")

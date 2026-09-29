@@ -101,7 +101,10 @@ fn key_to_string(ruby: &Ruby, key: Rb) -> Result<String, Error> {
     }
     Err(type_error(
         ruby,
-        format!("a Hash keyed by {} cannot cross into Lua", key.class().inspect()),
+        format!(
+            "a Hash keyed by {} cannot cross into Lua",
+            key.class().inspect()
+        ),
     ))
 }
 

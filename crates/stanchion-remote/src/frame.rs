@@ -155,10 +155,22 @@ pub fn read<R: BufRead>(reader: &mut R) -> io::Result<Option<Incoming>> {
         let has_reply = value.get("result").is_some() || value.get("error").is_some();
 
         let message = match (has_method, has_reply) {
-            (true, false) => Incoming::Request(serde_json::from_value(value).map_err(io::Error::other)?),
-            (false, true) => Incoming::Response(serde_json::from_value(value).map_err(io::Error::other)?),
-            (true, true) => return Err(io::Error::other("message carries both `method` and `result`/`error`")),
-            (false, false) => return Err(io::Error::other("message is neither a request nor a response")),
+            (true, false) => {
+                Incoming::Request(serde_json::from_value(value).map_err(io::Error::other)?)
+            }
+            (false, true) => {
+                Incoming::Response(serde_json::from_value(value).map_err(io::Error::other)?)
+            }
+            (true, true) => {
+                return Err(io::Error::other(
+                    "message carries both `method` and `result`/`error`",
+                ));
+            }
+            (false, false) => {
+                return Err(io::Error::other(
+                    "message is neither a request nor a response",
+                ));
+            }
         };
         return Ok(Some(message));
     }
@@ -288,7 +300,11 @@ mod tests {
         // A `BufRead` whose internal buffer is one byte, so every fill_buf hands back a
         // single byte and every multi-byte sequence straddles a boundary.
         struct OneByteAtATime<R>(io::BufReader<R>);
-        let request = Request::new(1, "plugins/call", serde_json::json!({ "text": "héllo café ☃" }));
+        let request = Request::new(
+            1,
+            "plugins/call",
+            serde_json::json!({ "text": "héllo café ☃" }),
+        );
         let mut buffer = Vec::new();
         write(&mut buffer, &request).unwrap();
 

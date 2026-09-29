@@ -21,7 +21,11 @@ impl PluginBackend for MockBackend {
         PluginType::Lua
     }
 
-    fn load(&self, _manifest: &stanchion_abi::manifest::Manifest, _dir: &Path) -> Result<Box<dyn PluginInstance>> {
+    fn load(
+        &self,
+        _manifest: &stanchion_abi::manifest::Manifest,
+        _dir: &Path,
+    ) -> Result<Box<dyn PluginInstance>> {
         Ok(Box::new(MockPluginInstance))
     }
 }

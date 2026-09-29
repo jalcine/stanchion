@@ -11,8 +11,8 @@ use http::{Method, StatusCode};
 use stanchion_dist::IndexError;
 use stanchion_index::{Blob, DirectorySource, IndexServer, IndexSource};
 use tempfile::TempDir;
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -40,7 +40,10 @@ fn index_root() -> Fallible<TempDir> {
 
     let blobs = root.path().join("blobs").join("sha256");
     fs::create_dir_all(&blobs)?;
-    fs::write(blobs.join(DIGEST.trim_start_matches("sha256:")), b"package bytes")?;
+    fs::write(
+        blobs.join(DIGEST.trim_start_matches("sha256:")),
+        b"package bytes",
+    )?;
     Ok(root)
 }
 
@@ -63,7 +66,9 @@ fn field<'a>(document: &'a serde_json::Value, path: &str) -> Fallible<&'a serde_
             Ok(position) => node
                 .get(position)
                 .ok_or_else(|| format!("`{path}`: no element {position}"))?,
-            Err(_) => node.get(step).ok_or_else(|| format!("`{path}`: no key `{step}`"))?,
+            Err(_) => node
+                .get(step)
+                .ok_or_else(|| format!("`{path}`: no key `{step}`"))?,
         };
     }
     Ok(node)
@@ -96,7 +101,11 @@ fn it_serves_the_two_documents_and_a_package() -> TestResult {
     // the server's.
     assert_eq!(blob.body.into_vec()?, b"package bytes");
     // A package is named by what it unpacks to, so its bytes cannot change.
-    assert!(blob.cache_control.contains("immutable"), "{}", blob.cache_control);
+    assert!(
+        blob.cache_control.contains("immutable"),
+        "{}",
+        blob.cache_control
+    );
     Ok(())
 }
 
@@ -142,10 +151,18 @@ fn responses_are_identical_within_a_window_and_change_across_one() -> TestResult
 
     let (early_etag, next_etag) = (early.etag.clone(), next.etag.clone());
     let early_bytes = early.body.into_vec()?;
-    assert_eq!(early_bytes, later.body.into_vec()?, "same window, same bytes");
+    assert_eq!(
+        early_bytes,
+        later.body.into_vec()?,
+        "same window, same bytes"
+    );
     assert_eq!(early_etag, later.etag);
 
-    assert_ne!(early_bytes, next.body.into_vec()?, "a new window must refresh the expiry");
+    assert_ne!(
+        early_bytes,
+        next.body.into_vec()?,
+        "a new window must refresh the expiry"
+    );
     assert_ne!(early_etag, next_etag);
     Ok(())
 }
@@ -167,11 +184,15 @@ fn a_matching_etag_becomes_a_304_with_no_body() -> TestResult {
     assert!(!stale.body.is_empty());
 
     assert_eq!(
-        server.serve(&Method::GET, "/v1/index.json", Some("*")).status,
+        server
+            .serve(&Method::GET, "/v1/index.json", Some("*"))
+            .status,
         StatusCode::NOT_MODIFIED
     );
     assert_eq!(
-        server.serve(&Method::GET, "/v1/index.json", Some(&format!("W/{etag}"))).status,
+        server
+            .serve(&Method::GET, "/v1/index.json", Some(&format!("W/{etag}")))
+            .status,
         StatusCode::NOT_MODIFIED
     );
     Ok(())
@@ -196,7 +217,11 @@ fn a_304_cannot_outlive_the_window_that_issued_it() -> TestResult {
         Some(&etag),
         base.saturating_add(time::Duration::hours(2)),
     );
-    assert_eq!(next.status, StatusCode::OK, "a 304 here would freeze an expired document");
+    assert_eq!(
+        next.status,
+        StatusCode::OK,
+        "a 304 here would freeze an expired document"
+    );
     Ok(())
 }
 
@@ -208,11 +233,15 @@ fn an_unknown_plugin_is_404_and_nothing_else() -> TestResult {
     // A client maps 404 to "no such plugin" and every other status to "unreachable",
     // which is the difference between giving up and retrying.
     assert_eq!(
-        server.serve(&Method::GET, "/v1/plugins/nosuch.json", None).status,
+        server
+            .serve(&Method::GET, "/v1/plugins/nosuch.json", None)
+            .status,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        server.serve(&Method::GET, "/v1/blobs/sha256:short", None).status,
+        server
+            .serve(&Method::GET, "/v1/blobs/sha256:short", None)
+            .status,
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
@@ -258,7 +287,10 @@ fn a_traversing_name_is_refused_before_it_reaches_the_disk() -> TestResult {
             served.status
         );
         let bytes = served.body.into_vec()?;
-        assert!(!bytes.windows(4).any(|w| w == b"root"), "`{name}` leaked a file");
+        assert!(
+            !bytes.windows(4).any(|w| w == b"root"),
+            "`{name}` leaked a file"
+        );
     }
     Ok(())
 }
@@ -315,7 +347,8 @@ fn a_package_is_never_buffered_to_be_served() -> TestResult {
     struct Counting(std::sync::Arc<std::sync::atomic::AtomicUsize>);
     impl std::io::Read for Counting {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.0.fetch_add(buf.len(), std::sync::atomic::Ordering::Relaxed);
+            self.0
+                .fetch_add(buf.len(), std::sync::atomic::Ordering::Relaxed);
             Ok(buf.len())
         }
     }

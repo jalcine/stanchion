@@ -10,9 +10,9 @@
 
 use std::path::PathBuf;
 
+use stanchion::registry::Registry;
 use stanchion_lua::lua_class;
 use stanchion_lua::mlua::{Lua, Result, Table};
-use stanchion::registry::Registry;
 
 /// Every plugin in the bus implements this.
 #[lua_class]
@@ -37,7 +37,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // loading and is reported rather than aborting the others.
     println!("loaded  : {:?}", report.loaded);
     for failure in &report.failures {
-        println!("failed  : {} — {}", failure.name, first_line(&failure.reason.to_string()));
+        println!(
+            "failed  : {} — {}",
+            failure.name,
+            first_line(&failure.reason.to_string())
+        );
     }
 
     println!("\n-- dispatching an event to every plugin --");
@@ -46,7 +50,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             Ok(text) => println!("  {:<10} {text}", outcome.name),
             // `grumpy` fails every call; the others still ran.
             Err(err) => {
-                println!("  {:<10} failed: {}", outcome.name, first_line(&err.to_string()));
+                println!(
+                    "  {:<10} failed: {}",
+                    outcome.name,
+                    first_line(&err.to_string())
+                );
             }
         }
     }

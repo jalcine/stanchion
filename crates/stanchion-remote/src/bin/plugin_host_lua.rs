@@ -40,7 +40,10 @@ fn run() -> Result<(), String> {
         config.plugins = Some(plugins);
     }
 
-    let channel = HostChannel::new(BufReader::new(io::stdin()), io::BufWriter::new(io::stdout()));
+    let channel = HostChannel::new(
+        BufReader::new(io::stdin()),
+        io::BufWriter::new(io::stdout()),
+    );
     let mut registry = build_registry(&config, &channel)?;
 
     if let Some(root) = &config.plugins {

@@ -40,30 +40,30 @@ pub use stanchion_lua::rocks;
 
 pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
-pub use stanchion_abi::runtime::Runtime;
+pub use manifest::{discover, read_manifest, resolve_order};
+pub use panics::Panicked;
 pub use stanchion_abi::manifest::{
     DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType,
 };
-pub use manifest::{discover, read_manifest, resolve_order};
-pub use panics::Panicked;
+pub use stanchion_abi::runtime::Runtime;
 /// Re-exported because [`Decision::GrantWith`] takes a `toml::Table`: a public API
 /// that names a foreign type has to hand you that type.
 pub use toml;
 
-/// Re-exported because [`Registry::isolated`] takes a [`Sandbox`] and
-/// [`Plugin::budget`] hands back a [`Budget`].
-pub use stanchion_lua::sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
 pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY, Policy, Rules};
 #[cfg(feature = "config")]
 pub use config::{CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config};
 #[cfg(feature = "signatures")]
 pub use lock::{LOCK_FILE, LockError, LockedPlugin, Lockfile};
-pub use upgrade::{Change, UpgradeReview};
 #[cfg(feature = "signatures")]
 pub use signature::{
     BUNDLE_FILE, DirectoryDigest, PluginVerifier, Revocation, Revocations, SIGNATURE_FILE, Signer,
     VerifyError,
 };
+/// Re-exported because [`Registry::isolated`] takes a [`Sandbox`] and
+/// [`Plugin::budget`] hands back a [`Budget`].
+pub use stanchion_lua::sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
+pub use upgrade::{Change, UpgradeReview};
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -72,8 +72,8 @@ use std::path::Path;
 
 use mlua::{Lua, LuaSerdeExt, Table, Value};
 
+use stanchion_abi::value::lua::{FUNCTION_CACHE, abi_to_lua};
 use stanchion_lua::{LuaClass, LuaObject};
-use stanchion_abi::value::lua::{abi_to_lua, FUNCTION_CACHE};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";
@@ -666,7 +666,9 @@ impl<C: LuaClass> Registry<C> {
     ) -> Result<(Lua, Option<Budget>, Group), RegistryError> {
         // Not grouping, or a manifest that somehow was not partitioned: either way the
         // plugin gets whatever the isolation mode hands out, on its own.
-        let Some(representative) = components.and_then(|root| root.get(&manifest.name)).copied()
+        let Some(representative) = components
+            .and_then(|root| root.get(&manifest.name))
+            .copied()
         else {
             let (lua, budget) = self.acquire_state()?;
             return Ok((lua, budget, Group(0)));
@@ -919,16 +921,16 @@ impl<C: LuaClass> Registry<C> {
 
         let runtime = crate::runtime::LuaRuntime::new(lua.clone());
         let built = panics::guard(|| {
-                self.instantiate(
-                    &lua,
-                    &runtime,
-                    budget.as_ref(),
-                    &manifest,
-                    #[cfg(feature = "signatures")]
-                    &signer,
-                    #[cfg(feature = "signatures")]
-                    digest.as_ref(),
-                )
+            self.instantiate(
+                &lua,
+                &runtime,
+                budget.as_ref(),
+                &manifest,
+                #[cfg(feature = "signatures")]
+                &signer,
+                #[cfg(feature = "signatures")]
+                digest.as_ref(),
+            )
         })
         .unwrap_or_else(|panicked| Err(FailureReason::Panicked(panicked)))
         .map_err(&fail)?;
@@ -1499,14 +1501,18 @@ impl<C: LuaClass> Registry<C> {
 
             let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
             let value_abi = provider(runtime, &grant)?;
-            let lua_arc = runtime.lua_state()
+            let lua_arc = runtime
+                .lua_state()
                 .expect("Lua runtime required for capability binding");
             let lua = lua_arc.lock().unwrap();
             let value_lua = if matches!(value_abi, stanchion_abi::Value::Function) {
-                FUNCTION_CACHE.with(|cache| {
-                    cache.borrow_mut().take()
-                        .ok_or_else(|| mlua::Error::RuntimeError("cached function not found".to_string()))
-                }).map_err(|e| FailureReason::Lua(e))?
+                FUNCTION_CACHE
+                    .with(|cache| {
+                        cache.borrow_mut().take().ok_or_else(|| {
+                            mlua::Error::RuntimeError("cached function not found".to_string())
+                        })
+                    })
+                    .map_err(|e| FailureReason::Lua(e))?
             } else {
                 abi_to_lua(&value_abi, &lua)
                     .map_err(|e| FailureReason::Lua(mlua::Error::RuntimeError(e.to_string())))?
@@ -1535,7 +1541,9 @@ impl<C: LuaClass> Registry<C> {
                 params,
                 optional,
             };
-            let Some(_) = self.host_setup.provider(name) else { continue };
+            let Some(_) = self.host_setup.provider(name) else {
+                continue;
+            };
             let decision = match &self.policy {
                 Some(p) => p.decide(&request),
                 None => Decision::Deny("no policy".to_string()),
@@ -1600,15 +1608,15 @@ impl<C: LuaClass> Registry<C> {
             ))
         })?;
         exports.metatable.set("__newindex", readonly)?;
-        exports.metatable.set("__metatable", "locked: plugin exports")?;
+        exports
+            .metatable
+            .set("__metatable", "locked: plugin exports")?;
         exports
             .proxy
             .set_metatable(Some(exports.metatable.clone()))?;
         Ok(exports)
     }
 }
-
-
 
 /// Checks one plugin's `[rocks]` against what the tree holds.
 #[cfg(feature = "luarocks")]
@@ -1844,4 +1852,3 @@ fn shallow_copy(lua: &Lua, table: &Table) -> mlua::Result<Table> {
     }
     Ok(copy)
 }
-

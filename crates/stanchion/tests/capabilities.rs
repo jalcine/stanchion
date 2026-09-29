@@ -34,7 +34,9 @@ fn single(manifest: &str, body: &str) -> Fallible<TempDir> {
 fn registry() -> Registry<ProbeClass> {
     Registry::isolated(Lua::new(), Sandbox::restricted()).with_setup(|host| {
         host.capability("log", |runtime, _grant| {
-            lua_function(runtime, |_, message: String| Ok(format!("logged: {message}")))
+            lua_function(runtime, |_, message: String| {
+                Ok(format!("logged: {message}"))
+            })
         });
         host.capability("network", |runtime, grant| {
             // The allowlist is baked in here, so the plugin cannot widen it later.
@@ -277,7 +279,12 @@ fn require_ignores_plugin_controlled_search_paths() -> TestResult {
          return \"blocked\"",
         dir = outside.path().display()
     );
-    write_plugin(root.path(), "probe", "name = \"probe\"\n", &probe_source(&body))?;
+    write_plugin(
+        root.path(),
+        "probe",
+        "name = \"probe\"\n",
+        &probe_source(&body),
+    )?;
 
     let mut registry = registry().with_policy(Rules::deny_all());
     let report = registry.load_dir(root.path())?;

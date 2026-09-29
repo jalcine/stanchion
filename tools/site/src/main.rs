@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pulldown_cmark::{html, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd, html};
 
 /// Where guide links that leave the site point instead.
 const REPO: &str = "https://github.com/jalcine/stanchion";
@@ -126,7 +126,9 @@ fn read_guides(root: &Path) -> Result<Vec<Guide>, String> {
 
     let mut guides = Vec::new();
     for slug in ordered {
-        let Some(source) = found.get(&slug) else { continue };
+        let Some(source) = found.get(&slug) else {
+            continue;
+        };
         guides.push(Guide {
             title: title_of(source).unwrap_or_else(|| slug.clone()),
             body: render(&rewrite_links(source)),
@@ -311,13 +313,22 @@ fn write_site(root: &Path, out: &Path, guides: &[Guide]) -> Result<(), String> {
     // Served as-is: Jekyll would only slow the build and surprise us.
     write(out.join(".nojekyll"), "")?;
     write(out.join("CNAME"), &format!("{DOMAIN}\n"))?;
-    write(out.join("assets/site.css"), include_str!("../assets/site.css"))?;
-    write(out.join("assets/stanchion.svg"), include_str!("../assets/stanchion.svg"))?;
+    write(
+        out.join("assets/site.css"),
+        include_str!("../assets/site.css"),
+    )?;
+    write(
+        out.join("assets/stanchion.svg"),
+        include_str!("../assets/stanchion.svg"),
+    )?;
     // The social-card image is binary, so it is written directly rather than through the
     // string-typed `write` helper above.
     let og_path = out.join("assets/stanchion-og.jpg");
-    fs::write(&og_path, include_bytes!("../assets/stanchion-og.jpg") as &[u8])
-        .map_err(|err| format!("{}: {err}", og_path.display()))?;
+    fs::write(
+        &og_path,
+        include_bytes!("../assets/stanchion-og.jpg") as &[u8],
+    )
+    .map_err(|err| format!("{}: {err}", og_path.display()))?;
 
     let landing = include_str!("../templates/index.html")
         .replace("{{nav}}", &nav(guides, None))

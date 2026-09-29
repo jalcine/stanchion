@@ -1,7 +1,7 @@
 //! Tests for the manifest types.
 
-use stanchion_abi::manifest::{DependencySpec, DetailedDependency, Manifest, PluginType};
 use semver::VersionReq;
+use stanchion_abi::manifest::{DependencySpec, DetailedDependency, Manifest, PluginType};
 
 #[test]
 fn lua_plugin_defaults() {
@@ -118,7 +118,10 @@ fn entry_path_joins_dir_and_entry() {
         dir: std::path::PathBuf::from("/tmp/test"),
     };
 
-    assert_eq!(manifest.entry_path(), std::path::PathBuf::from("/tmp/test/init.lua"));
+    assert_eq!(
+        manifest.entry_path(),
+        std::path::PathBuf::from("/tmp/test/init.lua")
+    );
 }
 
 #[test]

@@ -20,6 +20,9 @@ var side_to_move := "w"
 var castling := {"wk": true, "wq": true, "bk": true, "bq": true}
 var en_passant := -1  # target square a pawn may capture onto, or -1
 var fullmove := 1
+## The moves played so far in SAN ("e4", "Nf3", "O-O"…), so opening plugins can match
+## the game against a book line. Only the live board keeps this; trial clones do not.
+var history_san: Array[String] = []
 
 func _init() -> void:
 	setup_start()
@@ -40,6 +43,7 @@ func setup_start() -> void:
 	castling = {"wk": true, "wq": true, "bk": true, "bq": true}
 	en_passant = -1
 	fullmove = 1
+	history_san = []
 
 ## A deep copy, so a move can be tried without disturbing the live game.
 func clone() -> ChessBoard:
@@ -284,9 +288,63 @@ func _revoke_castling(from: int, to: int, color: String) -> void:
 			56: castling["bq"] = false
 			63: castling["bk"] = false
 
-## Public entry point: apply a move to the live board.
+## Public entry point: apply a move to the live board, recording its SAN.
 func apply(move: Dictionary) -> void:
+	history_san.append(_san(move, legal_moves(side_to_move)))
 	_make(move)
+
+
+## Standard algebraic notation for a move, given the side-to-move's full legal list for
+## disambiguation. Computed on the pre-move board.
+func _san(move: Dictionary, legal: Array) -> String:
+	if move.get("castle", "") == "k":
+		return _san_suffix(move, "O-O")
+	if move.get("castle", "") == "q":
+		return _san_suffix(move, "O-O-O")
+	var from: int = move["from"]
+	var to: int = move["to"]
+	var piece := type_of(squares[from])
+	var is_capture: bool = squares[to] != "" or move.get("en_passant", false)
+	var base := ""
+	if piece == "P":
+		if is_capture:
+			base = "abcdefgh"[file_of(from)] + "x"
+		base += square_name(to)
+		if move.get("promote", "") != "":
+			base += "=" + move["promote"]
+	else:
+		# Disambiguate against other same-type pieces that can also reach `to`.
+		var same_file := false
+		var same_rank := false
+		var clash := false
+		for m in legal:
+			if m["from"] != from and m["to"] == to and type_of(squares[m["from"]]) == piece:
+				clash = true
+				if file_of(m["from"]) == file_of(from):
+					same_file = true
+				if rank_of(m["from"]) == rank_of(from):
+					same_rank = true
+		var disamb := ""
+		if clash:
+			if not same_file:
+				disamb = "abcdefgh"[file_of(from)]
+			elif not same_rank:
+				disamb = str(rank_of(from) + 1)
+			else:
+				disamb = square_name(from)
+		base = piece + disamb + ("x" if is_capture else "") + square_name(to)
+	return _san_suffix(move, base)
+
+
+## Appends "+" for check or "#" for mate to a SAN string.
+func _san_suffix(move: Dictionary, base: String) -> String:
+	var mover := color_of(squares[move["from"]])
+	var foe := opponent(mover)
+	var trial := clone()
+	trial._make(move)
+	if trial.in_check(foe):
+		return base + ("#" if trial.legal_moves(foe).is_empty() else "+")
+	return base
 
 # ---- annotation & position export ------------------------------------------
 
@@ -294,12 +352,14 @@ func apply(move: Dictionary) -> void:
 ## Lua combination plugins reason over.
 func annotated_moves(color: String) -> Array:
 	var out: Array = []
-	for move in legal_moves(color):
+	var legal := legal_moves(color)
+	for move in legal:
 		var to: int = move["to"]
 		var target := squares[to]
 		var capture := target
 		if move.get("en_passant", false):
 			capture = opponent(color) + "P"
+		var san := _san(move, legal)
 		var trial := clone()
 		trial._make(move)
 		var foe := opponent(color)
@@ -311,6 +371,14 @@ func annotated_moves(color: String) -> Array:
 		for t in attacks:
 			if VALUE.get(t, 0) >= 3:
 				valuable += 1
+		var gives_check := trial.in_check(foe)
+		# Discovered check: the side gives check, but not with the piece that moved.
+		var is_discovered := gives_check and not attacks.has("K")
+		# Whether the destination is attacked by the opponent — i.e. the piece would hang
+		# there. Tactics that leave the piece en prise are usually not worth it.
+		var to_is_attacked := trial.is_attacked(landed, foe)
+		# Pins and skewers created by a sliding piece landing here.
+		var tactic := trial._slider_tactic(landed)
 		out.append({
 			"attacks": attacks,
 			"attacks_valuable": valuable,
@@ -322,13 +390,73 @@ func annotated_moves(color: String) -> Array:
 			"is_castle": move.get("castle", "") != "",
 			"is_en_passant": move.get("en_passant", false),
 			"promotes": move.get("promote", ""),
-			"gives_check": trial.in_check(foe),
-			"is_mate": trial.in_check(foe) and trial.legal_moves(foe).is_empty(),
+			"gives_check": gives_check,
+			"is_discovered_check": is_discovered,
+			"is_mate": gives_check and trial.legal_moves(foe).is_empty(),
+			"creates_pin": tactic["pin"],
+			"creates_skewer": tactic["skewer"],
+			"tactic_value": tactic["value"],
+			"to_is_attacked": to_is_attacked,
+			"san": san,
 			"from_sq": square_name(move["from"]),
 			"to_sq": square_name(to),
 			"raw": move,
 		})
 	return out
+
+
+## Looks at the sliding piece on `sq` (bishop/rook/queen) and reports whether it pins or
+## skewers along any ray: two enemy pieces in a row with only empty squares between the
+## slider and the first. A pin has the less valuable enemy in front (or its king behind);
+## a skewer has the more valuable in front. Returns `{pin, skewer, value}` for the best
+## such find (`value` is the material it threatens).
+func _slider_tactic(sq: int) -> Dictionary:
+	var result := {"pin": false, "skewer": false, "value": 0}
+	var code := squares[sq]
+	if code == "":
+		return result
+	var color := color_of(code)
+	var foe := opponent(color)
+	var dirs: Array
+	match type_of(code):
+		"B": dirs = [[1, 1], [1, -1], [-1, 1], [-1, -1]]
+		"R": dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+		"Q": dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+		_: return result
+	var f := file_of(sq)
+	var r := rank_of(sq)
+	for dir in dirs:
+		var nf := f + int(dir[0])
+		var nr := r + int(dir[1])
+		# Walk to the first piece on the ray.
+		while in_board(nf, nr) and squares[nr * 8 + nf] == "":
+			nf += int(dir[0])
+			nr += int(dir[1])
+		if not in_board(nf, nr) or color_of(squares[nr * 8 + nf]) != foe:
+			continue
+		var front := type_of(squares[nr * 8 + nf])
+		# Walk on to the next piece behind it.
+		nf += int(dir[0])
+		nr += int(dir[1])
+		while in_board(nf, nr) and squares[nr * 8 + nf] == "":
+			nf += int(dir[0])
+			nr += int(dir[1])
+		if not in_board(nf, nr) or color_of(squares[nr * 8 + nf]) != foe:
+			continue
+		var back := type_of(squares[nr * 8 + nf])
+		var front_v: int = VALUE.get(front, 0)
+		var back_v: int = VALUE.get(back, 0)
+		# King in front, or a more valuable front piece → skewer (front must move, we win
+		# the piece behind). Otherwise the front piece is pinned to the more valuable one.
+		# We only report tactics that win a real piece (a minor or better), so a queen
+		# does not go chasing a pinned pawn.
+		if front == "K" or front_v > back_v:
+			if back_v >= 3 and back_v > result["value"]:
+				result = {"pin": false, "skewer": true, "value": back_v}
+		else:
+			if front_v >= 3 and front_v > result["value"]:
+				result = {"pin": true, "skewer": false, "value": front_v}
+	return result
 
 ## The enemy piece types a piece standing on `sq` attacks on the current board — the
 ## rule a "knight fork" plugin needs without re-deriving movement itself. Returns an
@@ -401,5 +529,6 @@ func position_for(color: String) -> Dictionary:
 		"fullmove": fullmove,
 		"in_check": in_check(color),
 		"material": {"w": material("w"), "b": material("b")},
+		"history": history_san.duplicate(),
 		"moves": annotated_moves(color),
 	}

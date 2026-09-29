@@ -29,6 +29,7 @@ const DOMAIN: &str = "stanchion.jacky.wtf";
 const GUIDE_ORDER: &[&str] = &[
     "lua-class",
     "registry",
+    "manifest",
     "isolation",
     "capabilities",
     "signatures",

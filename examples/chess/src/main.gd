@@ -34,9 +34,9 @@ const BLACK_NUDGE := Vector2(0.0, 0.0)
 # Which combinations the AI is allowed to consult at each difficulty. Fewer, softer
 # combinations make a gentler opponent; the tactical ones make it bite.
 const DIFFICULTY := {
-	"Gentle": ["center_control", "develop_pieces"],
-	"Steady": ["center_control", "develop_pieces", "castle_safety", "win_material"],
-	"Sharp": ["center_control", "develop_pieces", "castle_safety", "win_material", "knight_fork", "checkmate"],
+	"Gentle": ["openings", "center_control", "develop_pieces"],
+	"Steady": ["openings", "center_control", "develop_pieces", "castle_safety", "win_material", "create_pin"],
+	"Sharp": ["openings", "center_control", "develop_pieces", "castle_safety", "win_material", "create_pin", "knight_fork", "skewer", "discovered_check", "checkmate"],
 }
 
 var stanchion  # the GDExtension Stanchion class, or null if the extension is missing

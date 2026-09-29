@@ -8,7 +8,9 @@
 ## The same catalogue does double duty: the AI picks the strongest applicable
 ## combination (and which combinations it is *allowed* to see sets the difficulty),
 ## while the player is shown every combination available to them as a hint.
+
 extends Control
+const ChessBoard = preload("res://src/board.gd")
 
 # The board art is 142×142 with a 7px frame, so the playable 8×8 grid is 16px cells
 # inset by 7px (7 + 8*16 + 7 = 142). We render the whole texture at BOARD_PX and derive
@@ -34,9 +36,9 @@ const BLACK_NUDGE := Vector2(0.0, 0.0)
 # Which combinations the AI is allowed to consult at each difficulty. Fewer, softer
 # combinations make a gentler opponent; the tactical ones make it bite.
 const DIFFICULTY := {
-	"Gentle": ["openings", "center_control", "develop_pieces"],
-	"Steady": ["openings", "center_control", "develop_pieces", "castle_safety", "win_material", "create_pin"],
-	"Sharp": ["openings", "center_control", "develop_pieces", "castle_safety", "win_material", "create_pin", "knight_fork", "skewer", "discovered_check", "checkmate"],
+	"Gentle": ["openings", "center_control", "develop_pieces", "pawn_promotion", "hanging_piece"],
+	"Steady": ["openings", "center_control", "develop_pieces", "castle_safety", "win_material", "create_pin", "trade_winner", "hanging_piece", "pawn_promotion", "passed_pawn_push", "rook_open_file", "check_and_gain", "desperado", "king_flight", "back_rank_threat", "en_passant_theme", "avoid_trade_behind"],
+	"Sharp": ["openings", "center_control", "develop_pieces", "castle_safety", "win_material", "create_pin", "knight_fork", "skewer", "discovered_check", "checkmate", "back_rank_mate", "smothered_mate", "arabian_mate", "anastasia_mate", "dovetail_mate", "bodens_mate", "hook_mate", "kill_box_mate", "pawn_fork", "bishop_fork", "rook_fork", "queen_fork", "royal_fork", "double_check", "check_and_gain", "cross_check", "removal_of_defender", "deflection", "decoy", "overloading", "interference", "x_ray_attack", "battery", "sacrifice", "hanging_piece", "trade_winner", "simplify_ahead", "avoid_trade_behind", "desperado", "pawn_promotion", "passed_pawn_push", "pawn_break", "knight_underpromotion", "rook_open_file", "rook_seventh", "outpost_knight", "activate_king", "back_rank_threat", "king_flight", "en_passant_theme"],
 }
 
 var stanchion  # the GDExtension Stanchion class, or null if the extension is missing

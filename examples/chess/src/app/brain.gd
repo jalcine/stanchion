@@ -4,7 +4,8 @@ extends RefCounted
 
 const Geo = preload("res://src/board/geometry.gd")
 
-static func describe(b, move: Dictionary, color: String) -> String:
+
+static func describe(b, move: Dictionary) -> String:
 	var piece = b.type_of(b.squares[move["from"]])
 	var prefix = "" if piece == "P" else piece
 	var take := "x" if b.squares[move["to"]] != "" or move.get("en_passant", false) else "-"
@@ -15,7 +16,11 @@ static func describe(b, move: Dictionary, color: String) -> String:
 	var promo: String = ""
 	if move.get("promote", "") != "":
 		promo = "=" + str(move["promote"])
-	return "%s%s%s%s%s" % [prefix, Geo.square_name(move["from"]), take, Geo.square_name(move["to"]), promo]
+	return (
+		"%s%s%s%s%s"
+		% [prefix, Geo.square_name(move["from"]), take, Geo.square_name(move["to"]), promo]
+	)
+
 
 ## Turns a plugin's `{from,to,promote}` back into the engine's own legal move (with the
 ## correct castle / en-passant flags), rejecting anything not currently legal.
@@ -28,6 +33,7 @@ static func match_suggestion(b, picks: Array, color: String) -> Dictionary:
 				if want == "" or move.get("promote", "") == want:
 					return move
 	return {}
+
 
 ## No combination applied: grab what you can, else a random legal move, so the
 ## game always continues.

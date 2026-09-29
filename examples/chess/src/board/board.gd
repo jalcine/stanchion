@@ -23,8 +23,10 @@ var fullmove := 1
 ## the game against a book line. Only the live board keeps this; trial clones do not.
 var history_san: Array[String] = []
 
+
 func _init() -> void:
 	setup_start()
+
 
 ## Resets to the standard starting position.
 func setup_start() -> void:
@@ -44,6 +46,7 @@ func setup_start() -> void:
 	fullmove = 1
 	history_san = []
 
+
 ## A deep copy, so a move can be tried without disturbing the live game.
 func clone():
 	var other = get_script().new()
@@ -54,11 +57,13 @@ func clone():
 	other.fullmove = fullmove
 	return other
 
+
 ## One raw move dict. Piece classes build through this so the shape stays uniform.
 func add_move(moves: Array, from: int, to: int, extra: Dictionary = {}) -> void:
 	var move := {"from": from, "to": to, "promote": "", "castle": "", "en_passant": false}
 	move.merge(extra, true)
 	moves.append(move)
+
 
 ## Every legal move for `color`, each a Dictionary with `from`, `to` and flags. Moves
 ## that would leave the mover's own king in check are filtered out.
@@ -71,6 +76,7 @@ func legal_moves(color: String) -> Array:
 			legal.append(move)
 	return legal
 
+
 func king_square(color: String) -> int:
 	var target := color + "K"
 	for sq in 64:
@@ -78,41 +84,54 @@ func king_square(color: String) -> int:
 			return sq
 	return -1
 
+
 func in_check(color: String) -> bool:
 	var ks := king_square(color)
 	return ks != -1 and is_attacked(ks, opponent(color))
 
+
 # ---- thin delegates (dynamic calls from clones and components land here) ----
+
 
 func color_of(code: String) -> String:
 	return Geo.color_of(code)
 
+
 func type_of(code: String) -> String:
 	return Geo.type_of(code)
 
+
 func opponent(color: String) -> String:
 	return Geo.opponent(color)
+
 
 ## Whether `by_color` attacks `sq` (used for check and castling-through-check).
 func is_attacked(sq: int, by_color: String) -> bool:
 	return Attacks.is_attacked(squares, sq, by_color)
 
+
 func _attackers_of(sq: int, by_color: String) -> Array:
 	return Attacks.attackers_of(squares, sq, by_color)
+
 
 func attacked_targets(sq: int) -> Array:
 	return Annotate.attacked_targets(self, sq)
 
+
 func material(color: String) -> int:
 	return Annotate.material(self, color)
+
 
 func annotated_moves(color: String) -> Array:
 	return Annotate.annotated_moves(self, color)
 
+
 func position_for(color: String) -> Dictionary:
 	return Annotate.position_for(self, color)
 
+
 # ---- applying moves ---------------------------------------------------------
+
 
 ## Applies a move to this board (used both on the live board and on trial clones).
 func _make(move: Dictionary) -> void:
@@ -151,17 +170,26 @@ func _make(move: Dictionary) -> void:
 		fullmove += 1
 	side_to_move = Geo.opponent(color)
 
+
 func _revoke_castling(from: int, to: int, color: String) -> void:
-	if Geo.type_of(squares[to]) == "K" or (from == king_square(color) and squares[to] == color + "K"):
+	if (
+		Geo.type_of(squares[to]) == "K"
+		or (from == king_square(color) and squares[to] == color + "K")
+	):
 		castling[color + "k"] = false
 		castling[color + "q"] = false
 	# Rook moved or was captured off its home square.
 	for sq in [from, to]:
 		match sq:
-			0: castling["wq"] = false
-			7: castling["wk"] = false
-			56: castling["bq"] = false
-			63: castling["bk"] = false
+			0:
+				castling["wq"] = false
+			7:
+				castling["wk"] = false
+			56:
+				castling["bq"] = false
+			63:
+				castling["bk"] = false
+
 
 ## Public entry point: apply a move to the live board, recording its SAN.
 func apply(move: Dictionary) -> void:

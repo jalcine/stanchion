@@ -4,6 +4,7 @@ extends RefCounted
 
 const Geo = preload("res://src/board/geometry.gd")
 
+
 static func san(b, move: Dictionary, legal: Array) -> String:
 	if move.get("castle", "") == "k":
 		return suffix(b, move, "O-O")
@@ -42,6 +43,7 @@ static func san(b, move: Dictionary, legal: Array) -> String:
 				disamb = Geo.square_name(from)
 		base = piece + disamb + ("x" if is_capture else "") + Geo.square_name(to)
 	return suffix(b, move, base)
+
 
 ## Appends "+" for check or "#" for mate to a SAN string.
 static func suffix(b, move: Dictionary, base: String) -> String:

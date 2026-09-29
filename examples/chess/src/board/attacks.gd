@@ -9,6 +9,7 @@ const KING := [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, 
 const ROOK_DIRS := [[1, 0], [-1, 0], [0, 1], [0, -1]]
 const BISHOP_DIRS := [[1, 1], [1, -1], [-1, 1], [-1, -1]]
 
+
 ## Squares holding `by_color` pieces that attack `sq`.
 static func attackers_of(squares: Array, sq: int, by_color: String) -> Array:
 	var out: Array = []
@@ -41,7 +42,10 @@ static func attackers_of(squares: Array, sq: int, by_color: String) -> Array:
 	_collect_rays(squares, tf, tr, BISHOP_DIRS, by_color, ["B", "Q"], out)
 	return out
 
-static func _collect_rays(squares: Array, tf: int, tr: int, dirs: Array, by_color: String, types: Array, out: Array) -> void:
+
+static func _collect_rays(
+	squares: Array, tf: int, tr: int, dirs: Array, by_color: String, types: Array, out: Array
+) -> void:
 	for dir in dirs:
 		var f: int = tf + int(dir[0])
 		var r: int = tr + int(dir[1])
@@ -54,8 +58,10 @@ static func _collect_rays(squares: Array, tf: int, tr: int, dirs: Array, by_colo
 			f += int(dir[0])
 			r += int(dir[1])
 
+
 static func is_attacked(squares: Array, sq: int, by_color: String) -> bool:
 	return not attackers_of(squares, sq, by_color).is_empty()
+
 
 ## `{sq: [attacker_sqs]}` for one color. Built once per position, not per move.
 static func attack_map(squares: Array, by_color: String) -> Dictionary:

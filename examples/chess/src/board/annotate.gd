@@ -10,6 +10,7 @@ const San = preload("res://src/board/san.gd")
 ## high so "win the king" (i.e. checkmate lines) always outranks material.
 const VALUE := {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 1000}
 
+
 ## The current side's legal moves, each annotated with what it *does*.
 static func annotated_moves(b, color: String) -> Array:
 	var out: Array = []
@@ -46,35 +47,45 @@ static func annotated_moves(b, color: String) -> Array:
 		var captured_defended := not Attacks.attackers_of(b.squares, to, foe).is_empty()
 		var attackers_of_to = Attacks.attackers_of(trial.squares, landed, foe)
 		var foe_king = trial.king_square(foe)
-		var is_double = gives_check and foe_king != -1 and Attacks.attackers_of(trial.squares, foe_king, color).size() >= 2
-		out.append({
-			"attacks": attacks,
-			"attacks_valuable": valuable,
-			"from": move["from"],
-			"to": to,
-			"piece": Geo.type_of(b.squares[move["from"]]),
-			"capture": Geo.type_of(capture),
-			"captured_value": VALUE.get(Geo.type_of(capture), 0),
-			"is_castle": move.get("castle", "") != "",
-			"is_en_passant": move.get("en_passant", false),
-			"promotes": move.get("promote", ""),
-			"gives_check": gives_check,
-			"is_discovered_check": is_discovered,
-			"is_mate": gives_check and trial.legal_moves(foe).is_empty(),
-			"creates_pin": tactic["pin"],
-			"creates_skewer": tactic["skewer"],
-			"tactic_value": tactic["value"],
-			"to_is_attacked": to_is_attacked,
-			"mover_value": mover_value,
-			"captured_defended": captured_defended,
-			"attackers_of_to": attackers_of_to,
-			"is_double_check": is_double,
-			"san": san,
-			"from_sq": Geo.square_name(move["from"]),
-			"to_sq": Geo.square_name(to),
-			"raw": move,
-		})
+		var is_double = (
+			gives_check
+			and foe_king != -1
+			and Attacks.attackers_of(trial.squares, foe_king, color).size() >= 2
+		)
+		(
+			out
+			. append(
+				{
+					"attacks": attacks,
+					"attacks_valuable": valuable,
+					"from": move["from"],
+					"to": to,
+					"piece": Geo.type_of(b.squares[move["from"]]),
+					"capture": Geo.type_of(capture),
+					"captured_value": VALUE.get(Geo.type_of(capture), 0),
+					"is_castle": move.get("castle", "") != "",
+					"is_en_passant": move.get("en_passant", false),
+					"promotes": move.get("promote", ""),
+					"gives_check": gives_check,
+					"is_discovered_check": is_discovered,
+					"is_mate": gives_check and trial.legal_moves(foe).is_empty(),
+					"creates_pin": tactic["pin"],
+					"creates_skewer": tactic["skewer"],
+					"tactic_value": tactic["value"],
+					"to_is_attacked": to_is_attacked,
+					"mover_value": mover_value,
+					"captured_defended": captured_defended,
+					"attackers_of_to": attackers_of_to,
+					"is_double_check": is_double,
+					"san": san,
+					"from_sq": Geo.square_name(move["from"]),
+					"to_sq": Geo.square_name(to),
+					"raw": move,
+				}
+			)
+		)
 	return out
+
 
 ## Looks at the sliding piece on `sq` (bishop/rook/queen) and reports whether it pins or
 ## skewers along any ray: two enemy pieces in a row with only empty squares between the
@@ -88,10 +99,14 @@ static func slider_tactic(b, sq: int) -> Dictionary:
 	var foe := Geo.opponent(color)
 	var dirs: Array
 	match Geo.type_of(code):
-		"B": dirs = [[1, 1], [1, -1], [-1, 1], [-1, -1]]
-		"R": dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]]
-		"Q": dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
-		_: return result
+		"B":
+			dirs = [[1, 1], [1, -1], [-1, 1], [-1, -1]]
+		"R":
+			dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+		"Q":
+			dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+		_:
+			return result
 	var f := Geo.file_of(sq)
 	var r := Geo.rank_of(sq)
 	for dir in dirs:
@@ -127,6 +142,7 @@ static func slider_tactic(b, sq: int) -> Dictionary:
 				result = {"pin": true, "skewer": false, "value": front_v}
 	return result
 
+
 ## The enemy piece types a piece standing on `sq` attacks on the current board — the
 ## rule a "knight fork" plugin needs without re-deriving movement itself. Returns an
 ## Array of type codes like ["Q", "R"].
@@ -148,16 +164,38 @@ static func attacked_targets(b, sq: int) -> Array:
 					if t != "" and Geo.color_of(t) == foe:
 						hits.append(Geo.type_of(t))
 		"N":
-			_collect_steps(b, f, r, [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]], foe, hits)
+			_collect_steps(
+				b,
+				f,
+				r,
+				[[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]],
+				foe,
+				hits
+			)
 		"K":
-			_collect_steps(b, f, r, [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]], foe, hits)
+			_collect_steps(
+				b,
+				f,
+				r,
+				[[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]],
+				foe,
+				hits
+			)
 		"B":
 			_collect_rays(b, f, r, [[1, 1], [1, -1], [-1, 1], [-1, -1]], foe, hits)
 		"R":
 			_collect_rays(b, f, r, [[1, 0], [-1, 0], [0, 1], [0, -1]], foe, hits)
 		"Q":
-			_collect_rays(b, f, r, [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]], foe, hits)
+			_collect_rays(
+				b,
+				f,
+				r,
+				[[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]],
+				foe,
+				hits
+			)
 	return hits
+
 
 static func _collect_steps(b, f: int, r: int, steps: Array, foe: String, hits: Array) -> void:
 	for step in steps:
@@ -165,6 +203,7 @@ static func _collect_steps(b, f: int, r: int, steps: Array, foe: String, hits: A
 			var t: String = b.squares[(r + step[1]) * 8 + f + step[0]]
 			if t != "" and Geo.color_of(t) == foe:
 				hits.append(Geo.type_of(t))
+
 
 static func _collect_rays(b, f: int, r: int, dirs: Array, foe: String, hits: Array) -> void:
 	for dir in dirs:
@@ -179,12 +218,14 @@ static func _collect_rays(b, f: int, r: int, dirs: Array, foe: String, hits: Arr
 			nf += int(dir[0])
 			nr += int(dir[1])
 
+
 static func material(b, color: String) -> int:
 	var total := 0
 	for code in b.squares:
 		if code != "" and Geo.color_of(code) == color and Geo.type_of(code) != "K":
 			total += VALUE.get(Geo.type_of(code), 0)
 	return total
+
 
 ## A plain Dictionary snapshot for a plugin: the board, whose move it is, material,
 ## check state and the annotated legal moves.

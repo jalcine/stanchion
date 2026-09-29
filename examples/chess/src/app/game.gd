@@ -29,6 +29,7 @@ var view: BoardView
 var panel: SidePanel
 var move_log: Array[String] = []
 
+
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	var bg := ColorRect.new()
@@ -59,10 +60,13 @@ func _ready() -> void:
 		_note("Loaded combinations: " + ", ".join(loaded))
 	_refresh()
 
+
 # ---- turn flow --------------------------------------------------------------
+
 
 func _human_turn() -> bool:
 	return board.side_to_move == human and game_over == ""
+
 
 func _on_square(sq: int) -> void:
 	if not _human_turn():
@@ -85,6 +89,7 @@ func _on_square(sq: int) -> void:
 		else:
 			_select(-1)
 
+
 func _select(sq: int) -> void:
 	selected = sq
 	selected_moves = []
@@ -93,6 +98,7 @@ func _select(sq: int) -> void:
 			if move["from"] == sq:
 				selected_moves.append(move)
 	view.refresh()
+
 
 func _try_human_move(from: int, to: int) -> void:
 	for move in board.legal_moves(human):
@@ -103,8 +109,9 @@ func _try_human_move(from: int, to: int) -> void:
 			_commit(move)
 			return
 
+
 func _commit(move: Dictionary) -> void:
-	move_log.append(Brain.describe(board, move, board.side_to_move))
+	move_log.append(Brain.describe(board, move))
 	board.apply(move)
 	selected = -1
 	selected_moves = []
@@ -115,6 +122,7 @@ func _commit(move: Dictionary) -> void:
 		# Let the board paint before the AI thinks.
 		await get_tree().create_timer(0.35).timeout
 		_ai_move()
+
 
 func _ai_move() -> void:
 	var color := board.side_to_move
@@ -134,6 +142,7 @@ func _ai_move() -> void:
 	ai_last_move = {"from": chosen["from"], "to": chosen["to"]}
 	_commit(chosen)
 
+
 ## Writes what Black just decided into the side panel: the combination it played, why,
 ## and which other combinations it weighed (so the reasoning is legible, not a black box).
 func _show_ai_reasoning(chosen_pick: Dictionary, picks: Array, chosen: Dictionary) -> void:
@@ -142,19 +151,29 @@ func _show_ai_reasoning(chosen_pick: Dictionary, picks: Array, chosen: Dictionar
 	if chosen.is_empty():
 		panel.ai_label.text = "[i]No legal move.[/i]"
 		return
-	var move_text := Brain.describe(board, chosen, board.side_to_move)
+	var move_text := Brain.describe(board, chosen)
 	var text := ""
 	if chosen_pick.is_empty():
-		text = "[b]%s[/b]\n[color=#c9a][i]No combination applied — improvised.[/i][/color]\n" % move_text
+		text = (
+			"[b]%s[/b]\n[color=#c9a][i]No combination applied — improvised.[/i][/color]\n"
+			% move_text
+		)
 	else:
-		text = "[b]%s — %s[/b]\n%s\n" % [move_text, chosen_pick.get("name", ""), chosen_pick.get("rationale", "")]
+		text = (
+			"[b]%s — %s[/b]\n%s\n"
+			% [move_text, chosen_pick.get("name", ""), chosen_pick.get("rationale", "")]
+		)
 	# Show the combinations it considered but passed over, at this difficulty.
 	if picks.size() > 1:
 		text += "\n[color=#888]Also weighed:[/color]\n"
 		for i in range(1, mini(picks.size(), 4)):
-			text += "[color=#888]· %s (%d)[/color]\n" % [picks[i].get("name", ""), int(picks[i].get("strength", 0))]
+			text += (
+				"[color=#888]· %s (%d)[/color]\n"
+				% [picks[i].get("name", ""), int(picks[i].get("strength", 0))]
+			)
 	_note("AI played: " + move_text)
 	panel.ai_label.text = text
+
 
 func _check_end() -> void:
 	var color := board.side_to_move
@@ -165,14 +184,17 @@ func _check_end() -> void:
 		else:
 			game_over = "Draw by stalemate"
 
+
 # ---- rendering --------------------------------------------------------------
+
 
 func _refresh() -> void:
 	# Refresh the human's available combinations as a hint.
 	hint_move = {}
 	var hint_text := ""
 	if _human_turn():
-		var picks := client.suggest(board.position_for(human), Config.roster("Sharp"))  # show them everything
+		# Show them everything.
+		var picks := client.suggest(board.position_for(human), Config.roster("Sharp"))
 		if not picks.is_empty():
 			hint_move = picks[0]
 			for pick in picks:
@@ -196,17 +218,21 @@ func _refresh() -> void:
 
 	view.refresh()
 
+
 func _note(text: String) -> void:
 	print("[chess] ", text)
 	if panel != null and panel.status_label != null:
 		panel.status_label.tooltip_text = text
 
+
 # ---- panel intents ----------------------------------------------------------
+
 
 func _on_difficulty(roster_name: String) -> void:
 	difficulty = roster_name
 	panel.sync_difficulty(difficulty, Config.DIFFICULTY)
 	_refresh()
+
 
 func _on_restart() -> void:
 	board = ChessBoard.new()
@@ -220,6 +246,7 @@ func _on_restart() -> void:
 	_refresh()
 	if not _human_turn():
 		_ai_move()
+
 
 ## Hot-reloads the combination plugins from disk. Each already-loaded plugin is
 ## re-read (a broken edit leaves the old version running); a fresh scan picks up any
@@ -246,6 +273,7 @@ func _on_reload() -> void:
 		parts.append("kept old for %s (see log)" % ", ".join(failed))
 	_flash_reload(", ".join(parts) + ".")
 	_refresh()
+
 
 func _flash_reload(message: String) -> void:
 	_note(message)

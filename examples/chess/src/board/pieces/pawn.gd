@@ -4,6 +4,7 @@ extends RefCounted
 
 const Geo = preload("res://src/board/geometry.gd")
 
+
 static func generate(b, sq: int, color: String, moves: Array) -> void:
 	var dir := 1 if color == "w" else -1
 	var start_rank := 1 if color == "w" else 6
@@ -27,6 +28,7 @@ static func generate(b, sq: int, color: String, moves: Array) -> void:
 			_push(b, moves, sq, to, r + dir == last_rank)
 		elif to == b.en_passant:
 			b.add_move(moves, sq, to, {"en_passant": true})
+
 
 static func _push(b, moves: Array, from: int, to: int, promoting: bool) -> void:
 	if promoting:

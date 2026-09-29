@@ -19,11 +19,18 @@
 rust = "1.97.0"
 "cargo:cargo-nextest" = "0.9.115"
 "cargo:cargo-tarpaulin" = "0.37"
+"godot" = "4.7.2-stable"
 
 # bindings/python: `uv` drives everything, and builds the extension through
 # maturin, which it installs itself from pyproject.toml's build-system.
 python = "3.14.2"
 uv = "0.11.21"
+
+# examples/chess: gdtoolkit (Scony/godot-gdscript-toolkit) provides gdlint and
+# gdformat for the Godot scripts. Pinned: the 4.x line targets Godot 4, and a
+# parser bump can reformat or re-lint the whole example. Via pipx rather than
+# the uv backend, whose vfox plugin fails to load on this mise version.
+"pipx:gdtoolkit" = "4.5.0"
 
 # bindings/uniffi: Kotlin compiles the generated bindings, Java runs them under
 # JNA, and uniffi-bindgen shells out to ktlint to format what it generates —
@@ -74,19 +81,19 @@ run = "cargo tarpaulin --workspace --features $STANCHION_FEATURES --exclude-file
 [tasks.lint]
 description = "Clippy across the workspace and the bindings"
 run = [
-    "cargo clippy --workspace --all-targets --features $STANCHION_FEATURES -- -D warnings",
-    "cargo clippy -p stanchion-python -p stanchion-uniffi -p stanchion-ruby --all-targets -- -D warnings",
+  "cargo clippy --workspace --all-targets --features $STANCHION_FEATURES -- -D warnings",
+  "cargo clippy -p stanchion-python -p stanchion-uniffi -p stanchion-ruby --all-targets -- -D warnings",
 ]
 
 [tasks."test:python"]
 description = "Build the Python extension and run its suite"
 dir = "bindings/python"
 run = [
-    "uv sync",
-    "uv run maturin develop --uv",
-    "uv run pytest",
-    "uv run ruff check .",
-    "uv run mypy",
+  "uv sync",
+  "uv run maturin develop --uv",
+  "uv run pytest",
+  "uv run ruff check .",
+  "uv run mypy",
 ]
 
 [tasks."test:ruby"]
@@ -105,3 +112,17 @@ run = "./bindings/uniffi/smoke-kotlin.sh"
 [tasks.smoke]
 description = "Every binding, end to end"
 depends = ["smoke:uniffi", "smoke:kotlin", "test:python", "test:ruby"]
+
+[tasks.chess]
+dir = "examples/chess"
+run = "godot ."
+
+[tasks."chess:lint"]
+description = "Lint the chess example scripts with gdlint"
+dir = "examples/chess"
+run = "gdlint src/"
+
+[tasks."chess:format"]
+description = "Format the chess example scripts with gdformat"
+dir = "examples/chess"
+run = "gdformat src/"

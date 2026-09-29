@@ -41,6 +41,20 @@ recompiling the game, and the plugin runs sandboxed with a bounded instruction b
 If the extension is missing, the game still runs the rules — you just get no AI plays
 or hints, and a note explaining why.
 
+## GDScript notes
+
+Lint and format the scripts with `mise run chess:lint` and `mise run chess:format`
+(`gdlint`/`gdformat` from `gdtoolkit==4.5.0`, pinned in `mise.toml`). Two traps:
+
+- **Never `:=` on a dynamic value.** The project treats Variant inference as an
+  error, so `:=` is only for statically typed expressions. Anything flowing from
+  an untyped seam — trial clones, untyped `b`/`game` parameters — takes `=`.
+- **`board.gd` delegates are load-bearing.** The thin wrappers (`is_attacked`,
+  `attacked_targets`, …) look redundant next to `attacks.gd`/`annotate.gd`, but
+  trial clones call them dynamically. Likewise there is no `class_name`
+  anywhere: headless runs have no global class cache, so cross-file references
+  are `preload` consts pointing one way (components never preload callers).
+
 ## The plugin contract
 
 Each combination is a Lua class with a `suggest(position)` method. `position` is a
@@ -58,12 +72,21 @@ table shaped by `ChessBoard.position_for`:
       from = <0..63>, to = <0..63>,
       piece = "P".."K", from_sq = "e2", to_sq = "e4",
       capture = "" | "P".."Q", captured_value = <int>,
-      is_castle = <bool>, is_en_passant = <bool>, promotes = "" | "Q",
-      gives_check = <bool>, is_mate = <bool>,
+      is_castle = <bool>, is_en_passant = <bool>, promotes = "" | "QNRB",
+      gives_check = <bool>, is_double_check = <bool>, is_mate = <bool>,
+      is_discovered_check = <bool>,
       attacks = [ enemy piece types hit from the destination ],
       attacks_valuable = <int>,   -- how many of those are worth a minor piece or more
+      mover_value = <int>,
+      captured_defended = <bool>, -- the prize is guarded pre-move
+      attackers_of_to = [ squares ], -- foe recaptures post-move
+      creates_pin = <bool>, creates_skewer = <bool>, tactic_value = <int>,
+      to_is_attacked = <bool>,
+      san = "Nf3+", raw = <engine move>,
     }, …
   ],
+  foe_attacks = { [sq] = [attacker squares] },
+  own_attacks = { [sq] = [attacker squares] },
 }
 ```
 

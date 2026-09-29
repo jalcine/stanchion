@@ -32,6 +32,7 @@ var board_font: Font
 var overlay: Node2D
 var pieces_layer: Node2D
 
+
 func setup(g) -> void:
 	game = g
 	texture = load("res://assets/board.png")
@@ -55,12 +56,15 @@ func setup(g) -> void:
 	pieces_layer.draw.connect(_draw_pieces)
 	add_child(pieces_layer)
 
+
 func refresh() -> void:
 	pieces_layer.queue_redraw()
 	overlay.queue_redraw()
 
+
 func cell_pos(sq: int) -> Vector2:
 	return Vector2(ORIGIN + Geo.file_of(sq) * CELL, ORIGIN + (7 - Geo.rank_of(sq)) * CELL)
+
 
 func square_at(pos: Vector2) -> int:
 	var gx := pos.x - ORIGIN
@@ -71,12 +75,16 @@ func square_at(pos: Vector2) -> int:
 	var rank := 7 - int(gy / CELL)
 	return rank * 8 + file
 
+
 func _on_gui_input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+	if not (
+		event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
+	):
 		return
 	var sq := square_at(event.position)
 	if sq != -1:
 		square_picked.emit(sq)
+
 
 func _draw_overlay() -> void:
 	# Squares the current reasoning refers to, tinted behind the pieces: amber for the
@@ -90,7 +98,9 @@ func _draw_overlay() -> void:
 
 	# Selected square and its legal destinations.
 	if game.selected != -1:
-		overlay.draw_rect(Rect2(cell_pos(game.selected), Vector2(CELL, CELL)), Color(1, 0.9, 0.3, 0.35))
+		overlay.draw_rect(
+			Rect2(cell_pos(game.selected), Vector2(CELL, CELL)), Color(1, 0.9, 0.3, 0.35)
+		)
 	for move in game.selected_moves:
 		var center: Vector2 = cell_pos(move["to"]) + Vector2(CELL, CELL) / 2
 		var is_capture: bool = game.board.squares[move["to"]] != ""
@@ -105,16 +115,20 @@ func _draw_overlay() -> void:
 		overlay.draw_line(a, b, Color(0.3, 0.6, 1.0, 0.7), 5.0)
 		overlay.draw_circle(b, CELL * 0.12, Color(0.3, 0.6, 1.0, 0.9))
 
+
 ## Fills one square with a translucent colour.
 func _tint(sq: int, color: Color) -> void:
 	overlay.draw_rect(Rect2(cell_pos(sq), Vector2(CELL, CELL)), color)
+
 
 ## Draws the pieces as font glyphs, each measured and centred in its square. White
 ## reads light with a dark outline; black the reverse.
 func _draw_pieces() -> void:
 	if SHOW_CELL_BORDERS:
 		for sq in 64:
-			pieces_layer.draw_rect(Rect2(cell_pos(sq), Vector2(CELL, CELL)), Color(1, 0, 0, 0.7), false, 1.0)
+			pieces_layer.draw_rect(
+				Rect2(cell_pos(sq), Vector2(CELL, CELL)), Color(1, 0, 0, 0.7), false, 1.0
+			)
 
 	var font_size := int(CELL * 0.82)
 	var outline := int(CELL * 0.06)
@@ -137,5 +151,9 @@ func _draw_pieces() -> void:
 			center.x - extent.x / 2.0 + nudge.x * CELL,
 			center.y - extent.y / 2.0 + board_font.get_ascent(font_size) + nudge.y * CELL
 		)
-		pieces_layer.draw_string_outline(board_font, origin, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, outline, edge)
-		pieces_layer.draw_string(board_font, origin, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, fill)
+		pieces_layer.draw_string_outline(
+			board_font, origin, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, outline, edge
+		)
+		pieces_layer.draw_string(
+			board_font, origin, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, fill
+		)

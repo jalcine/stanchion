@@ -13,6 +13,7 @@ const BISHOP_DIRS := [[1, 1], [1, -1], [-1, 1], [-1, -1]]
 const ROOK_DIRS := [[1, 0], [-1, 0], [0, 1], [0, -1]]
 const QUEEN_DIRS := [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
 
+
 static func pseudo(b, color: String) -> Array:
 	var moves: Array = []
 	for sq in 64:

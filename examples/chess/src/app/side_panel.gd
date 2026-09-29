@@ -11,6 +11,7 @@ var hint_label: RichTextLabel
 var ai_label: RichTextLabel
 var log_label: RichTextLabel
 
+
 func setup(board_px: float, difficulty: String, roster_names: Array) -> void:
 	position = Vector2(board_px + 48, 24)
 	custom_minimum_size = Vector2(340, board_px)
@@ -85,13 +86,16 @@ func setup(board_px: float, difficulty: String, roster_names: Array) -> void:
 	log_label.custom_minimum_size = Vector2(340, 160)
 	add_child(log_label)
 
+
 func _on_difficulty_button(roster_name: String) -> void:
 	difficulty_chosen.emit(roster_name)
+
 
 func sync_difficulty(current: String, rosters: Dictionary) -> void:
 	for node in _all_buttons(self):
 		if rosters.has(node.text):
 			node.button_pressed = node.text == current
+
 
 func _all_buttons(node: Node) -> Array:
 	var found: Array = []

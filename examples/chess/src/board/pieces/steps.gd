@@ -3,6 +3,7 @@ extends RefCounted
 
 const Geo = preload("res://src/board/geometry.gd")
 
+
 static func generate(b, sq: int, color: String, moves: Array, steps: Array) -> void:
 	var f: int = Geo.file_of(sq)
 	var r: int = Geo.rank_of(sq)

@@ -4,6 +4,7 @@ extends RefCounted
 
 var host = null  # the GDExtension Stanchion object, or null when missing
 
+
 ## Opens the plugin host. Returns "" on success, else the note to show.
 func open_engine(plugins_path: String):
 	if not ClassDB.class_exists("Stanchion"):
@@ -17,8 +18,10 @@ func open_engine(plugins_path: String):
 		return err
 	return ""
 
+
 func is_live() -> bool:
 	return host != null
+
 
 func load_all() -> Array:
 	if host == null:
@@ -26,15 +29,18 @@ func load_all() -> Array:
 	var report: Dictionary = host.load("")
 	return report.get("loaded", [])
 
+
 func plugin_names() -> Array:
 	if host == null:
 		return []
 	return host.names()
 
+
 func reload_plugin(name: String) -> bool:
 	if host == null:
 		return false
 	return host.reload(name)
+
 
 ## Asks every loaded combination for its move, returning suggestions for the
 ## `allowed` plugins only, strongest first.

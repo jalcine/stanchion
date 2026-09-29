@@ -10,6 +10,7 @@ default-members = ["crates/*", "tools/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+publish = false
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jalcine/stanchion"
 exclude = ["mise.toml"]
@@ -36,8 +37,8 @@ mlua = { version = "0.12", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = { version = "1", features = ["serde"] }
-sha2 = "0.10"
-toml = "0.9"
+sha2 = "0.11"
+toml = "1.1.6+spec-1.1.0"
 jsonrpsee-types = "0.26"
 http = "1"
 time = { version = "0.3", features = ["formatting", "parsing"] }

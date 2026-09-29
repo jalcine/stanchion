@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
+exclude.workspace = true
 
 [dependencies]
 # The runtime trait replaces direct `&Lua` usage; lua-enabled bindings use stanchion-lua

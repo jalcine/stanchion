@@ -4602,7 +4602,7 @@ dependencies = [
  "mlua",
  "semver",
  "serde",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -4614,12 +4614,12 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "stanchion-registry",
  "tar",
  "tempfile",
  "time",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -4633,7 +4633,7 @@ dependencies = [
  "stanchion-registry",
  "tempfile",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -4664,7 +4664,7 @@ dependencies = [
  "http-body-util",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "stanchion-dist",
  "tempfile",
  "time",
@@ -4720,10 +4720,10 @@ dependencies = [
  "mlua",
  "semver",
  "serde",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "stanchion-abi",
  "stanchion-lua",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -4736,7 +4736,7 @@ dependencies = [
  "serde_json",
  "stanchion-abi",
  "stanchion-registry",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -4753,7 +4753,7 @@ name = "stanchion-sigstore"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sigstore",
  "sigstore_protobuf_specs",
  "stanchion-registry",

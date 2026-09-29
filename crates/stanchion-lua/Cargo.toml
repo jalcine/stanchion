@@ -5,6 +5,8 @@ edition = "2024"
 description = "Lua-specific implementation of the stanchion plugin system"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jalcine/stanchion"
+publish.workspace = true
+exclude.workspace = true
 
 [dependencies]
 stanchion-abi = { workspace = true }

@@ -5,7 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+publish.workspace = true
+exclude.workspace = true
 
 [lib]
 name = "stanchion_c"

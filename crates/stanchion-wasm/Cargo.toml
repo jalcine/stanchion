@@ -2,6 +2,8 @@
 name = "stanchion-wasm"
 version = "0.1.0"
 edition = "2024"
+publish.workspace = true
+exclude.workspace = true
 
 [dependencies]
 wasmtime = "48.0"

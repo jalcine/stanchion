@@ -166,3 +166,23 @@ of 8 (`feat(chess): 8 more combinations (batch N)`).
 - [ ] `timeout 60 mise exec -- godot --headless --import` in `examples/chess`,
       then `timeout 3s mise chess` → "Loaded combinations: …" lists 50, no errors.
 - [ ] Commit. Done; phase 2 (restructure) is separate work.
+
+---
+
+## Phase 2 file map (restructure — implemented)
+
+`src/board/`: `board.gd` (state facade + delegates), `geometry.gd` (square/code statics),
+`attacks.gd` (attackers/attack-map pure functions), `san.gd` (notation),
+`annotate.gd` (plugin contract + VALUE), `pieces/movegen.gd` (dispatcher),
+`pieces/pawn.gd`, `pieces/steps.gd` (N/K), `pieces/sliders.gd` (B/R/Q),
+`pieces/king.gd` (steps + castling).
+
+`src/app/`: `game.gd` (root Control, state + turn flow, owns view/panel/client),
+`board_view.gd` (TextureRect surface, geometry, input signal, painting),
+`side_panel.gd` (widgets, intent signals), `stanchion_client.gd` (host wiring),
+`brain.gd` (describe/match/fallback), `config.gd` (DIFFICULTY).
+
+No `class_name` anywhere (headless runs lack the global class cache); cross-file
+refs are `preload` consts, dependencies point one way (components never preload
+their callers), untyped params mark the seams. `main.tscn` points at
+`res://src/app/game.gd`. XRPC contract byte-identical — Lua untouched.

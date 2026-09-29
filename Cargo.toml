@@ -12,9 +12,12 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jalcine/stanchion"
+exclude = ["mise.toml"]
 
 [workspace.dependencies]
-stanchion-abi = { path = "crates/stanchion-abi", version = "0.1.0", features = ["lua"] }
+stanchion-abi = { path = "crates/stanchion-abi", version = "0.1.0", features = [
+  "lua",
+] }
 stanchion-dist = { path = "crates/stanchion-dist", version = "0.1.0" }
 stanchion-ffi = { path = "crates/stanchion-ffi", version = "0.1.0" }
 stanchion-index = { path = "crates/stanchion-index", version = "0.1.0" }
@@ -26,7 +29,10 @@ stanchion-remote = { path = "crates/stanchion-remote", version = "0.1.0" }
 stanchion-sigstore = { path = "crates/stanchion-sigstore", version = "0.1.0" }
 stanchion-wasm = { path = "crates/stanchion-wasm", version = "0.1.0" }
 
-mlua = { version = "0.12", default-features = false, features = ["lua54", "vendored"] }
+mlua = { version = "0.12", default-features = false, features = [
+  "lua54",
+  "vendored",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = { version = "1", features = ["serde"] }

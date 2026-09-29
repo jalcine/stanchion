@@ -129,10 +129,17 @@ theme_override_font_sizes/font_size = 16
 text = "
 Moves"
 
-[node name="LogLabel" type="RichTextLabel" parent="SidePanel" unique_id=1913219123]
+[node name="LogScroll" type="ScrollContainer" parent="SidePanel"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(340, 160)
+custom_minimum_size = Vector2(340, 100)
 layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 3
+
+[node name="LogLabel" type="RichTextLabel" parent="SidePanel/LogScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
 fit_content = true
 
 [connection signal="gui_input" from="BoardView" to="BoardView" method="_on_gui_input"]

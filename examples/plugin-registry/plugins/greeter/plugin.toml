@@ -1,0 +1,3 @@
+name = "greeter"
+version = "1.0.0"
+entry = "init.lua"

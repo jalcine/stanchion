@@ -1136,6 +1136,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dev-harness"
+version = "0.1.0"
+dependencies = [
+ "stanchion-lua",
+ "stanchion-registry",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3135,6 +3143,24 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "plugin-registry"
+version = "0.1.0"
+dependencies = [
+ "poem",
+ "semver",
+ "serde",
+ "serde_json",
+ "stanchion-dist",
+ "stanchion-index",
+ "stanchion-index-poem",
+ "stanchion-lua",
+ "stanchion-registry",
+ "tempfile",
+ "time",
+ "tokio",
+]
 
 [[package]]
 name = "poem"

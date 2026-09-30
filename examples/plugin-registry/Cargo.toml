@@ -1,0 +1,38 @@
+[package]
+name = "plugin-registry"
+description = "Self-contained plugin registry example: publish, serve with upload, install and run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+exclude.workspace = true
+
+[[bin]]
+name = "registry-publish"
+path = "src/bin/publish.rs"
+
+[[bin]]
+name = "registry-serve"
+path = "src/bin/serve.rs"
+
+[[bin]]
+name = "registry-consume"
+path = "src/bin/consume.rs"
+
+[dependencies]
+stanchion-dist = { workspace = true, features = ["client"] }
+stanchion-index = { workspace = true }
+stanchion-index-poem = { workspace = true }
+stanchion-registry = { workspace = true, features = ["lua54", "vendored", "signatures"] }
+stanchion-lua = { workspace = true }
+poem = { version = "3", features = ["server"] }
+tokio.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

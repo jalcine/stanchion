@@ -6,18 +6,22 @@ use std::path::Path;
 use std::process::Command;
 
 use stanchion::registry::rocks::RocksConfig;
-use stanchion::registry::{FailureReason, Registry};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result};
+use stanchion::registry::{FailureReason, Registry, Value};
+use stanchion_lua::backend::LuaBackend;
 use tempfile::TempDir;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-#[lua_class]
-pub trait Greeter {
-    fn new(config: stanchion_lua::mlua::Table, deps: stanchion_lua::mlua::Table) -> Result<Self>;
-    fn greet(&self, who: String) -> Result<String>;
+fn shared() -> Registry {
+    Registry::new().with_runtime(Box::new(LuaBackend::shared()))
+}
+
+fn greet(registry: &Registry, who: &str) -> Fallible<String> {
+    match registry.call("rocky", "greet", &[Value::Str(who.to_string())])? {
+        Value::Str(text) => Ok(text),
+        other => Err(format!("expected a string, got {other:?}").into()),
+    }
 }
 
 const USES_ROCK: &str = r#"
@@ -114,16 +118,11 @@ fn a_declared_rock_is_loadable_from_the_tree() -> TestResult {
         return Ok(());
     };
 
-    let mut registry: Registry<GreeterClass> =
-        Registry::new(Lua::new()).with_rocks(RocksConfig::new(tree.path()));
+    let mut registry = shared().with_rocks(RocksConfig::new(tree.path()));
     let report = registry.load_dir(root.path())?;
 
     assert_eq!(report.loaded, ["rocky"], "failures: {:?}", report.failures);
-    let rocky = registry.get("rocky").ok_or("rocky should be loaded")?;
-    assert_eq!(
-        rocky.instance().greet("you".to_string())?,
-        "fakerock greets you"
-    );
+    assert_eq!(greet(&registry, "you")?, "fakerock greets you");
     Ok(())
 }
 
@@ -134,8 +133,7 @@ fn a_bare_requirement_accepts_the_rockspec_revision() -> TestResult {
         eprintln!("skipping: luarocks not installed");
         return Ok(());
     };
-    let mut registry: Registry<GreeterClass> =
-        Registry::new(Lua::new()).with_rocks(RocksConfig::new(tree.path()));
+    let mut registry = shared().with_rocks(RocksConfig::new(tree.path()));
     assert!(registry.load_dir(root.path())?.is_clean());
     Ok(())
 }
@@ -147,8 +145,7 @@ fn an_unsatisfied_version_is_reported() -> TestResult {
         return Ok(());
     };
 
-    let mut registry: Registry<GreeterClass> =
-        Registry::new(Lua::new()).with_rocks(RocksConfig::new(tree.path()));
+    let mut registry = shared().with_rocks(RocksConfig::new(tree.path()));
     let report = registry.load_dir(root.path())?;
 
     assert!(report.loaded.is_empty());
@@ -179,8 +176,7 @@ fn a_missing_rock_is_reported() -> TestResult {
         USES_ROCK,
     )?;
 
-    let mut registry: Registry<GreeterClass> =
-        Registry::new(Lua::new()).with_rocks(RocksConfig::new(tree.path()));
+    let mut registry = shared().with_rocks(RocksConfig::new(tree.path()));
     let report = registry.load_dir(root.path())?;
 
     assert!(
@@ -205,7 +201,7 @@ fn declaring_rocks_without_a_tree_fails_loudly() -> TestResult {
     )?;
 
     // No `with_rocks`: the plugin must not silently resolve from the machine.
-    let mut registry: Registry<GreeterClass> = Registry::new(Lua::new());
+    let mut registry = shared();
     let report = registry.load_dir(root.path())?;
 
     assert!(report.loaded.is_empty());
@@ -229,7 +225,7 @@ fn a_malformed_requirement_is_a_manifest_error() -> TestResult {
         USES_ROCK,
     )?;
 
-    let mut registry: Registry<GreeterClass> = Registry::new(Lua::new());
+    let mut registry = shared();
     let report = registry.load_dir(root.path())?;
 
     assert!(

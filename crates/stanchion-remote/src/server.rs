@@ -4,12 +4,10 @@ use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
 
-use mlua::{Lua, LuaSerdeExt, MultiValue, Value};
 use serde_json::Value as Json;
-use stanchion_abi::value::lua::lua_to_abi;
-
-use stanchion_registry::config::HostConfig;
-use stanchion_registry::{DynClass, DynInstance, Registry, Rules};
+use stanchion_abi::{CapabilityCall, Value};
+use stanchion_lua::config::HostConfig;
+use stanchion_registry::{Registry, Rules};
 
 use jsonrpsee_types::{ErrorCode, ErrorObjectOwned, Id};
 
@@ -48,80 +46,72 @@ fn sanitize_log(text: &str) -> String {
     out
 }
 
-/// Builds the registry a host serves from.
+/// Builds the registry a host serves from, plus its isolation label.
+///
+/// The registry drives a Lua backend; forwarded capabilities call back out
+/// to the application over the channel.
 pub fn build_registry(
     config: &HostConfig,
     channel: &HostChannel,
-) -> Result<Registry<DynClass>, String> {
+) -> Result<(Registry, &'static str), String> {
     let sandbox = config.sandbox.to_sandbox()?;
-
-    let mut registry = if config.sandbox.shared {
-        Registry::new(Lua::new())
+    let isolation = if config.sandbox.shared {
+        "shared"
     } else {
-        Registry::isolated(Lua::new(), sandbox)
+        "per-plugin"
     };
+
+    let mut registry = Registry::new();
+    registry = registry.with_runtime(Box::new(if config.sandbox.shared {
+        stanchion_lua::backend::LuaBackend::shared()
+    } else {
+        stanchion_lua::backend::LuaBackend::isolated(sandbox)
+    }));
 
     let forwarded = config.capabilities.callbacks.clone();
     let channel = channel.clone();
     registry = registry.with_setup(move |host| {
         // `log` needs no callback channel: it writes to stderr, which the process
         // that launched the host already captures.
-        host.capability("log", |lua, grant| {
-            let plugin = grant.plugin().to_string();
-            let Some(lua_state) = lua.lua_state() else {
-                return Err(stanchion_abi::Error::Config(
-                    "Lua runtime expected".to_string(),
-                ));
-            };
-            let lua_guard = lua_state.lock().map_err(|_| {
-                stanchion_abi::Error::Config("the Lua state is poisoned".to_string())
-            })?;
-            let func = lua_guard
-                .create_function(move |_, message: String| {
-                    eprintln!("[{}] {}", sanitize_log(&plugin), sanitize_log(&message));
-                    Ok(())
+        host.capability("log", |call: &CapabilityCall| {
+            let message = call
+                .args
+                .first()
+                .and_then(|value| match value {
+                    Value::Str(text) => Some(text.as_str()),
+                    _ => None,
                 })
-                .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
-            Ok(lua_to_abi(&lua_guard, &Value::Function(func)))
+                .unwrap_or("(no message)");
+            eprintln!(
+                "[{}] {}",
+                sanitize_log(&call.plugin),
+                sanitize_log(message)
+            );
+            Ok(Value::Nil)
         });
 
         for capability in forwarded {
             let channel = channel.clone();
-            host.capability(capability.clone(), move |lua, grant| {
-                let channel = channel.clone();
-                let capability = capability.clone();
-                let plugin = grant.plugin().to_string();
+            let capability_name = capability.clone();
+            host.capability(capability, move |call: &CapabilityCall| {
                 // The approved grant travels with every call so the application can
                 // re-check it rather than trusting this host to have narrowed.
-                let granted = serde_json::to_value(grant.params()).unwrap_or(Json::Null);
-
-                let Some(lua_state) = lua.lua_state() else {
-                    return Err(stanchion_abi::Error::Config(
-                        "Lua runtime expected".to_string(),
-                    ));
-                };
-                let lua_guard = lua_state.lock().map_err(|_| {
-                    stanchion_abi::Error::Config("the Lua state is poisoned".to_string())
-                })?;
-                let func = lua_guard
-                    .create_function(move |lua, args: mlua::MultiValue| {
-                        let mut json_args = Vec::with_capacity(args.len());
-                        for arg in args {
-                            json_args.push(lua.from_value::<Json>(arg)?);
-                        }
-                        let value = channel
-                            .call_application(CallbackCall {
-                                plugin: plugin.clone(),
-                                capability: capability.clone(),
-                                grant: granted.clone(),
-                                args: json_args,
-                            })
-                            .map_err(mlua::Error::RuntimeError)?;
-                        let value_lua = lua.to_value(&value);
-                        Ok(value_lua)
+                let granted = value_to_json(&call.grant).unwrap_or(Json::Null);
+                let mut json_args = Vec::with_capacity(call.args.len());
+                for arg in &call.args {
+                    json_args.push(
+                        value_to_json(arg).map_err(|err| format!("converting argument: {err}"))?,
+                    );
+                }
+                let value = channel
+                    .call_application(CallbackCall {
+                        plugin: call.plugin.clone(),
+                        capability: capability_name.clone(),
+                        grant: granted,
+                        args: json_args,
                     })
-                    .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
-                Ok(lua_to_abi(&lua_guard, &Value::Function(func)))
+                    .map_err(|err| err.to_string())?;
+                json_to_value(&value).map_err(|err| err.to_string())
             });
         }
         Ok(())
@@ -143,15 +133,59 @@ pub fn build_registry(
         registry = registry.require_signatures(true);
     }
 
-    Ok(registry)
+    Ok((registry, isolation))
+}
+
+/// Converts a runtime [`Value`] into JSON for the wire.
+fn value_to_json(value: &Value) -> Result<Json, String> {
+    match value {
+        Value::Nil => Ok(Json::Null),
+        Value::Bool(flag) => Ok(Json::Bool(*flag)),
+        Value::Int(number) => Ok(Json::Number((*number).into())),
+        Value::Float(number) => serde_json::Number::from_f64(*number)
+            .map(Json::Number)
+            .ok_or_else(|| format!("non-finite float `{number}` has no JSON form")),
+        Value::Str(text) => Ok(Json::String(text.clone())),
+        Value::List(items) => items.iter().map(value_to_json).collect(),
+        Value::Map(entries) => entries
+            .iter()
+            .map(|(key, value)| value_to_json(value).map(|value| (key.clone(), value)))
+            .collect::<Result<_, _>>()
+            .map(Json::Object),
+        Value::Function => Err("a capability function cannot cross the process boundary".to_string()),
+    }
+}
+
+/// Converts wire JSON into a runtime [`Value`].
+fn json_to_value(value: &Json) -> Result<Value, String> {
+    match value {
+        Json::Null => Ok(Value::Nil),
+        Json::Bool(flag) => Ok(Value::Bool(*flag)),
+        Json::Number(number) => number
+            .as_i64()
+            .map(Value::Int)
+            .or_else(|| number.as_f64().map(Value::Float))
+            .ok_or_else(|| format!("number `{number}` is neither an int nor a float")),
+        Json::String(text) => Ok(Value::Str(text.clone())),
+        Json::Array(items) => items
+            .iter()
+            .map(json_to_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::List),
+        Json::Object(entries) => entries
+            .iter()
+            .map(|(key, value)| json_to_value(value).map(|value| (key.clone(), value)))
+            .collect::<Result<_, _>>()
+            .map(Value::Map),
+    }
 }
 
 /// The host's end of the channel: framed JSON-RPC over a pair of pipes.
 ///
-/// Shared, because a capability provider is a `'static` Lua closure that must reach
-/// the channel long after `serve` was called. A callback made from inside Lua blocks
-/// for its reply while queueing any request that arrives meanwhile, so the
-/// application can keep sending while a plugin is mid-call.
+/// Shared, because a capability provider is a `'static` closure that must reach
+/// the channel long after `serve` was called. A callback made from inside a
+/// plugin blocks for its reply while queueing any request that arrives
+/// meanwhile, so the application can keep sending while a plugin is mid-call.
 #[derive(Clone)]
 pub struct HostChannel {
     state: Arc<Mutex<ChannelState>>,
@@ -243,11 +277,15 @@ impl HostChannel {
 /// A failure inside one request becomes an error reply rather than ending the
 /// session: a malformed call from the application should not take the host down, the
 /// same way one bad plugin does not stop the others loading.
-pub fn serve(registry: &mut Registry<DynClass>, channel: &HostChannel) -> std::io::Result<()> {
+pub fn serve(
+    registry: &mut Registry,
+    channel: &HostChannel,
+    isolation: &str,
+) -> std::io::Result<()> {
     while let Some(request) = channel.next_request()? {
         let stop = request.method == method::SHUTDOWN;
         let id = request.id.clone();
-        let response = match handle(registry, request) {
+        let response = match handle(registry, isolation, request) {
             Ok(value) => Response::ok(id, value),
             Err(error) => Response::failed(id, error),
         };
@@ -273,7 +311,7 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<Json, ErrorObjectOwned> {
 }
 
 /// Answers one request.
-fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, ErrorObjectOwned> {
+fn handle(registry: &mut Registry, isolation: &str, request: Request) -> Result<Json, ErrorObjectOwned> {
     match request.method.as_str() {
         method::LOAD => {
             let RootParams { root } = parse(request.params)?;
@@ -318,7 +356,7 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
                         capabilities: entry
                             .requests
                             .iter()
-                            .map(|request| request.name.clone())
+                            .map(|request| request.capability.clone())
                             .collect(),
                         signer: audit_signer(entry),
                     })
@@ -331,29 +369,39 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
                 method,
                 args,
             } = parse(request.params)?;
-            let entry = registry
-                .get(&plugin)
-                .ok_or_else(|| failed(format!("no plugin named `{plugin}`")))?;
-            call_plugin(entry.lua(), entry.instance(), &method, &args).map_err(failed)
+            let values: Vec<Value> = args
+                .iter()
+                .map(json_to_value)
+                .collect::<Result<_, _>>()
+                .map_err(failed)?;
+            registry
+                .call(&plugin, &method, &values)
+                .map_err(|err| failed(err.to_string()))
+                .and_then(|value| value_to_json(&value).map_err(failed))
         }
         method::DISPATCH => {
             let DispatchParams { method, args } = parse(request.params)?;
+            let values: Vec<Value> = args
+                .iter()
+                .map(json_to_value)
+                .collect::<Result<_, _>>()
+                .map_err(failed)?;
             encode(
                 &registry
-                    .plugins()
-                    .iter()
-                    .map(|plugin| {
-                        match call_plugin(plugin.lua(), plugin.instance(), &method, &args) {
-                            Ok(value) => Outcome {
-                                plugin: plugin.name().to_string(),
-                                value: Some(value),
-                                error: None,
+                    .dispatch(&method, &values)
+                    .into_iter()
+                    .map(|outcome| {
+                        let (value, error) = match outcome.value {
+                            Some(value) => match value_to_json(&value) {
+                                Ok(json) => (Some(json), None),
+                                Err(reason) => (None, Some(reason)),
                             },
-                            Err(message) => Outcome {
-                                plugin: plugin.name().to_string(),
-                                value: None,
-                                error: Some(message),
-                            },
+                            None => (None, outcome.error),
+                        };
+                        Outcome {
+                            plugin: outcome.plugin,
+                            value,
+                            error,
                         }
                     })
                     .collect::<Vec<_>>(),
@@ -376,11 +424,7 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
         }
         method::INFO => encode(&HostInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            isolation: match registry.isolation() {
-                stanchion_registry::Isolation::Shared => "shared".to_string(),
-                stanchion_registry::Isolation::PerPlugin(_) => "per-plugin".to_string(),
-                stanchion_registry::Isolation::PerGroup(_) => "per-group".to_string(),
-            },
+            isolation: isolation.to_string(),
             signatures_required: registry.signatures_required(),
         }),
         method::SHUTDOWN => Ok(Json::Null),
@@ -391,35 +435,13 @@ fn handle(registry: &mut Registry<DynClass>, request: Request) -> Result<Json, E
     }
 }
 
-/// Converts JSON arguments into Lua, calls the method, and converts the result back.
-fn call_plugin(
-    lua: &Lua,
-    instance: &DynInstance,
-    method: &str,
-    args: &[Json],
-) -> Result<Json, String> {
-    let mut lua_args = Vec::with_capacity(args.len());
-    for arg in args {
-        lua_args.push(lua.to_value(arg).map_err(|err| err.to_string())?);
-    }
-
-    let result = instance
-        .call_method(method, MultiValue::from_iter(lua_args))
-        .map_err(|err| err.to_string())?;
-
-    // `nil` is JSON null rather than an error: a method may legitimately return
-    // nothing.
-    lua.from_value::<Json>(result)
-        .map_err(|err| err.to_string())
-}
-
 #[cfg(feature = "signatures")]
-fn signer_of(plugin: &stanchion_registry::Plugin<DynClass>) -> String {
+fn signer_of(plugin: &stanchion_registry::LoadedPlugin) -> String {
     plugin.signer().to_string()
 }
 
 #[cfg(not(feature = "signatures"))]
-fn signer_of(_plugin: &stanchion_registry::Plugin<DynClass>) -> String {
+fn signer_of(_plugin: &stanchion_registry::LoadedPlugin) -> String {
     "unverified".to_string()
 }
 
@@ -468,16 +490,18 @@ mod tests {
         use super::{HostChannel, build_registry, handle};
         use crate::frame::Request;
         use crate::protocol::{HostInfo, method};
-        use stanchion_registry::config::HostConfig;
+        use stanchion_lua::config::HostConfig;
 
         let posture = |required: bool| -> bool {
             let mut config = HostConfig::default();
             config.signatures.required = required;
             // The channel is unused by `host/info`; empty pipes suffice.
             let channel = HostChannel::new(std::io::empty(), std::io::sink());
-            let mut registry = build_registry(&config, &channel).expect("build registry");
+            let (mut registry, isolation) =
+                build_registry(&config, &channel).expect("build registry");
             let request = Request::new(1, method::INFO, serde_json::Value::Null);
-            let value = handle(&mut registry, request).expect("info should succeed");
+            let value =
+                handle(&mut registry, isolation, request).expect("info should succeed");
             let info: HostInfo = serde_json::from_value(value).expect("decode HostInfo");
             info.signatures_required
         };

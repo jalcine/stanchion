@@ -12,14 +12,7 @@
 use std::fs;
 
 use stanchion::registry::{Registry, read_manifest, rocks::RocksConfig};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
-
-#[lua_class]
-pub trait Task {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self) -> Result<String>;
-}
+use stanchion_lua::backend::LuaBackend;
 
 const PLUGIN_TOML: &str = r#"
 name = "needs-json"
@@ -53,7 +46,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("declares rocks: {rocks:?}");
 
     // No tree configured: refused rather than resolved from the machine.
-    let mut bare: Registry<TaskClass> = Registry::new(Lua::new());
+    let mut bare = Registry::new().with_runtime(Box::new(LuaBackend::shared()));
     let report = bare.load_dir(&root)?;
     println!("without a tree, loaded: {:?}", report.loaded);
     for failure in &report.failures {
@@ -69,8 +62,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // here invokes it.)
     let tree = temp.path().join("rocks-tree");
     fs::create_dir_all(&tree)?;
-    let mut with_tree: Registry<TaskClass> =
-        Registry::new(Lua::new()).with_rocks(RocksConfig::new(&tree));
+    let mut with_tree = Registry::new()
+        .with_runtime(Box::new(LuaBackend::shared()))
+        .with_rocks(RocksConfig::new(&tree));
     let report = with_tree.load_dir(&root)?;
     println!("\nwith an empty tree, loaded: {:?}", report.loaded);
     for failure in &report.failures {

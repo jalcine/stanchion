@@ -9,6 +9,7 @@ publish.workspace = true
 exclude.workspace = true
 
 [dependencies]
+stanchion-abi = { workspace = true }
 stanchion-registry = { workspace = true, features = ["signatures"] }
 serde_json.workspace = true
 # 0.10, not the workspace 0.11: sigstore 0.14's `verify_digest` takes this
@@ -24,7 +25,7 @@ sigstore_protobuf_specs = "0.5.2"
 
 [features]
 default = []
-send = ["stanchion-registry/send"]
+send = []
 
 [lints]
 workspace = true

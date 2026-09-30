@@ -10,14 +10,19 @@
 
 use std::fs;
 
-use stanchion::registry::{LockedPlugin, Lockfile, Manifest, Registry, UpgradeReview};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
+use stanchion::registry::{LockedPlugin, Lockfile, Manifest, Registry, UpgradeReview, Value};
+use stanchion_lua::backend::LuaBackend;
 
-#[lua_class]
-pub trait Task {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self) -> Result<String>;
+fn isolated() -> Registry {
+    Registry::new().with_runtime(Box::new(LuaBackend::shared()))
+}
+
+fn run(registry: &Registry) -> String {
+    match registry.call("pinned-demo", "run", &[]) {
+        Ok(Value::Str(text)) => text,
+        Ok(other) => format!("unexpected: {other:?}"),
+        Err(err) => format!("stopped: {}", err.to_string().lines().next().unwrap_or("")),
+    }
 }
 
 const PLUGIN_TOML: &str = r#"
@@ -67,12 +72,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     lockfile.pin("pinned-demo", LockedPlugin::from_digest(&digest));
     println!("pinned: sha256:{}", digest.hex());
 
-    let mut registry: Registry<TaskClass> =
-        Registry::new(Lua::new()).with_lockfile(lockfile.clone());
+    let mut registry: Registry =
+        isolated().with_lockfile(lockfile.clone());
     let report = registry.load_dir(&root)?;
     println!("loaded: {:?}", report.loaded);
-    if let Some(plugin) = registry.get("pinned-demo") {
-        println!("run: {}", plugin.instance().run()?);
+    if registry.get("pinned-demo").is_some() {
+        println!("run: {}", run(&registry));
     }
 
     // A byte changes: the pin no longer matches, so the plugin fails instead of
@@ -81,8 +86,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         root.join("pinned-demo").join("init.lua"),
         format!("{INIT_LUA}\n-- tampered\n"),
     )?;
-    let mut tampered: Registry<TaskClass> =
-        Registry::new(Lua::new()).with_lockfile(lockfile.clone());
+    let mut tampered: Registry =
+        isolated().with_lockfile(lockfile.clone());
     let report = tampered.load_dir(&root)?;
     println!("\nafter tampering, loaded: {:?}", report.loaded);
     for failure in &report.failures {
@@ -101,7 +106,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         root.join("extra").join("plugin.toml"),
         "name = \"extra\"\nversion = \"1.0.0\"\n",
     )?;
-    let mut with_sibling: Registry<TaskClass> = Registry::new(Lua::new()).with_lockfile(lockfile);
+    let mut with_sibling: Registry = isolated().with_lockfile(lockfile);
     let report = with_sibling.load_dir(&root)?;
     println!("\nwith sibling, loaded: {:?}", report.loaded);
     for failure in &report.failures {

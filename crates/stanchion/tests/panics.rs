@@ -8,32 +8,22 @@ mod common;
 
 use std::fs;
 
-use stanchion::registry::{FailureReason, Panicked, Registry, Rules, Sandbox};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
-
-use common::lua_function;
-
-type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
-
-#[lua_class]
-pub trait Probe {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self, input: String) -> Result<String>;
-}
+use common::TestResult;
+use stanchion::registry::{CapabilityCall, FailureReason, Registry, Rules, Value};
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
 
 /// A host whose one capability panics when a plugin calls it.
 #[expect(
     clippy::panic,
     reason = "the panic is the subject under test, not a fallible path taking a shortcut"
 )]
-fn exploding_registry() -> Registry<ProbeClass> {
-    Registry::isolated(Lua::new(), Sandbox::restricted())
+fn exploding_registry() -> Registry {
+    Registry::new()
+        .with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_setup(|host| {
-            host.capability("boom", |runtime, _grant| {
-                lua_function(runtime, |_, ()| -> Result<()> {
-                    panic!("the provider gave up")
-                })
+            host.capability("boom", |_call: &CapabilityCall| {
+                panic!("the provider gave up")
             });
             Ok(())
         })
@@ -48,20 +38,11 @@ fn write_plugin(root: &std::path::Path, body: &str, manifest: &str) -> TestResul
         dir.join("init.lua"),
         format!(
             "local P = {{}}\nP.__index = P\n\
-             function P.new(config, deps) return setmetatable({{}}, P) end\n\
+             function P.new(config, deps) return setmetatable({{deps = deps}}, P) end\n\
              function P:run(input)\n  {body}\nend\nreturn P\n"
         ),
     )?;
     Ok(())
-}
-
-/// Recovers a [`Panicked`] from wherever mlua wrapped it.
-///
-/// `Error::downcast_ref` descends through the `CallbackError` and `WithContext` layers
-/// mlua adds on the way out, which a plain `source()` walk does not: mlua's own
-/// `source` deliberately skips the external error it holds.
-fn panicked_in(error: &stanchion_lua::mlua::Error) -> Option<&Panicked> {
-    error.downcast_ref::<Panicked>()
 }
 
 #[test]
@@ -77,19 +58,16 @@ fn a_panicking_capability_fails_the_call_not_the_caller() -> TestResult {
     assert!(registry.load_dir(root.path())?.is_clean());
 
     // The call fails; reaching this line at all is the point.
-    let outcomes = registry.dispatch(|probe| probe.run(String::new()));
+    let outcomes = registry.dispatch("run", &[Value::Str(String::new())]);
     let outcome = outcomes.first().ok_or("one plugin was dispatched to")?;
     let error = outcome
-        .result
+        .error
         .as_ref()
-        .err()
         .ok_or("the call should have failed")?;
 
-    let panicked = panicked_in(error).ok_or_else(|| format!("not a panic: {error}"))?;
     assert!(
-        panicked.message().contains("the provider gave up"),
-        "got: {}",
-        panicked.message()
+        error.contains("panicked") && error.contains("the provider gave up"),
+        "not a panic report: {error}"
     );
     Ok(())
 }
@@ -116,7 +94,7 @@ fn a_panic_during_load_fails_only_that_plugin() -> TestResult {
     assert!(report.loaded.is_empty(), "got: {:?}", report.loaded);
     let failure = report.failures.first().ok_or("the plugin should fail")?;
     assert!(
-        matches!(&failure.reason, FailureReason::Panicked(_)),
+        matches!(&failure.reason, FailureReason::Runtime(reason) if reason.contains("panicked")),
         "got: {}",
         failure.reason
     );
@@ -140,19 +118,18 @@ fn an_ordinary_lua_error_is_still_an_ordinary_error() -> TestResult {
     let mut registry = exploding_registry();
     assert!(registry.load_dir(root.path())?.is_clean());
 
-    let outcomes = registry.dispatch(|probe| probe.run(String::new()));
+    let outcomes = registry.dispatch("run", &[Value::Str(String::new())]);
     let error = outcomes
         .first()
         .ok_or("one plugin was dispatched to")?
-        .result
+        .error
         .as_ref()
-        .err()
         .ok_or("the call should have failed")?;
     assert!(
-        panicked_in(error).is_none(),
+        !error.contains("panicked"),
         "a Lua error should not be reported as a panic: {error}"
     );
-    assert!(error.to_string().contains("just a failure"), "got: {error}");
+    assert!(error.contains("just a failure"), "got: {error}");
     Ok(())
 }
 
@@ -169,18 +146,15 @@ async fn a_panic_in_an_awaited_call_fails_the_call() -> TestResult {
     let mut registry = exploding_registry();
     assert!(registry.load_dir(root.path())?.is_clean());
 
-    let outcomes = registry
-        .dispatch_async(|probe| async move { probe.run(String::new()) })
-        .await;
+    let outcomes = registry.dispatch_async("run", &[]).await;
     let error = outcomes
         .first()
         .ok_or("one plugin was dispatched to")?
-        .result
+        .error
         .as_ref()
-        .err()
         .ok_or("the call should have failed")?;
     assert!(
-        panicked_in(error).is_some(),
+        error.contains("panicked"),
         "expected a panic report: {error}"
     );
     Ok(())

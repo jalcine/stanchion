@@ -50,6 +50,7 @@ required-features = ["luarocks"]
 [dependencies]
 stanchion-dist = { workspace = true, optional = true }
 stanchion-index = { workspace = true, optional = true }
+stanchion-lua = { workspace = true, optional = true }
 stanchion-registry = { workspace = true, optional = true }
 stanchion-remote = { workspace = true, optional = true }
 stanchion-sigstore = { workspace = true, optional = true }
@@ -57,13 +58,13 @@ stanchion-sigstore = { workspace = true, optional = true }
 [features]
 send = []
 default = []
-async = ["stanchion-registry/async"]
-registry = ["dep:stanchion-registry"]
-lua54 = ["stanchion-registry/lua54"]
-lua53 = ["stanchion-registry/lua53"]
-luajit = ["stanchion-registry/luajit"]
-luau = ["stanchion-registry/luau"]
-vendored = ["stanchion-registry/vendored"]
+async = ["dep:stanchion-lua", "stanchion-lua/async"]
+registry = ["dep:stanchion-registry", "dep:stanchion-lua"]
+lua54 = ["dep:stanchion-lua", "stanchion-lua/lua54"]
+lua53 = ["dep:stanchion-lua", "stanchion-lua/lua53"]
+luajit = ["dep:stanchion-lua", "stanchion-lua/luajit"]
+luau = ["dep:stanchion-lua", "stanchion-lua/luau"]
+vendored = ["dep:stanchion-lua", "stanchion-lua/vendored"]
 luarocks = ["registry", "stanchion-registry/luarocks"]
 signatures = ["registry", "stanchion-registry/signatures"]
 sigstore-verify = ["signatures", "dep:stanchion-sigstore"]
@@ -74,7 +75,6 @@ index-server = ["distribution", "dep:stanchion-index"]
 full = ["async", "registry", "luarocks", "signatures", "remote", "distribution"]
 
 [dev-dependencies]
-mlua = { workspace = true, features = ["serde"] }
 stanchion-abi = { workspace = true }
 stanchion-lua = { workspace = true }
 serde_json.workspace = true

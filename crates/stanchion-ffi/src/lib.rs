@@ -7,11 +7,12 @@
 //!
 //! # What a foreign caller gets, and does not
 //!
-//! The Rust API's [`Registry`](stanchion_registry::Registry) is generic over a
-//! contract that `#[lua_class]` derives from a trait at compile time. No foreign
-//! language can supply one, so plugins load here as `DynClass` — any table with a
-//! constructor — and method names resolve when a call happens rather than when the
-//! plugin loads.
+//! Plugins load through [`stanchion_registry::Registry`], which drives one
+//! runtime backend per plugin type (Lua, WASM, …). No foreign language can
+//! name a backend's native types, so every boundary here speaks
+//! [`stanchion_abi`] interfaces: arguments and results travel as [`Value`],
+//! capabilities arrive as [`CapabilityCall`], and policy answers
+//! [`Decision`].
 //!
 //! That is the same trade `plugin-host` makes for the same reason, and deliberately
 //! so: the two share a value model and a configuration vocabulary, so an application
@@ -65,25 +66,22 @@
 //! embedded in an application that already has its own VM, so the choice stays with
 //! whoever builds the artifact.
 
-mod backend;
-mod budget;
-mod callback;
 mod error;
 mod guard;
 mod host;
 mod value;
 
-pub use backend::{BackendRegistry, LuaBackend, PluginBackend, PluginInstance};
-pub use budget::CallBudget;
-pub use callback::{CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Policy};
 pub use error::{Error, Result};
 pub use host::{AuditEntry, Builder, Failure, LoadReport, Outcome, PluginInfo, Stanchion};
+pub use stanchion_abi::{
+    AllowList, CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Policy,
+};
 pub use value::Value;
 
 /// The declarative configuration a host is built from.
 ///
 /// Shared with `plugin-host`, which reads the same shape out of a TOML file, so a
 /// policy written for one transport describes the other unchanged.
-pub use stanchion_registry::config::{
+pub use stanchion_lua::config::{
     CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config,
 };

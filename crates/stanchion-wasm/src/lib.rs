@@ -4,7 +4,10 @@ pub use runtime::{WasmInstance, WasmLimits, WasmRuntime};
 use std::path::Path;
 use std::sync::Mutex;
 
-use stanchion_abi::{Error, Manifest, PluginBackend, PluginInstance, PluginType, Result, Value};
+use stanchion_abi::{
+    Error, GroupOutcome, LoadContext, LoadItem, Manifest, PluginBackend, PluginInstance,
+    PluginType, Result, Runtime, Value,
+};
 
 /// A WASM plugin backend registered with a [`Builder`].
 ///
@@ -129,7 +132,66 @@ pub struct WasmPluginInstance {
     entry: String,
 }
 
+impl Runtime for WasmBackend {
+    fn runtime_name(&self) -> &'static str {
+        "wasm"
+    }
+
+    fn load_group(&self, items: &[LoadItem], ctx: &LoadContext) -> Vec<GroupOutcome> {
+        // WASM exports carry no dependency surfaces: each plugin loads
+        // independently, and a failure is reported in place.
+        items
+            .iter()
+            .map(|item| {
+                let fail = |reason: String| GroupOutcome::Failed {
+                    name: item.manifest.name.clone(),
+                    dir: item.manifest.dir.clone(),
+                    reason,
+                };
+                let granted = match stanchion_abi::callback::evaluate_grants(
+                    ctx.setup,
+                    ctx.policy,
+                    &item.manifest.name,
+                    &item.manifest.capabilities,
+                    &item.signer.to_string(),
+                ) {
+                    Ok(granted) => granted,
+                    Err(reason) => return fail(reason),
+                };
+                match self.compile(item.manifest, &item.entry_bytes) {
+                    Ok(instance) => GroupOutcome::Loaded {
+                        name: item.manifest.name.clone(),
+                        instance,
+                        granted,
+                    },
+                    Err(err) => fail(err.to_string()),
+                }
+            })
+            .collect()
+    }
+
+    fn reload_plugin(
+        &self,
+        item: &LoadItem,
+        _ctx: &LoadContext,
+    ) -> Result<Box<dyn PluginInstance>> {
+        self.compile(item.manifest, &item.entry_bytes)
+    }
+
+    fn revoke_capability(&self, _instance: &dyn PluginInstance, _capability: &str) -> bool {
+        // WASM instances hold no bound environment: the registry's recorded
+        // grant list is the enforcement point.
+        false
+    }
+
+    fn unload(&self, _name: &str) {}
+}
+
 impl PluginInstance for WasmPluginInstance {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
         let mut runtime = self
             .runtime

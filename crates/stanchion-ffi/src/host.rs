@@ -1,27 +1,21 @@
-//! The object a binding hands to its language: a registry of dynamically-typed plugins.
+//! The object a binding hands to its language: hosted plugins over ABI types.
+//!
+//! Hosts offer capabilities, set policy, and load plugin roots. Every plugin
+//! — Lua, WASM, or a caller-registered runtime — loads through the same
+//! [`stanchion_registry::Registry`]; this facade only translates its reports
+//! into the flat shapes bindings consume.
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use stanchion_lua::mlua::{Lua, MultiValue};
-
-#[allow(unused_imports)]
-use stanchion_registry::DirectoryDigest;
-#[allow(unused_imports)]
-use stanchion_registry::Signer;
-use stanchion_registry::config::HostConfig;
-#[allow(unused_imports)]
-use stanchion_registry::{DynClass, DynInstance, Isolation, Plugin, PluginType, Registry};
+use stanchion_abi::{AllowList, CapabilityProvider, Policy, Value};
+use stanchion_lua::config::HostConfig;
+use stanchion_registry::Registry;
 use tokio::sync::{Mutex, MutexGuard};
 
-use crate::backend::{BackendRegistry, PluginBackend, PluginInstance};
-use crate::budget::CallBudget;
-use crate::callback::{AllowList, CapabilityProvider, Policy, PolicyBridge};
 use crate::error::{Error, Result};
 use crate::guard::{CallGuard, next_id};
-use crate::value::Value;
 
 /// What one `load` call did.
 ///
@@ -77,6 +71,15 @@ pub struct Outcome {
     pub error: Option<String>,
 }
 
+/// Shares one foreign policy across registry calls.
+struct SharedPolicy(Arc<dyn Policy>);
+
+impl Policy for SharedPolicy {
+    fn decide(&self, request: &stanchion_abi::CapabilityRequest) -> stanchion_abi::Decision {
+        self.0.decide(request)
+    }
+}
+
 /// Collects everything a [`Stanchion`] needs before its first plugin loads.
 ///
 /// Capabilities and policy cannot be changed afterwards, which is deliberate: a host
@@ -87,11 +90,11 @@ pub struct Builder {
     config: HostConfig,
     policy: Option<Arc<dyn Policy>>,
     providers: BTreeMap<String, Arc<dyn CapabilityProvider>>,
-    backends: BackendRegistry,
+    runtimes: Vec<Box<dyn stanchion_abi::Runtime>>,
 }
 
 impl Builder {
-    /// A builder with the default sandbox: per-plugin states, restricted libraries.
+    /// A builder with the default sandbox: grouped states, restricted libraries.
     pub fn new() -> Self {
         Builder::default()
     }
@@ -130,69 +133,46 @@ impl Builder {
         self
     }
 
-    /// Registers a non-Lua plugin backend (e.g. WASM).
+    /// Registers a runtime backend (e.g. WASM).
     ///
-    /// Backends are selected by the manifest's `plugin_type` field. The built-in
-    /// Lua backend is always available; registering another backend for `lua` would
-    /// replace it.
-    pub fn backend(mut self, backend: Box<dyn PluginBackend>) -> Self {
-        self.backends.register(backend);
+    /// Backends are selected by the manifest's `plugin_type` field. The
+    /// built-in Lua backend is always registered; registering another
+    /// backend for `lua` replaces it.
+    pub fn runtime(mut self, runtime: Box<dyn stanchion_abi::Runtime>) -> Self {
+        self.runtimes.push(runtime);
         self
     }
 
-    /// Builds the registry.
+    /// Builds the host.
     pub fn build(self) -> Result<Stanchion> {
         let Builder {
             config,
             policy,
             providers,
-            mut backends,
+            runtimes,
         } = self;
 
         let sandbox = config.sandbox.to_sandbox().map_err(Error::config)?;
-        let mut registry = if config.sandbox.shared {
-            Registry::new(stanchion_lua::new_lua())
+        let isolation = if config.sandbox.shared {
+            "shared"
         } else {
-            Registry::isolated(stanchion_lua::new_lua(), sandbox)
+            "per-plugin"
         };
+        let mut registry = Registry::new();
+        if config.sandbox.shared {
+            registry =
+                registry.with_runtime(Box::new(stanchion_lua::backend::LuaBackend::shared()));
+        } else {
+            registry = registry
+                .with_runtime(Box::new(stanchion_lua::backend::LuaBackend::isolated(sandbox)));
+        }
+        for runtime in runtimes {
+            registry = registry.with_runtime(runtime);
+        }
 
-        let runtime = stanchion_lua::new_runtime();
         registry = registry.with_setup(move |host| {
             for (name, provider) in providers {
-                let provider = Arc::clone(&provider);
-                let capability = name.clone();
-                host.capability(name.clone(), move |runtime, grant| {
-                    let provider = Arc::clone(&provider);
-                    let capability = capability.clone();
-                    let plugin = grant.plugin().to_string();
-                    let granted = crate::value::table_to_map(grant.params());
-                    let lua = runtime
-                        .lua_state()
-                        .and_then(|arc| arc.lock().ok().map(|guard| guard.clone()))
-                        .unwrap_or_else(stanchion_lua::new_lua);
-                    let function = lua
-                        .create_function(move |lua, args: MultiValue| {
-                            let mut converted = Vec::with_capacity(args.len());
-                            for arg in args {
-                                converted.push(crate::value::lua_to_abi(lua, &arg));
-                            }
-                            let call = crate::callback::CapabilityCall {
-                                plugin: plugin.clone(),
-                                capability: capability.clone(),
-                                grant: granted.clone(),
-                                args: converted,
-                            };
-                            let answer = provider.invoke(&call).map_err(|e| {
-                                stanchion_lua::mlua::Error::RuntimeError(e.to_string())
-                            })?;
-                            Ok(crate::value::abi_to_lua(&answer, lua))
-                        })
-                        .map_err(|e| stanchion_abi::Error::Config(e.to_string()))?;
-                    Ok(crate::value::lua_to_abi(
-                        &lua,
-                        &stanchion_lua::mlua::Value::Function(function.clone()),
-                    ))
-                });
+                host.capability(name.clone(), provider);
             }
             Ok(())
         });
@@ -207,73 +187,33 @@ impl Builder {
                     .cloned(),
             ))
         });
-        registry = registry.with_policy(PolicyBridge { inner: policy });
+        registry = registry.with_policy(SharedPolicy(policy));
 
         #[cfg(feature = "signatures")]
         if config.signatures.required {
             registry = registry.require_signatures(true);
         }
 
-        // Register the built-in Lua backend if no custom one was supplied.
-        //
-        // The same `Arc<Mutex<Registry>>` is shared between `self.registry`
-        // (which `enter()` locks) and the `LuaBackend` (which `load()` uses
-        // to wrap loaded plugins), so that every `Stanchion` method sees the
-        // configured sandbox, capabilities, policy, and signature enforcement.
-        if backends.get(&PluginType::Lua).is_none() {
-            use crate::backend::LuaBackend;
-            let registry = Arc::new(Mutex::new(registry));
-            backends.register(Box::new(LuaBackend::new(Arc::clone(&runtime))));
-            return Ok(Stanchion {
-                id: next_id(),
-                registry,
-                backends: Mutex::new(backends),
-                instances: Mutex::new(HashMap::new()),
-                default_root: config.plugins.clone(),
-            });
-        }
-
         Ok(Stanchion {
             id: next_id(),
             registry: Arc::new(Mutex::new(registry)),
-            backends: Mutex::new(backends),
-            instances: Mutex::new(HashMap::new()),
             default_root: config.plugins.clone(),
+            isolation,
         })
     }
 }
 
-/// A registry of Lua plugins, callable by name from any language.
+/// Hosted plugins, callable by name from any language.
 ///
-/// Plugins load as `DynClass`: any table with a constructor, with method names
-/// resolved when a call happens rather than when the plugin loads. A Rust host should
-/// prefer a `#[lua_class]` trait, which checks the contract at load time — but a
-/// binding is compiled long before anyone writes a plugin, so it has no trait to
-/// offer, exactly as the out-of-process host does not.
+/// Method names resolve when a call happens rather than when the plugin
+/// loads — a binding is compiled long before anyone writes a plugin, so it
+/// has no typed contract to offer.
 pub struct Stanchion {
     /// Identifies this instance to the reentrancy guard.
     id: u64,
-    /// The Lua registry, shared with the Lua backend so it can create instances.
-    registry: Arc<Mutex<Registry<DynClass>>>,
-    /// Registered non-Lua backends, keyed by plugin type.
-    backends: Mutex<BackendRegistry>,
-    /// Loaded non-Lua plugin instances.
-    instances: Mutex<HashMap<String, PluginInstanceEntry>>,
+    registry: Arc<Mutex<Registry>>,
     default_root: Option<std::path::PathBuf>,
-}
-
-struct PluginInstanceEntry {
-    name: String,
-    instance: Box<dyn PluginInstance>,
-    runtime: String,
-    granted: Vec<String>,
-    signer: String,
-    digest: Option<String>,
-    budget: Option<u64>,
-    /// Per-call instruction meter for WASM / Lua backends.
-    /// Consumed at call boundaries; `None` means unbounded.
-    call_budget: Option<CallBudget>,
-    dir: std::path::PathBuf,
+    isolation: &'static str,
 }
 
 /// Deliberately says nothing about the plugins: reading them would need the lock, and
@@ -288,7 +228,7 @@ impl std::fmt::Debug for Stanchion {
 }
 
 impl Stanchion {
-    /// Starts configuring a registry.
+    /// Starts configuring a host.
     pub fn builder() -> Builder {
         Builder::new()
     }
@@ -296,184 +236,33 @@ impl Stanchion {
     /// Claims the thread, then the lock — in that order.
     ///
     /// Re-entry has to be caught *before* blocking, or the diagnosis would be the
-    /// hang it exists to prevent.
-    fn enter(&self) -> Result<MutexGuard<'_, Registry<DynClass>>> {
-        let _guard = CallGuard::enter(self.id)?;
+    /// hang it exists to prevent. Both guards are returned so they stay held
+    /// for the whole call.
+    fn enter(&self) -> Result<(CallGuard, MutexGuard<'_, Registry>)> {
+        let guard = CallGuard::enter(self.id)?;
         let registry = futures_executor::block_on(self.registry.lock());
-        Ok(registry)
+        Ok((guard, registry))
     }
 
     /// Discovers and loads every plugin under a root.
-    ///
-    /// Reads each manifest and dispatches to the appropriate backend based
-    /// on `plugin_type`. Lua plugins go through the existing Lua registry;
-    /// WASM (and other backend) plugins go through registered backends.
     pub fn load(&self, root: Option<&Path>) -> Result<LoadReport> {
         let root = self.root(root)?;
-        let mut loaded = Vec::new();
-        let mut failures = Vec::new();
-
-        // Read every manifest.
-        let (manifests, _discovery_failures) = stanchion_registry::discover(&root)
-            .map_err(|e| Error::Io(format!("reading plugin root {:?}: {}", root, e)))?;
-
-        // Separate Lua manifests from non-Lua manifests.
-        let lua_names: Vec<String> = manifests
-            .iter()
-            .filter(|m| matches!(m.plugin_type, PluginType::Lua))
-            .map(|m| m.name.clone())
-            .collect();
-
-        let non_lua_manifests: Vec<_> = manifests
-            .into_iter()
-            .filter(|m| !matches!(m.plugin_type, PluginType::Lua))
-            .collect();
-
-        // Load Lua plugins through the existing registry.
-        if !lua_names.is_empty() {
-            let mut registry = self.enter()?;
-            match registry.load_dir(&root) {
-                Ok(report) => {
-                    loaded.extend(report.loaded);
-                    failures.extend(report.failures.into_iter().map(|f| Failure {
-                        plugin: f.name,
-                        reason: f.reason.to_string(),
-                    }));
-                }
-                Err(e) => {
-                    for name in &lua_names {
-                        failures.push(Failure {
-                            plugin: name.clone(),
-                            reason: e.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Load non-Lua plugins through registered backends.
-        if !non_lua_manifests.is_empty() {
-            // Acquire registry first to match lock ordering elsewhere (registry -> instances)
-            // and to use it for signature/policy decisions.
-            let registry = self.enter()?;
-            let backends = futures_executor::block_on(self.backends.lock());
-            let mut instances = futures_executor::block_on(self.instances.lock());
-
-            for manifest in non_lua_manifests {
-                let Some(backend) = backends.get(&manifest.plugin_type) else {
-                    failures.push(Failure {
-                        plugin: manifest.name.clone(),
-                        reason: format!(
-                            "no backend registered for plugin type '{:?}'",
-                            manifest.plugin_type
-                        ),
-                    });
-                    continue;
-                };
-
-                if let Err(e) = manifest.validate() {
-                    failures.push(Failure {
-                        plugin: manifest.name.clone(),
-                        reason: e,
-                    });
-                    continue;
-                }
-
-                // Verify signature + directory (delegates to registry, same as Lua).
-                #[cfg(feature = "signatures")]
-                let (signer, digest) = match registry.verify_plugin(&manifest) {
-                    Ok(pair) => pair,
-                    Err(e) => {
-                        failures.push(Failure {
-                            plugin: manifest.name.clone(),
-                            reason: e.to_string(),
-                        });
-                        continue;
-                    }
-                };
-                #[cfg(not(feature = "signatures"))]
-                let signer = Signer::Unsigned;
-                #[cfg(not(feature = "signatures"))]
-                let digest: Option<DirectoryDigest> = None;
-
-                // Apply policy to determine which capabilities are granted.
-                let granted = registry.evaluate_policy(
-                    &manifest,
-                    #[cfg(feature = "signatures")]
-                    &signer,
-                );
-
-                // Derive per-call budget from manifest (Option<Badge>{max_instructions}).
-                let budget = manifest.budget.as_ref().map(|b| b.max_instructions);
-                let call_budget = budget.map(CallBudget::new);
-
-                // Read the entry once, here, and bind it to the digest before handing it
-                // to the backend. The backend compiles these exact bytes (`load_bytes`),
-                // so the file cannot be swapped between verification and loading. See #35.
-                let entry_bytes = match std::fs::read(manifest.entry_path()) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        failures.push(Failure {
-                            plugin: manifest.name.clone(),
-                            reason: format!("failed to read entry '{}': {e}", manifest.entry),
-                        });
-                        continue;
-                    }
-                };
-                #[cfg(feature = "signatures")]
-                if let Some(digest) = &digest {
-                    let relative = manifest.entry.replace('\\', "/");
-                    if !digest.covers(&relative) {
-                        failures.push(Failure {
-                            plugin: manifest.name.clone(),
-                            reason: format!(
-                                "entry '{relative}' is not part of the verified plugin"
-                            ),
-                        });
-                        continue;
-                    }
-                    if !digest.matches(&relative, &entry_bytes) {
-                        failures.push(Failure {
-                            plugin: manifest.name.clone(),
-                            reason: format!(
-                                "entry '{relative}' changed between verification and loading"
-                            ),
-                        });
-                        continue;
-                    }
-                }
-
-                match backend.load_bytes(&manifest, &manifest.dir, &entry_bytes) {
-                    Ok(instance) => {
-                        let runtime = instance.runtime().to_string();
-                        instances.insert(
-                            manifest.name.clone(),
-                            PluginInstanceEntry {
-                                name: manifest.name.clone(),
-                                instance,
-                                runtime,
-                                granted,
-                                signer: signer.to_string(),
-                                digest: digest.as_ref().map(|d| d.hex().to_string()),
-                                budget,
-                                call_budget,
-                                dir: manifest.dir.clone(),
-                            },
-                        );
-                        loaded.push(manifest.name);
-                    }
-                    Err(e) => {
-                        failures.push(Failure {
-                            plugin: manifest.name,
-                            reason: e.to_string(),
-                        });
-                    }
-                }
-            }
-            drop(registry);
-        }
-
-        Ok(LoadReport { loaded, failures })
+        let (_call, mut registry) = self.enter()?;
+        // `load_dir` takes `&mut`: the borrow ends before the mapping below.
+        let report = registry
+            .load_dir(&root)
+            .map_err(stanchion_abi::Error::from)?;
+        Ok(LoadReport {
+            loaded: report.loaded,
+            failures: report
+                .failures
+                .into_iter()
+                .map(|f| Failure {
+                    plugin: f.name,
+                    reason: f.reason.to_string(),
+                })
+                .collect(),
+        })
     }
 
     /// Reports what every plugin under a root asks for, without running any of it.
@@ -482,69 +271,55 @@ impl Stanchion {
     /// it reads manifests and signatures only.
     pub fn audit(&self, root: Option<&Path>) -> Result<Vec<AuditEntry>> {
         let root = self.root(root)?;
-        let registry = self.enter()?;
-        let audit = registry.audit(&root)?;
+        let (_call, registry) = self.enter()?;
+        let audit = registry.audit(&root).map_err(stanchion_abi::Error::from)?;
         Ok(audit
             .plugins
             .iter()
             .map(|entry| AuditEntry {
                 plugin: entry.name.clone(),
-                capabilities: entry.requests.iter().map(|r| r.name.clone()).collect(),
-                signer: audit_signer(entry),
+                capabilities: entry
+                    .requests
+                    .iter()
+                    .map(|r| r.capability.clone())
+                    .collect(),
+                #[cfg(feature = "signatures")]
+                signer: entry.signer.to_string(),
+                #[cfg(not(feature = "signatures"))]
+                signer: "unverified".to_string(),
             })
             .collect())
     }
 
     /// The loaded plugins.
     pub fn list(&self) -> Result<Vec<PluginInfo>> {
-        let registry = self.enter()?;
-        let instances = futures_executor::block_on(self.instances.lock());
-
-        let lua: Vec<PluginInfo> = registry
+        let (_call, registry) = self.enter()?;
+        Ok(registry
             .plugins()
             .iter()
             .map(|plugin| PluginInfo {
                 name: plugin.name().to_string(),
                 version: plugin.manifest().version.as_ref().map(ToString::to_string),
                 granted: plugin.granted_capabilities().map(str::to_string).collect(),
-                signer: plugin_signer(plugin),
-                runtime: "lua".to_string(),
+                #[cfg(feature = "signatures")]
+                signer: plugin.signer().to_string(),
+                #[cfg(not(feature = "signatures"))]
+                signer: "unverified".to_string(),
+                runtime: plugin.instance().runtime().to_string(),
             })
-            .collect();
-
-        let non_lua: Vec<PluginInfo> = instances
-            .iter()
-            .map(|entry| PluginInfo {
-                name: entry.1.name.clone(),
-                version: None,
-                granted: entry.1.granted.clone(),
-                signer: entry.1.signer.clone(),
-                runtime: entry.1.runtime.clone(),
-            })
-            .collect();
-
-        let mut all = lua;
-        all.extend(non_lua);
-        Ok(all)
+            .collect())
     }
 
     /// The loaded plugins' names.
     pub fn names(&self) -> Result<Vec<String>> {
-        let registry = self.enter()?;
-        let mut names: Vec<String> = registry.names().map(str::to_string).collect();
-        drop(registry);
-        let instances = futures_executor::block_on(self.instances.lock());
-        names.extend(instances.iter().map(|e| e.1.name.clone()));
-        Ok(names)
+        let (_call, registry) = self.enter()?;
+        Ok(registry.names().map(str::to_string).collect())
     }
 
     /// How many plugins are loaded.
     pub fn len(&self) -> Result<usize> {
-        let registry = self.enter()?;
-        let count = registry.len();
-        drop(registry);
-        let instances = futures_executor::block_on(self.instances.lock());
-        Ok(count.saturating_add(instances.len()))
+        let (_call, registry) = self.enter()?;
+        Ok(registry.len())
     }
 
     /// Whether no plugins are loaded.
@@ -553,209 +328,35 @@ impl Stanchion {
     }
 
     /// Calls one method on one plugin.
-    ///
-    /// Lua plugins are looked up in the Lua registry; non-Lua plugins are
-    /// dispatched through their backend instance.
     pub fn call(&self, plugin: &str, method: &str, args: &[Value]) -> Result<Value> {
-        // Try Lua first (the common case).
-        #[cfg(feature = "lua54")]
-        {
-            let _guard = CallGuard::enter(self.id)?;
-            let registry = futures_executor::block_on(self.registry.lock());
-            if let Some(entry) = registry.get(plugin) {
-                refresh_budget(entry);
-                let result = call_plugin(entry.lua(), entry.instance(), method, args)?;
-                return Ok(result);
-            }
-        }
-
-        // Try non-Lua instances.
-        let instances = futures_executor::block_on(self.instances.lock());
-        for entry in instances.iter() {
-            if entry.1.name == plugin && entry.1.granted.contains(&method.to_string()) {
-                if let Some(budget) = &entry.1.call_budget {
-                    budget.reset();
-                }
-                return entry.1.instance.call(method, args);
-            }
-        }
-        drop(instances);
-
-        Err(Error::UnknownPlugin(plugin.to_string()))
+        let _guard = CallGuard::enter(self.id)?;
+        let registry = futures_executor::block_on(self.registry.lock());
+        registry.call(plugin, method, args)
     }
 
-    /// Calls the same method on every plugin (Lua then non-Lua), collecting one result each.
+    /// Calls the same method on every plugin, collecting one result each.
     ///
     /// A plugin that fails reports its error in place rather than ending the dispatch.
     pub fn dispatch(&self, method: &str, args: &[Value]) -> Result<Vec<Outcome>> {
         let _guard = CallGuard::enter(self.id)?;
-        let mut outcomes = Vec::new();
-
-        #[cfg(feature = "lua54")]
-        {
-            let registry = futures_executor::block_on(self.registry.lock());
-            for plugin in registry.plugins() {
-                refresh_budget(plugin);
-                outcomes.push(
-                    match call_plugin(plugin.lua(), plugin.instance(), method, args) {
-                        Ok(value) => Outcome {
-                            plugin: plugin.name().to_string(),
-                            value: Some(value),
-                            error: None,
-                        },
-                        Err(err) => Outcome {
-                            plugin: plugin.name().to_string(),
-                            value: None,
-                            error: Some(err.to_string()),
-                        },
-                    },
-                );
-            }
-            drop(registry);
-        }
-
-        let instances = futures_executor::block_on(self.instances.lock());
-        for entry in instances.iter() {
-            if !entry.1.granted.contains(&method.to_string()) {
-                outcomes.push(Outcome {
-                    plugin: entry.1.name.clone(),
-                    value: None,
-                    error: Some(format!("capability '{}' not granted", method)),
-                });
-                continue;
-            }
-            if let Some(budget) = &entry.1.call_budget {
-                budget.reset();
-            }
-            outcomes.push(match entry.1.instance.call(method, args) {
-                Ok(value) => Outcome {
-                    plugin: entry.1.name.clone(),
-                    value: Some(value),
-                    error: None,
-                },
-                Err(err) => Outcome {
-                    plugin: entry.1.name.clone(),
-                    value: None,
-                    error: Some(err.to_string()),
-                },
-            });
-        }
-
-        Ok(outcomes)
+        let registry = futures_executor::block_on(self.registry.lock());
+        Ok(registry
+            .dispatch(method, args)
+            .into_iter()
+            .map(|outcome| Outcome {
+                plugin: outcome.plugin,
+                value: outcome.value,
+                error: outcome.error,
+            })
+            .collect())
     }
 
     /// Re-reads one plugin from disk.
     ///
     /// A plugin that fails to reload leaves the old instance in place.
-    /// Supports both Lua (via Registry) and WASM/other backends (via instances).
     pub fn reload(&self, plugin: &str) -> Result<()> {
-        // Try Lua registry first.
-        {
-            let mut registry = self.enter()?;
-            match registry.reload(plugin) {
-                Ok(()) => return Ok(()),
-                Err(stanchion_registry::RegistryError::UnknownPlugin(_)) => {
-                    // Fall through to non-Lua path.
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-        // Non-Lua path: find the instance and reload via its backend.
-        // Acquire in registry -> backends -> instances order to avoid deadlock.
-        let registry = self.enter()?;
-        let backends = futures_executor::block_on(self.backends.lock());
-        let instances = futures_executor::block_on(self.instances.lock());
-        let dir = instances
-            .iter()
-            .find(|e| e.1.name == plugin)
-            .map(|e| e.1.dir.clone())
-            .ok_or_else(|| Error::UnknownPlugin(plugin.to_string()))?;
-        // Read fresh manifest and validate (filesystem, no lock needed).
-        // Clone dir to release borrow before reading.
-        drop(instances);
-        drop(backends);
-        // Registry already held for verify; we need to keep it but we dropped
-        // backends/instances to avoid holding them during IO. Re-acquire after read.
-        let manifest = stanchion_registry::read_manifest(&dir).map_err(|e| {
-            Error::Io(format!(
-                "reading manifest for reload of '{}': {}",
-                plugin, e
-            ))
-        })?;
-        if manifest.name != plugin {
-            return Err(Error::Config(format!(
-                "manifest renamed the plugin to `{}`; remove and load it again instead",
-                manifest.name
-            )));
-        }
-        if let Err(e) = manifest.validate() {
-            return Err(Error::Config(e));
-        }
-        // Re-acquire backends and instances in correct order after IO.
-        // Registry is still held from above; now re-lock backends then instances.
-        let backends = futures_executor::block_on(self.backends.lock());
-        let mut instances = futures_executor::block_on(self.instances.lock());
-        #[cfg(feature = "signatures")]
-        let (signer, digest) = registry.verify_plugin(&manifest).map_err(|r| {
-            Error::Io(format!(
-                "signature verification failed for reload of '{}': {}",
-                plugin, r
-            ))
-        })?;
-        #[cfg(not(feature = "signatures"))]
-        let signer = Signer::Unsigned;
-        #[cfg(not(feature = "signatures"))]
-        let digest: Option<DirectoryDigest> = None;
-        let granted = registry.evaluate_policy(
-            &manifest,
-            #[cfg(feature = "signatures")]
-            &signer,
-        );
-        let budget = manifest.budget.as_ref().map(|b| b.max_instructions);
-        let call_budget = budget.map(CallBudget::new);
-        let Some(backend) = backends.get(&manifest.plugin_type) else {
-            return Err(Error::Config(format!(
-                "no backend registered for plugin type '{:?}'",
-                manifest.plugin_type
-            )));
-        };
-        // Bind the entry bytes to the digest before loading, same as the load path (#35).
-        let entry_bytes = std::fs::read(manifest.entry_path()).map_err(|e| {
-            Error::Io(format!(
-                "reading entry '{}' for reload of '{}': {e}",
-                manifest.entry, plugin
-            ))
-        })?;
-        #[cfg(feature = "signatures")]
-        if let Some(digest) = &digest {
-            let relative = manifest.entry.replace('\\', "/");
-            if !digest.covers(&relative) {
-                return Err(Error::Io(format!(
-                    "reload of '{plugin}': entry '{relative}' is not part of the verified plugin"
-                )));
-            }
-            if !digest.matches(&relative, &entry_bytes) {
-                return Err(Error::Io(format!(
-                    "reload of '{plugin}': entry '{relative}' changed between verification and loading"
-                )));
-            }
-        }
-        let new_instance = backend
-            .load_bytes(&manifest, &manifest.dir, &entry_bytes)
-            .map_err(|e| Error::Io(format!("reload failed for '{}': {}", plugin, e)))?;
-        let runtime = new_instance.runtime().to_string();
-        let entry = instances
-            .iter_mut()
-            .find(|e| e.1.name == plugin)
-            .ok_or_else(|| Error::UnknownPlugin(plugin.to_string()))?;
-        entry.1.instance = new_instance;
-        entry.1.runtime = runtime;
-        entry.1.granted = granted;
-        entry.1.signer = signer.to_string();
-        entry.1.digest = digest.as_ref().map(|d| d.hex().to_string());
-        entry.1.budget = budget;
-        entry.1.call_budget = call_budget;
-        entry.1.dir = manifest.dir;
+        let (_call, mut registry) = self.enter()?;
+        registry.reload(plugin).map_err(stanchion_abi::Error::from)?;
         Ok(())
     }
 
@@ -764,37 +365,15 @@ impl Stanchion {
     /// Returns whether the plugin held it. Code that already captured the value in a
     /// local keeps it, so this defangs a misbehaving plugin without rewinding it.
     pub fn revoke(&self, plugin: &str, capability: &str) -> Result<bool> {
-        // Try Lua registry first; UnknownPlugin falls through to WASM.
-        {
-            let mut registry = self.enter()?;
-            match registry.revoke(plugin, capability) {
-                Ok(held) => return Ok(held),
-                Err(stanchion_registry::RegistryError::UnknownPlugin(_)) => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
-        let mut instances = futures_executor::block_on(self.instances.lock());
-        for entry in instances.iter_mut() {
-            if entry.1.name == plugin {
-                if let Some(idx) = entry.1.granted.iter().position(|c| c == capability) {
-                    entry.1.granted.remove(idx);
-                    return Ok(true);
-                } else {
-                    return Ok(false);
-                }
-            }
-        }
-        Err(Error::UnknownPlugin(plugin.to_string()))
+        let (_call, mut registry) = self.enter()?;
+        registry
+            .revoke(plugin, capability)
+            .map_err(stanchion_abi::Error::from)
     }
 
-    /// Whether plugins share one Lua state.
+    /// How plugin states relate to each other (`"shared"` or `"grouped"`).
     pub fn isolation(&self) -> Result<&'static str> {
-        let registry = self.enter()?;
-        Ok(match registry.isolation() {
-            Isolation::Shared => "shared",
-            Isolation::PerPlugin(_) => "per-plugin",
-            Isolation::PerGroup(_) => "per-group",
-        })
+        Ok(self.isolation)
     }
 
     /// The root to use, given what the caller passed and what was configured.
@@ -812,185 +391,37 @@ impl Stanchion {
 #[cfg(feature = "async")]
 impl Stanchion {
     /// Awaits one method on one plugin.
-    ///
-    /// The plugin's method runs as a coroutine, so it can yield — a Lua `async fn`
-    /// that waits on the host does not block the state it runs in.
     pub async fn call_async(&self, plugin: &str, method: &str, args: &[Value]) -> Result<Value> {
         let args = args.to_vec();
         let plugin = plugin.to_string();
         let method = method.to_string();
-
-        // Try Lua first.
-        let result: std::result::Result<Value, crate::Error> =
-            crate::guard::Guarded::new(self.id, async {
-                let registry = self.registry.lock().await;
-                let entry = registry
-                    .get(&plugin)
-                    .ok_or_else(|| Error::UnknownPlugin(plugin.clone()))?;
-                refresh_budget(entry);
-                let lua_args = to_lua_args(entry.lua(), &args)?;
-                let result = entry
-                    .instance()
-                    .call_method_async(&method, lua_args)
-                    .await
-                    .map_err(|e| Error::Runtime(stanchion_abi::RuntimeError::from(e)))?;
-                Ok(crate::value::lua_to_abi(entry.lua(), &result))
-            })
-            .await;
-
-        match result {
-            Ok(value) => return Ok(value),
-            Err(Error::UnknownPlugin(_)) => {}
-            Err(e) => return Err(e),
-        }
-
-        // Try non-Lua instances.
-        let instances = self.instances.lock().await;
-        for entry in instances.iter() {
-            if entry.1.name == plugin && entry.1.granted.contains(&method.to_string()) {
-                if let Some(budget) = &entry.1.call_budget {
-                    budget.reset();
-                }
-                return crate::guard::Guarded::new(self.id, async {
-                    entry.1.instance.call(&method, &args)
-                })
-                .await;
-            }
-        }
-        drop(instances);
-
-        Err(Error::UnknownPlugin(plugin))
+        crate::guard::Guarded::new(self.id, async {
+            let registry = self.registry.lock().await;
+            registry.call_async(&plugin, &method, &args).await
+        })
+        .await
     }
 
     /// Awaits the same method on every plugin, in turn.
     ///
-    /// Sequential, not concurrent: under shared isolation every plugin reaches the
-    /// same Lua state, so running them together would only contend on it.
+    /// Sequential, not concurrent: backends sharing a state would only
+    /// contend on it.
     pub async fn dispatch_async(&self, method: &str, args: &[Value]) -> Result<Vec<Outcome>> {
         let args = args.to_vec();
         let method = method.to_string();
         crate::guard::Guarded::new(self.id, async move {
-            let mut outcomes = Vec::new();
-
-            // Lua plugins
             let registry = self.registry.lock().await;
-            for plugin in registry.plugins() {
-                refresh_budget(plugin);
-                let outcome = match to_lua_args(plugin.lua(), &args) {
-                    Ok(lua_args) => plugin
-                        .instance()
-                        .call_method_async(&method, lua_args)
-                        .await
-                        .map_err(|e| Error::Runtime(stanchion_abi::RuntimeError::from(e)))
-                        .map(|value| crate::value::lua_to_abi(plugin.lua(), &value)),
-                    Err(err) => Err(err),
-                };
-                outcomes.push(match outcome {
-                    Ok(value) => Outcome {
-                        plugin: plugin.name().to_string(),
-                        value: Some(value),
-                        error: None,
-                    },
-                    Err(err) => Outcome {
-                        plugin: plugin.name().to_string(),
-                        value: None,
-                        error: Some(err.to_string()),
-                    },
-                });
-            }
-            drop(registry);
-
-            // Non-Lua plugins
-            let instances = self.instances.lock().await;
-            for entry in instances.iter() {
-                if !entry.1.granted.contains(&method.to_string()) {
-                    outcomes.push(Outcome {
-                        plugin: entry.1.name.clone(),
-                        value: None,
-                        error: Some(format!("capability '{}' not granted", method)),
-                    });
-                    continue;
-                }
-                if let Some(budget) = &entry.1.call_budget {
-                    budget.reset();
-                }
-                outcomes.push(match entry.1.instance.call(&method, &args) {
-                    Ok(value) => Outcome {
-                        plugin: entry.1.name.clone(),
-                        value: Some(value),
-                        error: None,
-                    },
-                    Err(err) => Outcome {
-                        plugin: entry.1.name.clone(),
-                        value: None,
-                        error: Some(err.to_string()),
-                    },
-                });
-            }
-
-            Ok(outcomes)
+            Ok(registry
+                .dispatch_async(&method, &args)
+                .await
+                .into_iter()
+                .map(|outcome| Outcome {
+                    plugin: outcome.plugin,
+                    value: outcome.value,
+                    error: outcome.error,
+                })
+                .collect())
         })
         .await
     }
-}
-
-/// Converts arguments into the state the plugin actually runs in.
-///
-/// Under per-plugin isolation each plugin has its own [`Lua`], and a value built in
-/// one state cannot be passed to another — so this happens per plugin rather than
-/// once per dispatch.
-#[cfg(feature = "lua54")]
-fn to_lua_args(lua: &Lua, args: &[Value]) -> stanchion_abi::Result<MultiValue> {
-    let mut converted = Vec::with_capacity(args.len());
-    for arg in args {
-        converted.push(
-            crate::value::abi_to_lua(arg, lua)
-                .map_err(|e| crate::Error::Runtime(stanchion_abi::RuntimeError::from(e)))?,
-        );
-    }
-    Ok(MultiValue::from_iter(converted))
-}
-
-#[cfg(feature = "lua54")]
-fn call_plugin(
-    lua: &Lua,
-    instance: &DynInstance,
-    method: &str,
-    args: &[Value],
-) -> stanchion_abi::Result<Value> {
-    let result = instance
-        .call_method(method, to_lua_args(lua, args)?)
-        .map_err(|e| crate::Error::Runtime(stanchion_abi::RuntimeError::from(e)))?;
-    Ok(crate::value::lua_to_abi(lua, &result))
-}
-
-/// Gives a plugin its full instruction allowance back.
-///
-/// The limit is documented as applying per call rather than per plugin lifetime, and
-/// `Registry::dispatch` resets it for exactly that reason. Without this a long-lived
-/// plugin would eventually exhaust its budget and never recover.
-fn refresh_budget(plugin: &Plugin<DynClass>) {
-    if let Some(budget) = plugin.budget() {
-        budget.reset();
-    }
-}
-
-#[cfg(feature = "signatures")]
-fn plugin_signer(plugin: &Plugin<DynClass>) -> String {
-    plugin.signer().to_string()
-}
-
-#[cfg(not(feature = "signatures"))]
-fn plugin_signer(_plugin: &Plugin<DynClass>) -> String {
-    "unverified".to_string()
-}
-
-#[cfg(feature = "signatures")]
-fn audit_signer(entry: &stanchion_registry::PluginAudit) -> String {
-    entry.signer.to_string()
-}
-
-#[cfg(not(feature = "signatures"))]
-fn audit_signer(_entry: &stanchion_registry::PluginAudit) -> String {
-    "unverified".to_string()
 }

@@ -1,4 +1,10 @@
 //! Errors raised while discovering, loading and reloading plugins.
+//!
+//! Fatal problems (an unreadable root, an unknown name) are
+//! [`RegistryError`]. Problems with an individual plugin are [`LoadFailure`],
+//! so one bad plugin never stops the others from loading. Backend failures
+//! arrive as strings — each backend maps its native errors at its own
+//! boundary — and are reported verbatim.
 
 use std::error::Error;
 use std::fmt;
@@ -17,11 +23,12 @@ pub enum RegistryError {
     UnknownPlugin(String),
     /// A plugin failed while being reloaded, which leaves the old instance in place.
     Reload(Box<LoadFailure>),
-    /// A plugin state could not be created or configured.
-    Lua(mlua::Error),
+    /// A backend failed where no single plugin is to blame (state creation,
+    /// configuration, unload settling).
+    Backend(String),
     /// The `luarocks` command could not be queried, so no plugin can be verified.
     #[cfg(feature = "luarocks")]
-    Rocks(stanchion_lua::rocks::RocksError),
+    Rocks(stanchion_abi::rocks::RocksError),
 }
 
 impl fmt::Display for RegistryError {
@@ -32,7 +39,7 @@ impl fmt::Display for RegistryError {
             }
             RegistryError::UnknownPlugin(name) => write!(f, "no plugin named `{name}`"),
             RegistryError::Reload(failure) => write!(f, "reloading {failure}"),
-            RegistryError::Lua(source) => write!(f, "creating a plugin state: {source}"),
+            RegistryError::Backend(message) => write!(f, "{message}"),
             #[cfg(feature = "luarocks")]
             RegistryError::Rocks(source) => write!(f, "luarocks: {source}"),
         }
@@ -45,7 +52,7 @@ impl Error for RegistryError {
             RegistryError::Io { source, .. } => Some(source),
             RegistryError::UnknownPlugin(_) => None,
             RegistryError::Reload(failure) => Some(&failure.reason),
-            RegistryError::Lua(source) => Some(source),
+            RegistryError::Backend(_) => None,
             #[cfg(feature = "luarocks")]
             RegistryError::Rocks(source) => Some(source),
         }
@@ -88,8 +95,10 @@ pub enum FailureReason {
     Io(io::Error),
     /// The manifest was not valid TOML, or was missing a required key.
     Manifest(String),
-    /// The chunk failed to run, did not return a valid class, or the constructor failed.
-    Lua(mlua::Error),
+    /// The backend refused the plugin: the chunk failed to run, the class
+    /// was invalid, the constructor failed, or the entry bytes were not
+    /// what was verified.
+    Runtime(String),
     /// A declared dependency is not present in the plugin root.
     MissingDependency(String),
     /// A dependency is present but its version does not satisfy the requirement.
@@ -103,7 +112,7 @@ pub enum FailureReason {
     },
     /// A plugin is wired to a dependency that publishes no `exports` table.
     MissingExports(String),
-    /// A dependency lives in another Lua state, so its exports cannot be handed over.
+    /// A dependency lives in another state, so its exports cannot be handed over.
     CrossStateDependency(String),
     /// The plugin carries no signature and the registry requires one.
     Unsigned,
@@ -139,7 +148,9 @@ pub enum FailureReason {
     /// This plugin is part of a dependency cycle.
     DependencyCycle(Vec<String>),
     /// Loading the plugin panicked rather than returning an error.
-    Panicked(crate::Panicked),
+    Panicked(stanchion_abi::panics::Panicked),
+    /// No backend is registered for the manifest's plugin type.
+    NoBackend(String),
 }
 
 impl fmt::Display for FailureReason {
@@ -147,7 +158,7 @@ impl fmt::Display for FailureReason {
         match self {
             FailureReason::Io(source) => write!(f, "{source}"),
             FailureReason::Manifest(message) => write!(f, "invalid manifest: {message}"),
-            FailureReason::Lua(source) => write!(f, "{source}"),
+            FailureReason::Runtime(message) => write!(f, "{message}"),
             FailureReason::MissingDependency(name) => {
                 write!(f, "depends on `{name}`, which was not found")
             }
@@ -187,7 +198,7 @@ impl fmt::Display for FailureReason {
             FailureReason::CrossStateDependency(name) => write!(
                 f,
                 "depends on `{name}`, but per-plugin isolation gives each plugin its own \
-                 Lua state and values cannot cross states"
+                 state and values cannot cross states"
             ),
             FailureReason::MissingRock { name, required } => {
                 write!(f, "rock `{name}` {required} is not installed")
@@ -207,6 +218,7 @@ impl fmt::Display for FailureReason {
             FailureReason::DependencyCycle(names) => {
                 write!(f, "dependency cycle: {}", names.join(" -> "))
             }
+            FailureReason::NoBackend(message) => write!(f, "{message}"),
         }
     }
 }
@@ -215,7 +227,6 @@ impl Error for FailureReason {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             FailureReason::Io(source) => Some(source),
-            FailureReason::Lua(source) => Some(source),
             #[cfg(feature = "signatures")]
             FailureReason::Lock(source) => Some(source),
             FailureReason::Panicked(source) => Some(source),
@@ -224,15 +235,15 @@ impl Error for FailureReason {
     }
 }
 
-impl From<mlua::Error> for FailureReason {
-    fn from(source: mlua::Error) -> Self {
-        FailureReason::Lua(source)
-    }
-}
-
 impl From<io::Error> for FailureReason {
     fn from(source: io::Error) -> Self {
         FailureReason::Io(source)
+    }
+}
+
+impl From<stanchion_abi::panics::Panicked> for FailureReason {
+    fn from(source: stanchion_abi::panics::Panicked) -> Self {
+        FailureReason::Panicked(source)
     }
 }
 
@@ -253,7 +264,7 @@ impl From<LoadFailure> for stanchion_abi::Error {
 
 impl From<stanchion_abi::Error> for FailureReason {
     fn from(err: stanchion_abi::Error) -> Self {
-        FailureReason::Lua(mlua::Error::RuntimeError(err.to_string()))
+        FailureReason::Runtime(err.to_string())
     }
 }
 
@@ -265,12 +276,7 @@ impl From<RegistryError> for stanchion_abi::Error {
                 stanchion_abi::Error::Io(format!("reading `{}`: {source}", path.display()))
             }
             RegistryError::Reload(failure) => stanchion_abi::Error::from(*failure),
-            RegistryError::Lua(source) => {
-                stanchion_abi::Error::Runtime(stanchion_abi::RuntimeError {
-                    runtime_name: "lua".to_string(),
-                    error: source.to_string(),
-                })
-            }
+            RegistryError::Backend(message) => stanchion_abi::Error::Config(message),
             // `RegistryError` is effectively `#[non_exhaustive]`: `Rocks` appears
             // whenever *any* crate in the build turns on the registry's `luarocks`
             // feature, which this match cannot know about. Falling through keeps that

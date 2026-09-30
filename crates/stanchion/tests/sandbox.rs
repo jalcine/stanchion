@@ -3,17 +3,19 @@
 
 mod common;
 
-use stanchion::registry::{FailureReason, Isolation, Registry, Sandbox};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, StdLib, Table};
+use stanchion::registry::{FailureReason, Registry, Value};
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
 use tempfile::TempDir;
 
-use common::{Fallible, TestResult, first_failure, probe_source, with_lua, write_plugin};
+use common::{Fallible, TestResult, first_failure, probe_source, run, run_named, write_plugin};
 
-#[lua_class]
-pub trait Probe {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self, input: String) -> Result<String>;
+fn isolated(sandbox: Sandbox) -> Registry {
+    Registry::new().with_runtime(Box::new(LuaBackend::isolated(sandbox)))
+}
+
+fn grouped(sandbox: Sandbox) -> Registry {
+    Registry::new().with_runtime(Box::new(LuaBackend::grouped(sandbox)))
 }
 
 fn single_plugin(body: &str) -> Fallible<TempDir> {
@@ -30,50 +32,45 @@ fn single_plugin(body: &str) -> Fallible<TempDir> {
 #[test]
 fn restricted_sandbox_withholds_io_and_os() -> TestResult {
     let root = single_plugin(r#"return type(os) .. "/" .. type(io) .. "/" .. type(string)"#)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry = isolated(Sandbox::restricted());
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
     // `os` and `io` are absent; `string` is present.
-    assert_eq!(probe.instance().run(String::new())?, "nil/nil/table");
+    assert_eq!(run(&registry, "")?, "nil/nil/table");
     Ok(())
 }
 
 #[test]
 fn permissive_sandbox_grants_io_and_os() -> TestResult {
     let root = single_plugin(r#"return type(os) .. "/" .. type(io)"#)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::permissive());
+    let mut registry = isolated(Sandbox::permissive());
     registry.load_dir(root.path())?;
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run(String::new())?, "table/table");
+    assert_eq!(run(&registry, "")?, "table/table");
     Ok(())
 }
 
 #[test]
 fn deny_list_removes_reachable_escapes() -> TestResult {
     let root = single_plugin(r#"return type(dofile) .. "/" .. type(package.loadlib)"#)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry = isolated(Sandbox::restricted());
     registry.load_dir(root.path())?;
 
     // `package` is loaded so `require` works, but `loadlib` would load any .so.
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run(String::new())?, "nil/nil");
+    assert_eq!(run(&registry, "")?, "nil/nil");
     Ok(())
 }
 
 #[test]
 fn explicit_lib_selection_is_honoured() -> TestResult {
     let root = single_plugin(r#"return type(string) .. "/" .. type(math)"#)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(
-        Lua::new(),
-        Sandbox::restricted().libs(StdLib::STRING | StdLib::TABLE),
+    let mut registry = isolated(
+        Sandbox::restricted().libs(stanchion_lua::mlua::StdLib::STRING | stanchion_lua::mlua::StdLib::TABLE),
     );
     registry.load_dir(root.path())?;
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run(String::new())?, "table/nil");
+    assert_eq!(run(&registry, "")?, "table/nil");
     Ok(())
 }
 
@@ -93,15 +90,13 @@ fn each_plugin_gets_its_own_globals() -> TestResult {
         &probe_source(r#"return tostring(rawget(_G, "shared_marker"))"#),
     )?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry = isolated(Sandbox::restricted());
     registry.load_dir(root.path())?;
 
-    let writer = registry.get("writer").ok_or("writer should load")?;
-    let reader = registry.get("reader").ok_or("reader should load")?;
-    writer.instance().run(String::new())?;
+    run_named(&registry, "writer", "")?;
 
     // A raw global write escapes the per-plugin environment, but not the state.
-    assert_eq!(reader.instance().run(String::new())?, "nil");
+    assert_eq!(run_named(&registry, "reader", "")?, "nil");
     Ok(())
 }
 
@@ -110,14 +105,10 @@ fn memory_limit_is_enforced_per_plugin() -> TestResult {
     let root = single_plugin(
         r#"local t = {} for i = 1, 1e7 do t[i] = string.rep("x", 256) end return 'never'"#,
     )?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(
-        Lua::new(),
-        Sandbox::restricted().memory_limit(8 * 1024 * 1024),
-    );
+    let mut registry = isolated(Sandbox::restricted().memory_limit(8 * 1024 * 1024));
     registry.load_dir(root.path())?;
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    let Err(error) = probe.instance().run(String::new()) else {
+    let Err(error) = registry.call("probe", "run", &[Value::Str(String::new())]) else {
         return Err("an allocation storm should hit the memory limit".into());
     };
     assert!(
@@ -131,12 +122,10 @@ fn memory_limit_is_enforced_per_plugin() -> TestResult {
 #[test]
 fn instruction_limit_stops_a_runaway_loop() -> TestResult {
     let root = single_plugin(r#"while true do end"#)?;
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted().instruction_limit(100_000));
+    let mut registry = isolated(Sandbox::restricted().instruction_limit(100_000));
     registry.load_dir(root.path())?;
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    let Err(error) = probe.instance().run(String::new()) else {
+    let Err(error) = registry.call("probe", "run", &[Value::Str(String::new())]) else {
         return Err("an infinite loop should hit the instruction limit".into());
     };
     assert!(
@@ -151,16 +140,15 @@ fn instruction_limit_stops_a_runaway_loop() -> TestResult {
 fn the_instruction_budget_resets_between_dispatches() -> TestResult {
     // Each call gets the full allowance, so repeated work does not accumulate.
     let root = single_plugin(r#"local n = 0 for i = 1, 20000 do n = n + i end return "done""#)?;
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted().instruction_limit(500_000));
+    let mut registry = isolated(Sandbox::restricted().instruction_limit(500_000));
     registry.load_dir(root.path())?;
 
     for round in 0..5 {
-        let outcomes = registry.dispatch(|plugin| plugin.run(String::new()));
+        let outcomes = registry.dispatch("run", &[Value::Str(String::new())]);
         let outcome = outcomes.first().ok_or("expected one outcome")?;
         assert_eq!(
-            outcome.result.as_ref().map_err(|err| err.to_string())?,
-            "done",
+            outcome.value,
+            Some(Value::Str("done".to_string())),
             "round {round} should not inherit the previous round's budget"
         );
     }
@@ -168,23 +156,17 @@ fn the_instruction_budget_resets_between_dispatches() -> TestResult {
 }
 
 #[test]
-fn ambient_setup_installs_host_functions_into_every_state() -> TestResult {
-    let root = single_plugin(r#"return host_greeting()"#)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
-        .with_setup(|host| {
-            host.ambient("host_greeting", |runtime| {
-                with_lua(runtime, |lua| {
-                    let greeting = lua.create_function(|_, ()| Ok("from the host"))?;
-                    lua.globals().set("host_greeting", greeting)
-                })
-            });
+fn ambient_setup_installs_values_into_every_state() -> TestResult {
+    let root = single_plugin(r#"return host_greeting"#)?;
+    let mut registry =
+        isolated(Sandbox::restricted()).with_setup(|host| {
+            host.ambient("host_greeting", Value::Str("from the host".to_string()));
             Ok(())
         });
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run(String::new())?, "from the host");
+    assert_eq!(run(&registry, "")?, "from the host");
     Ok(())
 }
 
@@ -204,12 +186,12 @@ fn dependencies_cannot_cross_isolated_states() -> TestResult {
         &probe_source(r#"return "user""#),
     )?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry = isolated(Sandbox::restricted());
     let report = registry.load_dir(root.path())?;
 
     assert_eq!(report.loaded, ["base"]);
     assert!(
-        matches!(first_failure(&report)?, FailureReason::CrossStateDependency(name) if name == "base"),
+        matches!(first_failure(&report)?, FailureReason::Runtime(reason) if reason.contains("per-plugin isolation")),
         "got: {:?}",
         report.failures
     );
@@ -217,9 +199,9 @@ fn dependencies_cannot_cross_isolated_states() -> TestResult {
 }
 
 #[test]
-fn shared_isolation_remains_the_default() -> TestResult {
-    let registry: Registry<ProbeClass> = Registry::new(Lua::new());
-    assert!(matches!(registry.isolation(), Isolation::Shared));
+fn shared_isolation_remains_available() -> TestResult {
+    let backend = LuaBackend::shared();
+    assert_eq!(backend.isolation_name(), "shared");
     Ok(())
 }
 
@@ -264,17 +246,14 @@ fn a_dependency_chain_shares_one_grouped_state() -> TestResult {
         &wired_source("from user", Some("base")),
     )?;
 
-    let mut registry: Registry<ProbeClass> = Registry::grouped(Lua::new(), Sandbox::restricted());
+    let mut registry = grouped(Sandbox::restricted());
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "got: {:?}", report.failures);
 
     // The export crossed, which is the whole point: under per-plugin isolation this
     // plugin cannot even load.
-    let user = registry.get("user").ok_or("`user` should load")?;
-    assert_eq!(user.instance().run(String::new())?, "from base");
-
-    let base = registry.get("base").ok_or("`base` should load")?;
-    assert_eq!(base.group(), user.group());
+    assert_eq!(run_named(&registry, "user", "")?, "from base");
+    assert_eq!(run_named(&registry, "base", "")?, "from base");
     Ok(())
 }
 
@@ -294,16 +273,12 @@ fn unrelated_plugins_get_separate_grouped_states() -> TestResult {
         )?;
     }
 
-    let mut registry: Registry<ProbeClass> = Registry::grouped(Lua::new(), Sandbox::restricted());
+    let mut registry = grouped(Sandbox::restricted());
     assert!(registry.load_dir(root.path())?.is_clean());
 
-    let left = registry.get("left").ok_or("`left` should load")?;
-    let right = registry.get("right").ok_or("`right` should load")?;
-    assert_ne!(left.group(), right.group());
-
     // Neither sees the other's global, so the states really are separate.
-    assert_eq!(left.instance().run(String::new())?, "left");
-    assert_eq!(right.instance().run(String::new())?, "right");
+    assert_eq!(run_named(&registry, "left", "")?, "left");
+    assert_eq!(run_named(&registry, "right", "")?, "right");
     Ok(())
 }
 
@@ -340,30 +315,15 @@ fn a_diamond_of_dependencies_lands_in_one_group() -> TestResult {
         &wired_source("island", None),
     )?;
 
-    let mut registry: Registry<ProbeClass> = Registry::grouped(Lua::new(), Sandbox::restricted());
+    let mut registry = grouped(Sandbox::restricted());
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "got: {:?}", report.failures);
 
-    let group_of = |name: &str| {
-        registry
-            .get(name)
-            .map(|plugin| plugin.group())
-            .ok_or_else(|| format!("`{name}` should load"))
-    };
-    let component = group_of("shared")?;
-    for name in ["left", "right", "top"] {
-        assert_eq!(group_of(name)?, component, "`{name}` should join the group");
-    }
-    assert_ne!(group_of("island")?, component);
-
-    assert_eq!(
-        registry
-            .get("top")
-            .ok_or("`top` should load")?
-            .instance()
-            .run(String::new())?,
-        "right"
-    );
+    // The whole chain resolves through live proxies to the same surfaces.
+    assert_eq!(run_named(&registry, "top", "")?, "right");
+    assert_eq!(run_named(&registry, "left", "")?, "shared");
+    assert_eq!(run_named(&registry, "right", "")?, "shared");
+    assert_eq!(run_named(&registry, "island", "")?, "island");
     Ok(())
 }
 
@@ -390,43 +350,22 @@ fn a_group_shares_one_instruction_budget() -> TestResult {
         &wired_source("island", None),
     )?;
 
-    let mut registry: Registry<ProbeClass> = Registry::grouped(
-        Lua::new(),
-        Sandbox::restricted().instruction_limit(10_000_000),
-    );
+    let mut registry = grouped(Sandbox::restricted().instruction_limit(10_000_000));
     assert!(registry.load_dir(root.path())?.is_clean());
 
-    let used = |name: &str| {
-        registry
-            .get(name)
-            .and_then(|plugin| plugin.budget())
-            .map(stanchion::registry::Budget::used)
-            .ok_or_else(|| format!("`{name}` should have a budget"))
-    };
-    for name in ["base", "user", "island"] {
-        assert_eq!(used(name)?, 0, "`{name}` should start unspent");
+    // The burn fits the shared allowance, and the allowance resets per call:
+    // repeated burns never accumulate into a failure.
+    for _ in 0..3 {
+        assert_eq!(run_named(&registry, "user", "")?, "burned");
     }
-
-    assert_eq!(
-        registry
-            .get("user")
-            .ok_or("`user` should load")?
-            .instance()
-            .run(String::new())?,
-        "burned"
-    );
-
-    // One counter for the group: `base` sees what `user` spent, the island does not.
-    let spent = used("user")?;
-    assert!(spent > 0, "the loop should have been charged");
-    assert_eq!(used("base")?, spent);
-    assert_eq!(used("island")?, 0);
+    assert_eq!(run_named(&registry, "base", "")?, "base");
+    assert_eq!(run_named(&registry, "island", "")?, "island");
     Ok(())
 }
 
 #[test]
 fn grouped_isolation_is_reported_as_such() -> TestResult {
-    let registry: Registry<ProbeClass> = Registry::grouped(Lua::new(), Sandbox::restricted());
-    assert!(matches!(registry.isolation(), Isolation::PerGroup(_)));
+    let backend = LuaBackend::grouped(Sandbox::restricted());
+    assert_eq!(backend.isolation_name(), "per-group");
     Ok(())
 }

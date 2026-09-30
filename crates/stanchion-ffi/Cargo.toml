@@ -10,8 +10,8 @@ exclude.workspace = true
 
 [dependencies]
 # The runtime trait replaces direct `&Lua` usage; lua-enabled bindings use stanchion-lua
-stanchion-registry = { workspace = true, features = ["config", "send", "signatures"] }
-stanchion-abi = { workspace = true, features = ["lua"] }
+stanchion-registry = { workspace = true, features = ["signatures"] }
+stanchion-abi = { workspace = true }
 stanchion-lua = { workspace = true }
 serde.workspace = true
 toml.workspace = true
@@ -21,7 +21,7 @@ tokio = { version = "1", default-features = false, features = ["sync"] }
 
 [features]
 default = ["signatures"]
-async = ["stanchion-registry/async", "stanchion-lua/async"]
+async = ["stanchion-lua/async"]
 signatures = ["stanchion-registry/signatures"]
 lua54 = ["stanchion-lua/lua54"]
 lua53 = ["stanchion-lua/lua53"]

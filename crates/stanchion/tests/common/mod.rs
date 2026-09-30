@@ -7,11 +7,17 @@
 use std::fs;
 use std::path::Path;
 
-use stanchion::registry::{FailureReason, LoadReport, Runtime};
-use stanchion_lua::mlua::{self, FromLuaMulti, IntoLuaMulti, Lua};
+use stanchion::registry::{FailureReason, LoadReport, Registry};
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
 
 pub type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 pub type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// A registry with one isolated Lua backend under a restricted sandbox.
+pub fn registry() -> Registry {
+    Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
+}
 
 /// Creates `<root>/<name>/` holding `plugin.toml` and `init.lua`.
 pub fn write_plugin(root: &Path, name: &str, manifest: &str, source: &str) -> TestResult {
@@ -33,47 +39,25 @@ pub fn first_failure(report: &LoadReport) -> Fallible<&FailureReason> {
 
 /// A plugin class whose `run(input)` method executes `body`.
 ///
-/// Matches a `Probe` trait with `new(config, deps)` and `run(&self, input: String)`.
+/// Dependencies are kept on the instance (`self.deps`), so bodies may read
+/// `self.deps.<name>` like a wired plugin would.
 pub fn probe_source(body: &str) -> String {
     format!(
         "local P = {{}}\nP.__index = P\n\
-         function P.new(config, deps) return setmetatable({{}}, P) end\n\
+         function P.new(config, deps) return setmetatable({{deps = deps}}, P) end\n\
          function P:run(input)\n  {body}\nend\nreturn P\n"
     )
 }
 
-/// Runs `body` against the plugin state behind a provider's or installer's runtime.
-pub fn with_lua<T>(
-    runtime: &dyn Runtime,
-    body: impl FnOnce(&Lua) -> mlua::Result<T>,
-) -> stanchion_abi::Result<T> {
-    let state = runtime
-        .lua_state()
-        .ok_or_else(|| stanchion_abi::Error::Config("a Lua runtime is required".to_string()))?;
-    let lua = state
-        .lock()
-        .map_err(|_| stanchion_abi::Error::Config("the Lua state is poisoned".to_string()))?;
-    body(&lua).map_err(|err| stanchion_abi::Error::Config(err.to_string()))
+/// Calls `run` on the `probe` plugin, expecting a string result.
+pub fn run(registry: &Registry, input: &str) -> Fallible<String> {
+    run_named(registry, "probe", input)
 }
 
-/// Hands a Rust closure to a plugin from a capability provider.
-///
-/// Providers return a `stanchion_abi::Value`; a Lua function crosses that boundary
-/// by being created on the plugin's state and parked in the ABI's function cache.
-pub fn lua_function<A, R, F>(
-    runtime: &dyn Runtime,
-    func: F,
-) -> stanchion_abi::Result<stanchion_abi::Value>
-where
-    A: FromLuaMulti,
-    R: IntoLuaMulti,
-    F: Fn(&Lua, A) -> mlua::Result<R> + Send + 'static,
-{
-    with_lua(runtime, |lua| {
-        let function = lua.create_function(func)?;
-        Ok(stanchion_abi::value::lua::lua_to_abi(
-            lua,
-            &mlua::Value::Function(function),
-        ))
-    })
+/// Calls `run` on the named plugin, expecting a string result.
+pub fn run_named(registry: &Registry, plugin: &str, input: &str) -> Fallible<String> {
+    match registry.call(plugin, "run", &[stanchion_abi::Value::Str(input.to_string())])? {
+        stanchion_abi::Value::Str(text) => Ok(text),
+        other => Err(format!("expected a string, got {other:?}").into()),
+    }
 }

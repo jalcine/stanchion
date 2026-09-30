@@ -10,27 +10,15 @@
 
 use std::path::PathBuf;
 
-use stanchion::registry::Registry;
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
-
-/// Every plugin in the bus implements this.
-#[lua_class]
-pub trait Handler {
-    /// The registry calls this with `(config, deps)`.
-    fn new(config: Table, deps: Table) -> Result<Self>;
-
-    fn name(&self) -> Result<String>;
-
-    fn handle(&self, kind: String, payload: String) -> Result<String>;
-}
+use stanchion::registry::{Registry, Value};
+use stanchion_lua::backend::LuaBackend;
 
 fn plugin_root() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/plugins"))
 }
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let mut registry: Registry<HandlerClass> = Registry::new(Lua::new());
+    let mut registry = Registry::new().with_runtime(Box::new(LuaBackend::shared()));
     let report = registry.load_dir(plugin_root())?;
 
     // `counter` depends on `formatter`, so it loads after it. `broken` raises while
@@ -45,36 +33,43 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n-- dispatching an event to every plugin --");
-    for outcome in registry.dispatch(|plugin| plugin.handle("deploy".into(), "v1.4.2".into())) {
-        match outcome.result {
-            Ok(text) => println!("  {:<10} {text}", outcome.name),
+    for outcome in registry.dispatch(
+        "handle",
+        &[
+            Value::Str("deploy".into()),
+            Value::Str("v1.4.2".into()),
+        ],
+    ) {
+        match outcome.value {
+            Some(Value::Str(text)) => println!("  {:<10} {text}", outcome.plugin),
+            Some(other) => println!("  {:<10} answered unexpectedly: {other:?}", outcome.plugin),
             // `grumpy` fails every call; the others still ran.
-            Err(err) => {
-                println!(
-                    "  {:<10} failed: {}",
-                    outcome.name,
-                    first_line(&err.to_string())
-                );
-            }
+            None => println!(
+                "  {:<10} failed: {}",
+                outcome.plugin,
+                first_line(outcome.error.as_deref().unwrap_or("unknown"))
+            ),
         }
     }
 
     println!("\n-- dispatching again: `counter` keeps its state --");
-    for outcome in registry.dispatch(|plugin| plugin.handle("rollback".into(), "v1.4.1".into())) {
-        if let Ok(text) = outcome.result {
-            println!("  {:<10} {text}", outcome.name);
+    for outcome in registry.dispatch(
+        "handle",
+        &[Value::Str("rollback".into()), Value::Str("v1.4.1".into())],
+    ) {
+        if let Some(Value::Str(text)) = outcome.value {
+            println!("  {:<10} {text}", outcome.plugin);
         }
     }
 
-    // `counter` sees only what `formatter` published. The handle dependents receive
-    // is a proxy with no keys of its own, so probe it rather than iterating it.
-    if let Some(formatter) = registry.get("formatter")
-        && let Some(exports) = formatter.exports()
-    {
-        let published = exports.get::<Option<stanchion_lua::mlua::Function>>("decorate")?;
-        let private = exports.get::<Option<stanchion_lua::mlua::Value>>("handle")?;
-        println!("\nformatter exports `decorate`: {}", published.is_some());
-        println!("formatter exports `handle`  : {}", private.is_some());
+    // `counter` sees only what `formatter` published: its answers arrive
+    // decorated, which is only possible through the `decorate` export.
+    if let Ok(Value::Str(text)) = registry.call(
+        "counter",
+        "handle",
+        &[Value::Str("probe".into()), Value::Str("x".into())],
+    ) {
+        println!("\ncounter answers through formatter's `decorate`: {text}");
     }
 
     Ok(())

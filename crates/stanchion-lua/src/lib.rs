@@ -1,18 +1,46 @@
 //! Lua plugin backend for stanchion.
 //!
-//! This crate implements the full Lua trait stack (LuaClass, LuaObject,
-//! LuaHandle, load_class, __private) and provides the Lua-specific
-//! [`LuaBackend`] implementation that satisfies [`stanchion_abi::PluginBackend`].
+//! This crate owns every `mlua` type in the workspace: states ([`Sandbox`]),
+//! loading and calling ([`backend`]), value conversion ([`convert`]) and the
+//! Lua trait stack (`LuaClass`, `LuaObject`, `LuaHandle`, `load_class`).
+//! Hosts talk to [`LuaBackend`] through [`stanchion_abi::Runtime`] and pass
+//! [`stanchion_abi::Value`]s; nothing outside this crate names an `mlua` type.
 
 use std::future::Future;
-use std::io::Write;
-use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 
 use mlua::chunk::AsChunk;
 use mlua::{FromLua, Lua, ObjectLike, Result as LuaResult, Table, Value};
-use stanchion_abi::runtime::Runtime;
+
+/// Loading, calling, reload and revocation behind [`stanchion_abi::Runtime`].
+pub mod backend;
+
+/// Conversions between [`stanchion_abi::Value`] and `mlua` values.
+pub mod convert;
+
+/// Declarative host configuration (TOML) and its translation into sandboxes.
+pub mod config;
+
+/// LuaRocks tree queries and version constraints (runtime-neutral types live
+/// in [`stanchion_abi::rocks`]; the compiled-version constant lives here,
+/// where the `mlua` feature flags are known).
+pub use stanchion_abi::rocks;
+pub use stanchion_abi::rocks::{DEFAULT_BINARY, DEFAULT_LUA_VERSION};
+
+/// Lua version mlua is compiled against, spelled the way LuaRocks spells it.
+///
+/// A C rock is only loadable when it was built for this version. Luau has no
+/// C module ABI at all, so its value matches no LuaRocks version. Backends
+/// enforce it via [`rocks::RocksConfig::check_c_abi`] at load time.
+pub const MLUA_LUA_VERSION: &str = if cfg!(feature = "luau") {
+    "luau"
+} else if cfg!(feature = "luajit") {
+    "5.1"
+} else if cfg!(feature = "lua53") {
+    "5.3"
+} else {
+    "5.4"
+};
 
 pub use stanchion_macros::lua_class;
 
@@ -23,9 +51,6 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// Re-export mlua types used by the Lua trait stack.
 pub use mlua;
 pub use mlua::{MaybeSend, MaybeSync};
-
-/// LuaRocks tree queries and version constraints (moved from `stanchion-rocks`).
-pub mod rocks;
 
 /// Per-plugin Lua state policy: standard libraries, memory and instruction limits.
 pub mod sandbox;
@@ -320,114 +345,4 @@ pub mod __private {
     ) -> LuaResult<Option<mlua::Function>> {
         handle.get(name)
     }
-}
-
-/// A Lua-specific plugin backend that implements [`stanchion_abi::PluginBackend`].
-///
-/// Loads and instantiates Lua plugins using the full Lua trait stack defined
-/// in this crate.
-pub struct LuaBackend {
-    /// The Lua state this backend uses.
-    lua: Arc<Mutex<Lua>>,
-}
-
-impl LuaBackend {
-    /// Creates a new Lua backend instance with the given Lua state.
-    pub fn new(lua: Lua) -> Self {
-        Self {
-            lua: Arc::new(Mutex::new(lua)),
-        }
-    }
-}
-
-impl stanchion_abi::PluginBackend for LuaBackend {
-    fn plugin_type(&self) -> stanchion_abi::PluginType {
-        stanchion_abi::PluginType::Lua
-    }
-
-    fn load(
-        &self,
-        _manifest: &stanchion_abi::Manifest,
-        _dir: &Path,
-    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
-        // Implementation uses mlua to load and instantiate the plugin class.
-        // This is a placeholder - the full implementation would:
-        // 1. Create a Lua state
-        // 2. Load the plugin chunk using load_class
-        // 4. Return a LuaInstance wrapping the result
-        unimplemented!("LuaBackend::load - requires full mlua integration with registry pattern")
-    }
-}
-
-impl Runtime for LuaBackend {
-    fn load(
-        &self,
-        manifest: &stanchion_abi::Manifest,
-        dir: &Path,
-    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::PluginInstance>> {
-        <Self as stanchion_abi::PluginBackend>::load(self, manifest, dir)
-    }
-
-    fn verify(
-        &self,
-        _manifest: &stanchion_abi::Manifest,
-        _dir: &Path,
-    ) -> stanchion_abi::Result<()> {
-        Ok(())
-    }
-
-    fn audit(&self, _log: &mut dyn Write) -> stanchion_abi::Result<()> {
-        Ok(())
-    }
-
-    fn call(
-        &self,
-        instance: &dyn stanchion_abi::PluginInstance,
-        method: &str,
-        args: &[stanchion_abi::Value],
-    ) -> stanchion_abi::Result<stanchion_abi::Value> {
-        instance.call(method, args)
-    }
-
-    fn budget(&self, _plugin_name: &str) -> stanchion_abi::Result<u64> {
-        Ok(u64::MAX)
-    }
-
-    fn reset_budget(&self, _plugin_name: &str) -> stanchion_abi::Result<()> {
-        Ok(())
-    }
-
-    fn runtime_name(&self) -> &'static str {
-        "lua"
-    }
-
-    fn plugin_type(&self) -> stanchion_abi::PluginType {
-        stanchion_abi::PluginType::Lua
-    }
-
-    fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
-        Some(std::sync::Arc::clone(&self.lua))
-    }
-
-    fn install_capability(
-        &self,
-        _name: &str,
-        _provider: &dyn stanchion_abi::callback::CapabilityProvider,
-        _grant: &stanchion_abi::callback::Grant,
-    ) -> stanchion_abi::Result<()> {
-        // The actual capability installation is handled by the registry's
-        // with_setup mechanism, which uses the Runtime trait to bind
-        // functions into plugin environments.
-        Ok(())
-    }
-}
-
-/// Creates a new Lua state and returns it for `stanchion-registry`.
-pub fn new_lua() -> mlua::Lua {
-    mlua::Lua::new()
-}
-
-/// Creates a new `Runtime` backed by a fresh Lua state.
-pub fn new_runtime() -> std::sync::Arc<dyn stanchion_abi::Runtime> {
-    std::sync::Arc::new(LuaBackend::new(new_lua()))
 }

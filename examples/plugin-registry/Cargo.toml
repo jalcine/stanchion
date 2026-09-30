@@ -24,8 +24,8 @@ path = "src/bin/consume.rs"
 stanchion-dist = { workspace = true, features = ["client"] }
 stanchion-index = { workspace = true }
 stanchion-index-poem = { workspace = true }
-stanchion-registry = { workspace = true, features = ["lua54", "vendored", "signatures"] }
-stanchion-lua = { workspace = true }
+stanchion-registry = { workspace = true, features = ["signatures"] }
+stanchion-lua = { workspace = true, features = ["lua54", "vendored"] }
 poem = { version = "3", features = ["server"] }
 tokio.workspace = true
 semver.workspace = true

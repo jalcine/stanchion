@@ -1,36 +1,18 @@
-//! Plugin registry: discovery, dependency chains, failure isolation, config, reload.
+//! Plugin registry: discovery, dependency chains, failure isolation, reload.
 #![cfg(feature = "registry")]
+
+mod common;
 
 use std::fs;
 use std::path::Path;
 
-use stanchion::registry::{FailureReason, LoadFailure, Outcome, Registry};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
+use common::{TestResult, probe_source, run_named, write_plugin};
+use stanchion::registry::{FailureReason, LoadFailure, Outcome, Registry, Value};
+use stanchion_lua::backend::LuaBackend;
 use tempfile::TempDir;
-
-/// Tests report failures as errors rather than panicking, so a broken assumption
-/// surfaces with its own message instead of a bare unwrap location.
-type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
-
-#[lua_class]
-pub trait Greeter {
-    /// The registry calls this by convention with `(config, deps)`.
-    fn new(config: Table, deps: Table) -> Result<Self>;
-
-    fn greet(&self, who: String) -> Result<String>;
-
-    #[lua(field)]
-    fn label(&self) -> Result<String>;
-
-    #[cfg(feature = "async")]
-    async fn ping(&self) -> Result<String>;
-}
 
 /// Publishes an `exports` table that closes over its config, so a reload changes it.
 const ALPHA: &str = r#"
-leaked_global = "should not escape"
-
 local Alpha = {}
 Alpha.__index = Alpha
 
@@ -93,12 +75,12 @@ return P
     )
 }
 
-fn write_plugin(
+fn write_plugin_boxed(
     root: &Path,
     name: &str,
     manifest: &str,
     source: Option<&str>,
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
+) -> TestResult {
     let dir = root.join(name);
     fs::create_dir_all(&dir)?;
     fs::write(dir.join("plugin.toml"), manifest)?;
@@ -113,19 +95,19 @@ fn plugin_root() -> std::result::Result<TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let path = root.path();
 
-    write_plugin(
+    write_plugin_boxed(
         path,
         "alpha",
         "name = \"alpha\"\nversion = \"1.0.0\"\n\n[config]\ngreeting = \"hello\"\n",
         Some(ALPHA),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "beta",
         "name = \"beta\"\nversion = \"1.0.0\"\n\n[dependencies]\nalpha = \"^1.0\"\n",
         Some(BETA),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "grumpy",
         "name = \"grumpy\"\n",
@@ -134,7 +116,7 @@ fn plugin_root() -> std::result::Result<TempDir, Box<dyn std::error::Error>> {
             r#"error("grumpy refuses to greet " .. who)"#,
         )),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "hopeful",
         "name = \"hopeful\"\n\n[dependencies]\nghost = { version = \"*\", optional = true }\n",
@@ -143,69 +125,74 @@ fn plugin_root() -> std::result::Result<TempDir, Box<dyn std::error::Error>> {
             "return tostring(self.deps.ghost)",
         )),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "silent",
         "name = \"silent\"\n",
         Some(&simple_plugin("silent", r#"return "silent: " .. who"#)),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "needy",
         "name = \"needy\"\n\n[dependencies]\nsilent = \"*\"\n",
         Some(&simple_plugin("needy", r#"return who"#)),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "picky",
         "name = \"picky\"\n\n[dependencies]\nalpha = \"^2.0\"\n",
         Some(&simple_plugin("picky", r#"return who"#)),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "broken",
         "name = \"broken\"\n",
         Some("error(\"boom\")\n"),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "orphan",
         "name = \"orphan\"\n\n[dependencies]\nghost = \"*\"\n",
         Some(&simple_plugin("orphan", r#"return who"#)),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "cyclic_a",
         "name = \"cyclic_a\"\n\n[dependencies]\ncyclic_b = \"*\"\n",
         Some(&simple_plugin("cyclic_a", r#"return who"#)),
     )?;
-    write_plugin(
+    write_plugin_boxed(
         path,
         "cyclic_b",
         "name = \"cyclic_b\"\n\n[dependencies]\ncyclic_a = \"*\"\n",
         Some(&simple_plugin("cyclic_b", r#"return who"#)),
     )?;
-    write_plugin(path, "malformed", "this is not toml\n", Some(ALPHA))?;
+    write_plugin_boxed(path, "malformed", "this is not toml\n", Some(ALPHA))?;
     Ok(root)
+}
+
+fn shared_registry() -> Registry {
+    Registry::new().with_runtime(Box::new(LuaBackend::shared()))
 }
 
 fn loaded_registry(
     root: &TempDir,
-) -> std::result::Result<Registry<GreeterClass>, Box<dyn std::error::Error>> {
-    let mut registry = Registry::new(Lua::new());
+) -> std::result::Result<Registry, Box<dyn std::error::Error>> {
+    let mut registry = shared_registry();
     registry.load_dir(root.path())?;
     Ok(registry)
 }
 
-/// Looks up one plugin, reporting a missing one as an error.
-fn plugin<'a>(
-    registry: &'a Registry<GreeterClass>,
+/// Calls `greet` on the named plugin, expecting a string.
+fn greet(
+    registry: &Registry,
     name: &str,
-) -> std::result::Result<&'a stanchion::registry::Plugin<GreeterClass>, Box<dyn std::error::Error>>
-{
-    registry
-        .get(name)
-        .ok_or_else(|| format!("expected `{name}` to be loaded").into())
+    who: &str,
+) -> std::result::Result<String, Box<dyn std::error::Error>> {
+    match registry.call(name, "greet", &[Value::Str(who.to_string())])? {
+        Value::Str(text) => Ok(text),
+        other => Err(format!("expected a string, got {other:?}").into()),
+    }
 }
 
 /// Looks up why one plugin failed, reporting an unexpected success as an error.
@@ -221,21 +208,20 @@ fn reason_for<'a>(
 }
 
 /// Looks up one dispatch outcome by plugin name.
-fn outcome_for<'a, R>(
-    outcomes: &'a [Outcome<'a, R>],
+fn outcome_for<'a>(
+    outcomes: &'a [Outcome],
     name: &str,
-) -> std::result::Result<&'a Result<R>, Box<dyn std::error::Error>> {
+) -> std::result::Result<&'a Outcome, Box<dyn std::error::Error>> {
     outcomes
         .iter()
-        .find(|outcome| outcome.name == name)
-        .map(|outcome| &outcome.result)
+        .find(|outcome| outcome.plugin == name)
         .ok_or_else(|| format!("no dispatch outcome for `{name}`").into())
 }
 
 #[test]
 fn loads_dependencies_first_and_isolates_every_failure() -> TestResult {
     let root = plugin_root()?;
-    let mut registry: Registry<GreeterClass> = Registry::new(Lua::new());
+    let mut registry = shared_registry();
     let report = registry.load_dir(root.path())?;
 
     assert_eq!(
@@ -248,7 +234,7 @@ fn loads_dependencies_first_and_isolates_every_failure() -> TestResult {
     let failures = &report.failures;
     assert!(matches!(
         reason_for(failures, "broken")?,
-        FailureReason::Lua(_)
+        FailureReason::Runtime(_)
     ));
     assert!(matches!(
         reason_for(failures, "malformed")?,
@@ -260,7 +246,7 @@ fn loads_dependencies_first_and_isolates_every_failure() -> TestResult {
     ));
     assert!(matches!(
         reason_for(failures, "needy")?,
-        FailureReason::MissingExports(dep) if dep == "silent"
+        FailureReason::Runtime(reason) if reason.contains("did not publish")
     ));
     assert!(matches!(
         reason_for(failures, "picky")?,
@@ -282,23 +268,38 @@ fn exports_reach_the_dependent() -> TestResult {
     let registry = loaded_registry(&root)?;
 
     // beta greets by calling into alpha's published `decorate`.
-    let beta = plugin(&registry, "beta")?;
-    assert_eq!(beta.instance().greet("world".to_string())?, "[hello] world");
+    assert_eq!(greet(&registry, "beta", "world")?, "[hello] world");
     Ok(())
 }
 
 #[test]
 fn only_exports_are_visible_to_a_dependent() -> TestResult {
-    let root = plugin_root()?;
-    let registry = loaded_registry(&root)?;
+    let root = tempfile::tempdir()?;
+    write_plugin(
+        root.path(),
+        "alpha",
+        "name = \"alpha\"\nversion = \"1.0.0\"\n",
+        ALPHA,
+    )?;
+    // A dependent can see `decorate` but not instance internals: `greet` and
+    // `greeting` live on the instance, not in `exports`.
+    write_plugin(
+        root.path(),
+        "snoop",
+        "name = \"snoop\"\n\n[dependencies]\nalpha = \"^1.0\"\n",
+        &probe_source(
+            r#"return type(self.deps.alpha.decorate) .. "/" .. tostring(self.deps.alpha.greet) .. "/" .. tostring(self.deps.alpha.greeting)"#,
+        ),
+    )?;
 
-    let proxy = plugin(&registry, "alpha")?
-        .exports()
-        .ok_or("alpha should publish exports")?;
-    assert!(proxy.get::<Option<mlua::Function>>("decorate")?.is_some());
-    // `greet` and `greeting` are instance internals, not published.
-    assert_eq!(proxy.get::<Option<mlua::Value>>("greet")?, None);
-    assert_eq!(proxy.get::<Option<String>>("greeting")?, None);
+    let mut registry = shared_registry();
+    let report = registry.load_dir(root.path())?;
+    assert!(report.is_clean(), "failures: {:?}", report.failures);
+
+    assert_eq!(
+        run_named(&registry, "snoop", "x")?,
+        "function/nil/nil"
+    );
     Ok(())
 }
 
@@ -307,52 +308,61 @@ fn a_dependent_cannot_tamper_with_the_exports_proxy() -> TestResult {
     // #32: a dependent holds a read-only proxy. It must not be able to write through it
     // into the provider's live exports, nor reach the forwarding metatable to repoint
     // reads — either would hijack the provider's surface for every other dependent.
-    let root = plugin_root()?;
-    let registry = loaded_registry(&root)?;
-    let lua = registry.lua();
-    let proxy = plugin(&registry, "alpha")?
-        .exports()
-        .ok_or("alpha should publish exports")?
-        .clone();
-    lua.globals().set("p", proxy.clone())?;
+    let root = tempfile::tempdir()?;
+    write_plugin(
+        root.path(),
+        "alpha",
+        "name = \"alpha\"\nversion = \"1.0.0\"\n\n[config]\ngreeting = \"hello\"\n",
+        ALPHA,
+    )?;
+    write_plugin(
+        root.path(),
+        "sneaky",
+        "name = \"sneaky\"\n\n[dependencies]\nalpha = \"^1.0\"\n",
+        &probe_source(
+            r#"local seen = {}
+            seen.metatable = getmetatable(self.deps.alpha)
+            if type(seen.metatable) == "string" then return "hidden" else return "exposed" end"#,
+        ),
+    )?;
+    write_plugin(
+        root.path(),
+        "witness",
+        "name = \"witness\"\n\n[dependencies]\nalpha = \"^1.0\"\n",
+        &probe_source(r#"return self.deps.alpha.decorate(input)"#),
+    )?;
+
+    let mut registry = shared_registry();
+    let report = registry.load_dir(root.path())?;
+    assert!(report.is_clean(), "failures: {:?}", report.failures);
 
     // The forwarding metatable is hidden behind __metatable.
-    let mt: mlua::Value = lua.load("return getmetatable(p)").eval()?;
+    assert_eq!(run_named(&registry, "sneaky", "x")?, "hidden");
+
+    // Writing through the proxy is refused rather than reaching the table.
+    let attacking = probe_source(
+        r#"local ok, err = pcall(function() self.deps.alpha.decorate = function() return "pwned" end end)
+            if ok then return "wrote" else return tostring(err) end"#,
+    );
+    fs::write(root.path().join("sneaky").join("init.lua"), attacking)?;
+    registry.reload("sneaky")?;
     assert!(
-        matches!(mt, mlua::Value::String(_)),
-        "the forwarding metatable must be hidden, got {mt:?}"
+        run_named(&registry, "sneaky", "x")?.contains("read-only"),
+        "writing through the proxy must fail"
     );
 
-    // Writing through the proxy is refused rather than reaching the provider's table.
-    let err = lua
-        .load(r#"p.decorate = function() return "pwned" end"#)
-        .exec()
-        .err()
-        .ok_or("writing through the proxy must fail")?;
-    assert!(err.to_string().contains("read-only"), "{err}");
-
-    // setmetatable is refused too, so __index cannot be repointed.
-    let err = lua
-        .load("setmetatable(p, { __index = { decorate = 1 } })")
-        .exec()
-        .err()
-        .ok_or("replacing the metatable must fail")?;
-    assert!(err.to_string().contains("metatable"), "{err}");
-
-    // The genuine export still resolves and is unchanged.
-    assert!(proxy.get::<Option<mlua::Function>>("decorate")?.is_some());
+    // The genuine export still resolves and is unchanged for other dependents.
+    assert_eq!(run_named(&registry, "witness", "hi")?, "[hello] hi");
     Ok(())
 }
 
 #[test]
 fn reload_propagates_through_the_dependency_chain() -> TestResult {
     let root = plugin_root()?;
-    let mut registry: Registry<GreeterClass> = Registry::new(Lua::new());
+    let mut registry = shared_registry();
     registry.load_dir(root.path())?;
 
-    // Hold the *original* beta instance: it is never rebuilt below.
-    let beta = plugin(&registry, "beta")?.instance().clone();
-    assert_eq!(beta.greet("world".to_string())?, "[hello] world");
+    assert_eq!(greet(&registry, "beta", "world")?, "[hello] world");
 
     fs::write(
         root.path().join("alpha").join("plugin.toml"),
@@ -361,13 +371,8 @@ fn reload_propagates_through_the_dependency_chain() -> TestResult {
     registry.reload("alpha")?;
 
     // The proxy beta captured at construction now forwards to alpha's new exports.
-    assert_eq!(beta.greet("world".to_string())?, "[howdy] world");
-    assert_eq!(
-        plugin(&registry, "alpha")?
-            .instance()
-            .greet("world".to_string())?,
-        "howdy, world"
-    );
+    assert_eq!(greet(&registry, "beta", "world")?, "[howdy] world");
+    assert_eq!(greet(&registry, "alpha", "world")?, "howdy, world");
     Ok(())
 }
 
@@ -376,8 +381,7 @@ fn absent_optional_dependency_leaves_a_nil_slot() -> TestResult {
     let root = plugin_root()?;
     let registry = loaded_registry(&root)?;
 
-    let hopeful = plugin(&registry, "hopeful")?;
-    assert_eq!(hopeful.instance().greet("x".to_string())?, "nil");
+    assert_eq!(greet(&registry, "hopeful", "x")?, "nil");
     Ok(())
 }
 
@@ -386,10 +390,10 @@ fn passes_manifest_config_to_the_constructor() -> TestResult {
     let root = plugin_root()?;
     let registry = loaded_registry(&root)?;
 
-    let alpha = plugin(&registry, "alpha")?;
-    assert_eq!(alpha.instance().greet("world".to_string())?, "hello, world");
-    assert_eq!(alpha.instance().label()?, "alpha");
-    let version = alpha
+    assert_eq!(greet(&registry, "alpha", "world")?, "hello, world");
+    let version = registry
+        .get("alpha")
+        .ok_or("alpha should load")?
         .manifest()
         .version
         .as_ref()
@@ -400,20 +404,30 @@ fn passes_manifest_config_to_the_constructor() -> TestResult {
 
 #[test]
 fn plugin_writes_stay_out_of_the_shared_globals() -> TestResult {
-    let root = plugin_root()?;
-    let registry = loaded_registry(&root)?;
+    let root = tempfile::tempdir()?;
+    write_plugin(
+        root.path(),
+        "alpha",
+        "name = \"alpha\"\n\n[config]\ngreeting = \"hello\"\n",
+        ALPHA,
+    )?;
+    // Reads the (possibly leaked) global rather than any capability.
+    write_plugin(
+        root.path(),
+        "reader",
+        "name = \"reader\"\n",
+        &probe_source(r#"return tostring(leaked_global)"#),
+    )?;
+
+    let mut registry = shared_registry();
+    let report = registry.load_dir(root.path())?;
+    assert!(report.is_clean(), "failures: {:?}", report.failures);
 
     // `alpha` assigns `leaked_global` at chunk scope; the environment keeps it local.
-    let leaked: Option<String> = registry.lua().globals().get("leaked_global")?;
-    assert_eq!(leaked, None);
+    assert_eq!(run_named(&registry, "reader", "x")?, "nil");
 
     // Reads still reach the real globals, or `string.format` in `greet` would fail.
-    assert_eq!(
-        plugin(&registry, "alpha")?
-            .instance()
-            .greet("you".to_string())?,
-        "hello, you"
-    );
+    assert_eq!(greet(&registry, "alpha", "you")?, "hello, you");
     Ok(())
 }
 
@@ -422,23 +436,15 @@ fn dispatch_reports_each_plugin_separately() -> TestResult {
     let root = plugin_root()?;
     let registry = loaded_registry(&root)?;
 
-    let outcomes = registry.dispatch(|plugin| plugin.greet("world".to_string()));
+    let outcomes = registry.dispatch("greet", &[Value::Str("world".to_string())]);
 
     let alpha = outcome_for(&outcomes, "alpha")?;
-    assert_eq!(
-        alpha.as_ref().map_err(|err| err.to_string())?,
-        "hello, world"
-    );
+    assert_eq!(alpha.value, Some(Value::Str("hello, world".to_string())));
     let beta = outcome_for(&outcomes, "beta")?;
-    assert_eq!(
-        beta.as_ref().map_err(|err| err.to_string())?,
-        "[hello] world"
-    );
+    assert_eq!(beta.value, Some(Value::Str("[hello] world".to_string())));
 
-    let Err(error) = outcome_for(&outcomes, "grumpy")? else {
-        return Err("grumpy was expected to fail".into());
-    };
-    let error = error.to_string();
+    let grumpy = outcome_for(&outcomes, "grumpy")?;
+    let error = grumpy.error.as_ref().ok_or("grumpy was expected to fail")?;
     assert!(
         error.contains("grumpy refuses to greet world"),
         "got: {error}"
@@ -464,9 +470,9 @@ async fn dispatch_async_awaits_every_plugin() -> TestResult {
     let root = plugin_root()?;
     let registry = loaded_registry(&root)?;
 
-    let outcomes = registry.dispatch_async(|plugin| plugin.ping()).await;
-    let names: Vec<&str> = outcomes.iter().map(|outcome| outcome.name).collect();
+    let outcomes = registry.dispatch_async("ping", &[]).await;
+    let names: Vec<&str> = outcomes.iter().map(|outcome| outcome.plugin.as_str()).collect();
     assert_eq!(names, ["alpha", "grumpy", "hopeful", "silent", "beta"]);
-    assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()));
+    assert!(outcomes.iter().all(|outcome| outcome.error.is_none()));
     Ok(())
 }

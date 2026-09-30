@@ -39,7 +39,6 @@ use std::fmt;
 
 use semver::Version;
 
-use crate::capability::{OPTIONAL_KEY, split_optional};
 use crate::manifest::Manifest;
 
 /// One difference between two versions of a plugin's declarations.
@@ -345,8 +344,10 @@ fn diff_capabilities(installed: &Manifest, candidate: &Manifest, changes: &mut V
             (None, Some(_)) => changes.push(Change::CapabilityAdded { name: name.clone() }),
             (Some(_), None) => changes.push(Change::CapabilityRemoved { name: name.clone() }),
             (Some(before), Some(after)) => {
-                let (before_params, before_optional) = split_optional(before);
-                let (after_params, after_optional) = split_optional(after);
+                let (before_params, before_optional) =
+                    stanchion_abi::callback::split_optional(before);
+                let (after_params, after_optional) =
+                    stanchion_abi::callback::split_optional(after);
 
                 if before_params != after_params {
                     changes.push(Change::CapabilityParams {
@@ -377,7 +378,11 @@ fn diff_capabilities(installed: &Manifest, candidate: &Manifest, changes: &mut V
 /// something, a scalar that changed — is treated as a widening, because assuming
 /// otherwise would be guessing about a host's semantics in the direction that fails
 /// open.
-fn narrows(before: &toml::Table, after: &toml::Table) -> bool {
+fn narrows(before: &stanchion_abi::Value, after: &stanchion_abi::Value) -> bool {
+    use stanchion_abi::Value;
+    let (Value::Map(before), Value::Map(after)) = (before, after) else {
+        return before == after;
+    };
     for (key, new) in after {
         let Some(old) = before.get(key) else {
             return false;
@@ -386,7 +391,7 @@ fn narrows(before: &toml::Table, after: &toml::Table) -> bool {
             continue;
         }
         match (old, new) {
-            (toml::Value::Array(old), toml::Value::Array(new)) => {
+            (Value::List(old), Value::List(new)) => {
                 if !new.iter().all(|item| old.contains(item)) {
                     return false;
                 }
@@ -396,19 +401,21 @@ fn narrows(before: &toml::Table, after: &toml::Table) -> bool {
     }
     // A key that constrained the old request and is gone from the new one is a
     // widening, not a simplification.
-    before
-        .keys()
-        .all(|key| key == OPTIONAL_KEY || after.contains_key(key))
+    before.keys().all(|key| after.contains_key(key))
 }
 
 /// Renders a parameter table on one line, for a diff a person reads.
-fn render(params: &toml::Table) -> String {
+fn render(params: &stanchion_abi::Value) -> String {
+    use stanchion_abi::Value;
+    let Value::Map(params) = params else {
+        return format!("{params:?}");
+    };
     if params.is_empty() {
         return "{}".to_string();
     }
     let rendered: Vec<String> = params
         .iter()
-        .map(|(key, value)| format!("{key} = {value}"))
+        .map(|(key, value)| format!("{key} = {value:?}"))
         .collect();
     format!("{{ {} }}", rendered.join(", "))
 }

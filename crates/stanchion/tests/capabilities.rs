@@ -4,24 +4,13 @@
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::fs;
 
-use stanchion::registry::{
-    CapabilityRequest, Decision, FailureReason, Registry, Rules, Sandbox, toml,
-};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{self, Lua, Result, Table};
+use stanchion::registry::{CapabilityCall, CapabilityRequest, Decision, FailureReason, Rules, Value};
 use tempfile::TempDir;
 
-use common::{
-    Fallible, TestResult, first_failure, lua_function, probe_source, with_lua, write_plugin,
-};
-
-#[lua_class]
-pub trait Probe {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self, input: String) -> Result<String>;
-}
+use common::{Fallible, TestResult, first_failure, probe_source, registry, run, write_plugin};
 
 fn single(manifest: &str, body: &str) -> Fallible<TempDir> {
     let root = tempfile::tempdir()?;
@@ -31,23 +20,27 @@ fn single(manifest: &str, body: &str) -> Fallible<TempDir> {
 
 /// A host offering `log` (ungated params) and `network` (an allowlist the provider
 /// enforces from its grant).
-fn registry() -> Registry<ProbeClass> {
-    Registry::isolated(Lua::new(), Sandbox::restricted()).with_setup(|host| {
-        host.capability("log", |runtime, _grant| {
-            lua_function(runtime, |_, message: String| {
-                Ok(format!("logged: {message}"))
-            })
+fn offering() -> stanchion::registry::Registry {
+    registry().with_setup(|host| {
+        host.capability("log", |call: &CapabilityCall| {
+            let message = match call.args.first() {
+                Some(Value::Str(text)) => text.clone(),
+                _ => "(no message)".to_string(),
+            };
+            Ok(Value::Str(format!("logged: {message}")))
         });
-        host.capability("network", |runtime, grant| {
+        host.capability("network", |call: &CapabilityCall| {
             // The allowlist is baked in here, so the plugin cannot widen it later.
-            let allowed: Vec<String> = grant.get_or_default("hosts");
-            lua_function(runtime, move |_, host: String| {
-                if allowed.contains(&host) {
-                    Ok(format!("fetched {host}"))
-                } else {
-                    Err(mlua::Error::RuntimeError(format!("`{host}` not granted")))
-                }
-            })
+            let allowed: Vec<String> = call.grant.get_or_default("hosts");
+            let host = match call.args.first() {
+                Some(Value::Str(host)) => host.clone(),
+                _ => return Err("expected a host string".to_string()),
+            };
+            if allowed.contains(&host) {
+                Ok(Value::Str(format!("fetched {host}")))
+            } else {
+                Err(format!("`{host}` not granted"))
+            }
         });
         Ok(())
     })
@@ -59,12 +52,11 @@ fn a_granted_capability_is_bound_in_the_environment() -> TestResult {
         "name = \"probe\"\n\n[capabilities.log]\n",
         r#"return log(input)"#,
     )?;
-    let mut registry = registry().with_policy(Rules::deny_all().allow("log"));
+    let mut registry = offering().with_policy(Rules::deny_all().allow("log"));
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run("hello".to_string())?, "logged: hello");
+    assert_eq!(run(&registry, "hello")?, "logged: hello");
     Ok(())
 }
 
@@ -72,11 +64,10 @@ fn a_granted_capability_is_bound_in_the_environment() -> TestResult {
 fn an_undeclared_capability_is_simply_absent() -> TestResult {
     // The host offers `log`, policy allows it, but this plugin never asked.
     let root = single("name = \"probe\"\n", r#"return type(log)"#)?;
-    let mut registry = registry().with_policy(Rules::deny_all().allow("log"));
+    let mut registry = offering().with_policy(Rules::deny_all().allow("log"));
     registry.load_dir(root.path())?;
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run(String::new())?, "nil");
+    assert_eq!(run(&registry, "")?, "nil");
     Ok(())
 }
 
@@ -87,12 +78,12 @@ fn deny_by_default_refuses_even_a_registered_provider() -> TestResult {
         r#"return log(input)"#,
     )?;
     // Provider registered, but no policy at all.
-    let mut registry = registry();
+    let mut registry = offering();
     let report = registry.load_dir(root.path())?;
 
     assert!(report.loaded.is_empty());
     assert!(
-        matches!(first_failure(&report)?, FailureReason::CapabilityDenied { name, .. } if name == "log"),
+        matches!(first_failure(&report)?, FailureReason::Runtime(reason) if reason.contains("`log` is not granted by policy")),
         "got: {:?}",
         report.failures
     );
@@ -106,15 +97,15 @@ fn policy_can_narrow_the_requested_parameters() -> TestResult {
         "name = \"probe\"\n\n[capabilities.network]\nhosts = [\"allowed.example\", \"evil.example\"]\n",
         r#"return fetch(input)"#,
     )?;
-    let mut registry = registry().with_policy(Rules::deny_all().allow_with(
+    let mut registry = offering().with_policy(Rules::deny_all().allow_with(
         "network",
         |_request: &CapabilityRequest| {
-            let mut narrowed = toml::Table::new();
+            let mut narrowed = BTreeMap::new();
             narrowed.insert(
                 "hosts".to_string(),
-                toml::Value::Array(vec![toml::Value::String("allowed.example".to_string())]),
+                Value::List(vec![Value::Str("allowed.example".to_string())]),
             );
-            Decision::GrantWith(narrowed)
+            Decision::GrantWith(Value::Map(narrowed))
         },
     ));
 
@@ -123,13 +114,13 @@ fn policy_can_narrow_the_requested_parameters() -> TestResult {
     fs::write(root.path().join("probe").join("init.lua"), root_source)?;
     registry.load_dir(root.path())?;
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(
-        probe.instance().run("allowed.example".to_string())?,
-        "fetched allowed.example"
-    );
+    assert_eq!(run(&registry, "allowed.example")?, "fetched allowed.example");
 
-    let Err(error) = probe.instance().run("evil.example".to_string()) else {
+    let Err(error) = registry.call(
+        "probe",
+        "run",
+        &[Value::Str("evil.example".to_string())],
+    ) else {
         return Err("the narrowed grant should refuse the host policy removed".into());
     };
     assert!(error.to_string().contains("not granted"), "got: {error}");
@@ -142,11 +133,11 @@ fn an_unknown_capability_fails_the_plugin() -> TestResult {
         "name = \"probe\"\n\n[capabilities.telepathy]\n",
         r#"return "x""#,
     )?;
-    let mut registry = registry().with_policy(Rules::deny_all().allow("telepathy"));
+    let mut registry = offering().with_policy(Rules::deny_all().allow("telepathy"));
     let report = registry.load_dir(root.path())?;
 
     assert!(
-        matches!(first_failure(&report)?, FailureReason::UnknownCapability(name) if name == "telepathy"),
+        matches!(first_failure(&report)?, FailureReason::Runtime(reason) if reason.contains("`telepathy`") && reason.contains("does not offer")),
         "got: {:?}",
         report.failures
     );
@@ -160,13 +151,12 @@ fn an_optional_capability_is_skipped_when_denied() -> TestResult {
         r#"return type(log)"#,
     )?;
     // No policy: `log` is denied, but optional, so the plugin still loads.
-    let mut registry = registry();
+    let mut registry = offering();
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run(String::new())?, "nil");
-    assert_eq!(probe.granted_capabilities().count(), 0);
+    assert_eq!(run(&registry, "")?, "nil");
+    assert_eq!(registry.get("probe").map(|p| p.granted_capabilities().count()), Some(0));
     Ok(())
 }
 
@@ -176,12 +166,12 @@ fn the_reserved_optional_key_never_reaches_the_provider() -> TestResult {
         "name = \"probe\"\n\n[capabilities.network]\nhosts = [\"a.example\"]\noptional = true\n",
         r#"return network("a.example")"#,
     )?;
-    let mut registry = registry().with_policy(Rules::deny_all().allow_with(
+    let mut registry = offering().with_policy(Rules::deny_all().allow_with(
         "network",
         |request: &CapabilityRequest| {
             assert!(request.optional, "optional should be parsed out");
             assert!(
-                !request.params.contains_key("optional"),
+                matches!(&request.params, Value::Map(params) if !params.contains_key("optional")),
                 "optional should be stripped"
             );
             Decision::Grant
@@ -189,8 +179,7 @@ fn the_reserved_optional_key_never_reaches_the_provider() -> TestResult {
     ));
     registry.load_dir(root.path())?;
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run(String::new())?, "fetched a.example");
+    assert_eq!(run(&registry, "")?, "fetched a.example");
     Ok(())
 }
 
@@ -200,7 +189,7 @@ fn granted_capabilities_are_introspectable() -> TestResult {
         "name = \"probe\"\n\n[capabilities.log]\n\n[capabilities.network]\nhosts = []\n",
         r#"return "x""#,
     )?;
-    let mut registry = registry().with_policy(Rules::deny_all().allow("log").allow("network"));
+    let mut registry = offering().with_policy(Rules::deny_all().allow("log").allow("network"));
     registry.load_dir(root.path())?;
 
     let probe = registry.get("probe").ok_or("probe should load")?;
@@ -215,13 +204,10 @@ fn revoking_unbinds_a_live_capability() -> TestResult {
         "name = \"probe\"\n\n[capabilities.log]\n",
         r#"if log == nil then return "revoked" end return log(input)"#,
     )?;
-    let mut registry = registry().with_policy(Rules::deny_all().allow("log"));
+    let mut registry = offering().with_policy(Rules::deny_all().allow("log"));
     registry.load_dir(root.path())?;
 
-    {
-        let probe = registry.get("probe").ok_or("probe should load")?;
-        assert_eq!(probe.instance().run("hi".to_string())?, "logged: hi");
-    }
+    assert_eq!(run(&registry, "hi")?, "logged: hi");
 
     assert!(registry.revoke("probe", "log")?);
     assert!(
@@ -229,9 +215,8 @@ fn revoking_unbinds_a_live_capability() -> TestResult {
         "a second revoke is a no-op"
     );
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run("hi".to_string())?, "revoked");
-    assert_eq!(probe.granted_capabilities().count(), 0);
+    assert_eq!(run(&registry, "hi")?, "revoked");
+    assert_eq!(registry.get("probe").map(|p| p.granted_capabilities().count()), Some(0));
     Ok(())
 }
 
@@ -251,12 +236,11 @@ fn a_submodule_sees_its_plugins_capabilities() -> TestResult {
         "return { shout = function(text) return log(text:upper()) end }\n",
     )?;
 
-    let mut registry = registry().with_policy(Rules::deny_all().allow("log"));
+    let mut registry = offering().with_policy(Rules::deny_all().allow("log"));
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
-    assert_eq!(probe.instance().run("hi".to_string())?, "logged: HI");
+    assert_eq!(run(&registry, "hi")?, "logged: HI");
     Ok(())
 }
 
@@ -286,13 +270,12 @@ fn require_ignores_plugin_controlled_search_paths() -> TestResult {
         &probe_source(&body),
     )?;
 
-    let mut registry = registry().with_policy(Rules::deny_all());
+    let mut registry = offering().with_policy(Rules::deny_all());
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
 
-    let probe = registry.get("probe").ok_or("probe should load")?;
     assert_eq!(
-        probe.instance().run("hi".to_string())?,
+        run(&registry, "hi")?,
         "blocked",
         "a plugin-set package.path must not let require reach outside its directory"
     );
@@ -316,13 +299,13 @@ fn audit_reports_requests_without_running_anything() -> TestResult {
         "error('audit must not execute plugin code')\n",
     )?;
 
-    let registry = registry().with_policy(Rules::deny_all().allow("log"));
+    let registry = offering().with_policy(Rules::deny_all().allow("log"));
     let audit = registry.audit(root.path())?;
 
     assert_eq!(audit.plugins.len(), 2);
     let unsatisfiable: Vec<&str> = audit
         .unsatisfiable()
-        .map(|request| request.name.as_str())
+        .map(|request| request.capability.as_str())
         .collect();
     assert_eq!(unsatisfiable, ["telepathy"]);
     assert!(audit.offered.contains(&"network".to_string()));
@@ -332,13 +315,10 @@ fn audit_reports_requests_without_running_anything() -> TestResult {
 #[test]
 fn audit_lists_ambient_globals_alongside_declarations() -> TestResult {
     let root = single("name = \"probe\"\n", r#"return "x""#)?;
-    let registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
-        .with_setup(|host| {
-            host.ambient("HOST_VERSION", |runtime| {
-                with_lua(runtime, |lua| lua.globals().set("HOST_VERSION", "1.0"))
-            });
-            Ok(())
-        });
+    let registry = registry().with_setup(|host| {
+        host.ambient("HOST_VERSION", Value::Str("1.0".to_string()));
+        Ok(())
+    });
 
     let audit = registry.audit(root.path())?;
     // Ambient values reach a plugin whether or not it declared anything.

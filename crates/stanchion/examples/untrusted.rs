@@ -5,73 +5,64 @@
 //! cargo run -p stanchion --features lua54,vendored,registry --example untrusted
 //! ```
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use stanchion::registry::{CapabilityRequest, Decision, Registry, Rules, Sandbox, toml};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table, Value};
-
-#[lua_class]
-pub trait Task {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self) -> Result<String>;
-}
+use stanchion::registry::{
+    CapabilityCall, CapabilityRequest, Decision, Registry, Rules, Value,
+};
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
 
 fn plugin_root() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/untrusted"))
 }
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let mut registry: Registry<TaskClass> = Registry::isolated(
-        Lua::new(),
-        // No `io`, no `os`, and a ceiling on both memory and per-call work.
-        Sandbox::restricted()
-            .memory_limit(8 * 1024 * 1024)
-            .instruction_limit(200_000),
-    )
-    .with_setup(|host| {
-        // The host offers `kv`; the policy below decides who actually gets it.
-        host.capability("kv", |runtime, grant| {
-            // The approved namespace is baked into the closure, so a plugin cannot
-            // widen it at call time — there is no parameter left to tamper with.
-            let namespace: String = grant.get_or_default("namespace");
-            let state = runtime
-                .lua_state()
-                .ok_or_else(|| stanchion_abi::Error::Config("`kv` needs a Lua runtime".into()))?;
-            let lua = state
-                .lock()
-                .map_err(|_| stanchion_abi::Error::Config("the Lua state is poisoned".into()))?;
-            let kv = lua
-                .create_function(move |_, key: String| Ok(format!("{namespace}/{key}")))
-                .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
-            // A function crosses the ABI by being parked in its cache.
-            Ok(stanchion_abi::value::lua::lua_to_abi(
-                &lua,
-                &Value::Function(kv),
-            ))
-        });
-        Ok(())
-    })
-    .with_policy(
-        Rules::deny_all().allow_with("kv", |request: &CapabilityRequest| {
-            // The plugin asked for `tenant-7`. The host grants a namespace of its own
-            // choosing instead: a policy that can only say yes or no is a rubber stamp.
-            let mut narrowed = toml::Table::new();
-            narrowed.insert(
-                "namespace".to_string(),
-                toml::Value::String(format!("sandboxed/{}", request.plugin)),
-            );
-            Decision::GrantWith(narrowed)
-        }),
-    );
+    let mut registry = Registry::new()
+        .with_runtime(Box::new(
+            LuaBackend::isolated(
+                // No `io`, no `os`, and a ceiling on both memory and per-call work.
+                Sandbox::restricted()
+                    .memory_limit(8 * 1024 * 1024)
+                    .instruction_limit(200_000),
+            ),
+        ))
+        .with_setup(|host| {
+            // The host offers `kv`; the policy below decides who actually gets it.
+            host.capability("kv", |call: &CapabilityCall| {
+                // The approved namespace travels in the grant, so a plugin cannot
+                // widen it at call time — there is no parameter left to tamper with.
+                let namespace: String = call.grant.get_or_default("namespace");
+                let key = match call.args.first() {
+                    Some(Value::Str(key)) => key.clone(),
+                    _ => return Err("expected a key string".to_string()),
+                };
+                Ok(Value::Str(format!("{namespace}/{key}")))
+            });
+            Ok(())
+        })
+        .with_policy(
+            Rules::deny_all().allow_with("kv", |request: &CapabilityRequest| {
+                // The plugin asked for `tenant-7`. The host grants a namespace of its own
+                // choosing instead: a policy that can only say yes or no is a rubber stamp.
+                let mut narrowed = BTreeMap::new();
+                narrowed.insert(
+                    "namespace".to_string(),
+                    Value::Str(format!("sandboxed/{}", request.plugin)),
+                );
+                Decision::GrantWith(Value::Map(narrowed))
+            }),
+        );
 
     let report = registry.load_dir(plugin_root())?;
     println!("loaded: {:?}\n", report.loaded);
 
     for plugin in registry.plugins() {
         print!("{:<8} ", plugin.name());
-        match plugin.instance().run() {
-            Ok(text) => println!("{text}"),
+        match registry.call(plugin.name(), "run", &[]) {
+            Ok(Value::Str(text)) => println!("{text}"),
+            Ok(other) => println!("{other:?}"),
             // `looper` spins forever; the instruction limit turns that into an error
             // instead of a hung process.
             Err(err) => println!("stopped: {}", err.to_string().lines().next().unwrap_or("")),
@@ -88,20 +79,20 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // A capability can be taken back from a running plugin.
     registry.revoke("greedy", "kv")?;
     print!("after revoking kv:   ");
-    match registry
-        .get("greedy")
-        .ok_or("greedy should be loaded")?
-        .instance()
-        .run()
-    {
-        Ok(text) => println!("{text}"),
+    match registry.call("greedy", "run", &[]) {
+        Ok(Value::Str(text)) => println!("{text}"),
+        Ok(other) => println!("{other:?}"),
         Err(err) => println!("{}", err.to_string().lines().next().unwrap_or("")),
     }
 
     // Static review: what every plugin asks for, without running any of its code.
     println!("\n-- audit (nothing executed) --");
     for entry in registry.audit(plugin_root())?.plugins {
-        let wants: Vec<&str> = entry.requests.iter().map(|r| r.name.as_str()).collect();
+        let wants: Vec<&str> = entry
+            .requests
+            .iter()
+            .map(|r| r.capability.as_str())
+            .collect();
         println!("  {:<8} requests {wants:?}", entry.name);
     }
 

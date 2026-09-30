@@ -17,7 +17,7 @@ fn default_entry() -> String {
 }
 
 /// Which runtime backend a plugin uses.
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginType {
     /// A Lua plugin (the default), loaded via `mlua`.

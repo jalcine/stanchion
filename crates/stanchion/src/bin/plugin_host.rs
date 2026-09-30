@@ -48,7 +48,7 @@ fn run() -> Result<(), String> {
         BufReader::new(io::stdin()),
         io::BufWriter::new(io::stdout()),
     );
-    let mut registry = build_registry(&config, &channel)?;
+    let (mut registry, isolation) = build_registry(&config, &channel)?;
 
     // Loading up front keeps the client's first call fast, and surfaces a broken
     // plugin root before any request arrives.
@@ -61,7 +61,7 @@ fn run() -> Result<(), String> {
         }
     }
 
-    serve(&mut registry, &channel).map_err(|err| format!("serving: {err}"))
+    serve(&mut registry, &channel, isolation).map_err(|err| format!("serving: {err}"))
 }
 
 const USAGE: &str = "\

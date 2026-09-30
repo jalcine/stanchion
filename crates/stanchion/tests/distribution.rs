@@ -5,22 +5,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use mlua::{Lua, Result as LuaResult};
 use stanchion::dist::index::{DirectoryIndex, Freshness, PluginReleases, Release};
 use stanchion::dist::install::{PluginSource, SourceError};
 use stanchion::dist::package::{self, Limits};
 use stanchion::dist::{IndexError, Installer, PluginIndex};
-use stanchion::registry::{DirectoryDigest, LockError, Lockfile, Registry, Sandbox};
-use stanchion_lua::lua_class;
+use stanchion::registry::{DirectoryDigest, LockError, Lockfile, Registry};
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-#[lua_class]
-pub trait Greeter {
-    fn new(config: mlua::Table, deps: mlua::Table) -> LuaResult<Self>;
-    fn greet(&self) -> LuaResult<String>;
-}
 
 /// Unwraps the error from something that was supposed to fail.
 ///
@@ -301,8 +295,8 @@ fn an_install_pins_and_the_registry_then_refuses_anything_else() -> TestResult {
     assert!(root.join("greeter/init.lua").is_file());
 
     // The pinned plugin loads.
-    let mut registry: Registry<GreeterClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted()).with_lockfile(lockfile.clone());
+    let mut registry: Registry =
+        Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted()))).with_lockfile(lockfile.clone());
     let report = registry.load_dir(&root)?;
     assert_eq!(
         report.loaded,
@@ -316,8 +310,8 @@ fn an_install_pins_and_the_registry_then_refuses_anything_else() -> TestResult {
         root.join("greeter/init.lua"),
         GREETER.replace("hello", "pwned"),
     )?;
-    let mut registry: Registry<GreeterClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted()).with_lockfile(lockfile);
+    let mut registry: Registry =
+        Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted()))).with_lockfile(lockfile);
     let report = registry.load_dir(&root)?;
     assert!(
         report.loaded.is_empty(),
@@ -337,8 +331,8 @@ fn an_unpinned_plugin_is_refused_once_a_lockfile_exists() -> TestResult {
         GREETER,
     )?;
 
-    let mut registry: Registry<GreeterClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted()).with_lockfile(Lockfile::new());
+    let mut registry: Registry =
+        Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted()))).with_lockfile(Lockfile::new());
     let report = registry.load_dir(&root)?;
     assert!(report.loaded.is_empty());
 

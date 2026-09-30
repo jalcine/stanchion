@@ -31,7 +31,7 @@ use sigstore::bundle::Bundle;
 use sigstore::bundle::verify::VerificationPolicy;
 use sigstore::bundle::verify::blocking::Verifier;
 
-use stanchion_registry::signature::{
+use stanchion_abi::signature::{
     BUNDLE_FILE, DirectoryDigest, PluginVerifier, Signer, VerifyError,
 };
 

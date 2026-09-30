@@ -11,23 +11,16 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use stanchion::registry::{
-    Decision, DirectoryDigest, FailureReason, PluginVerifier, Registry, Rules, SIGNATURE_FILE,
-    Sandbox, Signer, VerifyError,
+    Decision, DirectoryDigest, FailureReason, PluginVerifier, Registry, Revocations, Rules,
+    SIGNATURE_FILE, Signer, Value, VerifyError,
 };
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
+use common::{probe_source, write_plugin};
 use tempfile::TempDir;
-
-use common::lua_function;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-#[lua_class]
-pub trait Probe {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self, input: String) -> Result<String>;
-}
 
 /// Trusts a `plugin.sig` whose contents are the expected root digest in hex, and
 /// records every digest it was asked about.
@@ -75,22 +68,6 @@ impl PluginVerifier for StubVerifier {
     }
 }
 
-fn probe_source(body: &str) -> String {
-    format!(
-        "local P = {{}}\nP.__index = P\n\
-         function P.new(config, deps) return setmetatable({{}}, P) end\n\
-         function P:run(input)\n  {body}\nend\nreturn P\n"
-    )
-}
-
-fn write_plugin(root: &Path, name: &str, manifest: &str, source: &str) -> TestResult {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join("plugin.toml"), manifest)?;
-    fs::write(dir.join("init.lua"), source)?;
-    Ok(())
-}
-
 /// Signs a plugin directory by writing its current digest into `plugin.sig`.
 fn sign(dir: &Path) -> TestResult {
     let digest = DirectoryDigest::compute(dir)?;
@@ -102,6 +79,13 @@ fn one_plugin(manifest: &str, body: &str) -> Fallible<TempDir> {
     let root = tempfile::tempdir()?;
     write_plugin(root.path(), "probe", manifest, &probe_source(body))?;
     Ok(root)
+}
+
+fn run_probe(registry: &Registry, name: &str) -> Fallible<String> {
+    match registry.call(name, "run", &[Value::Str(String::new())])? {
+        Value::Str(text) => Ok(text),
+        other => Err(format!("expected a string, got {other:?}").into()),
+    }
 }
 
 fn first_failure(report: &stanchion::registry::LoadReport) -> Fallible<&FailureReason> {
@@ -161,7 +145,7 @@ fn a_valid_signature_yields_a_verified_signer() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
     sign(&root.path().join("probe"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"))
         .require_signatures(true);
     let report = registry.load_dir(root.path())?;
@@ -182,7 +166,7 @@ fn tampering_after_signing_is_caught() -> TestResult {
     // Same manifest, different code.
     fs::write(dir.join("init.lua"), probe_source(r#"return "tampered""#))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"));
     let report = registry.load_dir(root.path())?;
 
@@ -199,7 +183,7 @@ fn tampering_after_signing_is_caught() -> TestResult {
 fn require_signatures_rejects_an_unsigned_plugin() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"))
         .require_signatures(true);
     let report = registry.load_dir(root.path())?;
@@ -216,7 +200,7 @@ fn require_signatures_rejects_an_unsigned_plugin() -> TestResult {
 fn without_require_signatures_an_unsigned_plugin_loads_as_unsigned() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"));
     let report = registry.load_dir(root.path())?;
     assert!(report.is_clean(), "failures: {:?}", report.failures);
@@ -237,24 +221,24 @@ fn provenance_tiers_capability_grants() -> TestResult {
         if signed {
             sign(&root.path().join("probe"))?;
         }
-        let mut registry: Registry<ProbeClass> =
-            Registry::isolated(Lua::new(), Sandbox::restricted())
+        let mut registry: Registry =
+            Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
                 .with_verifier(StubVerifier::new("repo:acme/plugins"))
                 .with_setup(|host| {
-                    host.capability("network", |runtime, _grant| {
-                        lua_function(runtime, |_, ()| Ok(()))
+                    host.capability("network", |_call: &stanchion::registry::CapabilityCall| {
+                        Ok(Value::Nil)
                     });
                     Ok(())
                 })
                 .with_policy(Rules::deny_all().allow_with("network", |request| {
-                    match request.signer().identity() {
-                        Some(identity) if identity.starts_with("repo:acme/") => Decision::Grant,
-                        _ => Decision::deny("network requires a first-party signature"),
+                    if request.signer.starts_with("repo:acme/") {
+                        Decision::Grant
+                    } else {
+                        Decision::deny("network requires a first-party signature")
                     }
                 }));
         registry.load_dir(root.path())?;
-        let probe = registry.get("probe").ok_or("probe should load")?;
-        Ok(probe.instance().run(String::new())?)
+        run_probe(&registry, "probe")
     };
 
     assert_eq!(
@@ -280,8 +264,8 @@ fn an_untrusted_signer_is_distinguished_from_a_bad_signature() -> TestResult {
     }
 
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted()).with_verifier(AlwaysUntrusted);
+    let mut registry: Registry =
+        Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted()))).with_verifier(AlwaysUntrusted);
     let report = registry.load_dir(root.path())?;
 
     assert!(
@@ -331,7 +315,7 @@ fn a_submodule_altered_after_verification_is_refused() -> TestResult {
         }
     }
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(TamperingVerifier {
             target: dir.join("helper.lua"),
         });
@@ -367,7 +351,7 @@ fn audit_reports_provenance_without_running_code() -> TestResult {
     )?;
     sign(&root.path().join("signed"))?;
 
-    let registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"));
     let audit = registry.audit(root.path())?;
 
@@ -387,8 +371,6 @@ fn audit_reports_provenance_without_running_code() -> TestResult {
 // Revocation: the mutable half of provenance.
 // ---------------------------------------------------------------------------
 
-use stanchion::registry::Revocations;
-
 #[test]
 fn a_revoked_build_is_refused_although_its_signature_is_valid() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
@@ -397,7 +379,7 @@ fn a_revoked_build_is_refused_although_its_signature_is_valid() -> TestResult {
 
     // Take the digest the host will compute, and deny exactly that build.
     let digest = DirectoryDigest::compute(&dir)?;
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"))
         .with_revocations(Revocations::new().deny_digest(digest.hex(), "CVE-2026-1234"));
 
@@ -418,7 +400,7 @@ fn revoking_an_identity_refuses_everything_it_signed() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
     sign(&root.path().join("probe"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"))
         .with_revocations(Revocations::new().deny_identity("repo:acme/plugins", "key compromise"));
 
@@ -434,7 +416,7 @@ fn an_unrelated_revocation_does_not_block_a_plugin() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
     sign(&root.path().join("probe"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"))
         .with_revocations(
             Revocations::new()
@@ -452,7 +434,7 @@ fn a_digest_denylist_works_without_any_verifier() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
     let digest = DirectoryDigest::compute(&root.path().join("probe"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_revocations(Revocations::new().deny_digest(digest.hex(), "known bad"));
 
     let report = registry.load_dir(root.path())?;
@@ -481,8 +463,8 @@ fn a_revocation_list_loads_from_toml() -> TestResult {
     let list = Revocations::load(&list_path)?;
     assert_eq!(list.entries().len(), 2);
 
-    let mut registry: Registry<ProbeClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted()).with_revocations(list);
+    let mut registry: Registry =
+        Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted()))).with_revocations(list);
     let report = registry.load_dir(root.path())?;
     assert!(
         first_failure(&report)?
@@ -502,7 +484,7 @@ fn a_prefixed_revocation_digest_still_matches() -> TestResult {
     let dir = root.path().join("probe");
     let digest = DirectoryDigest::compute(&dir)?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_revocations(
             Revocations::new().deny_digest(format!("sha256:{}", digest.hex()), "prefixed form"),
         );
@@ -574,7 +556,7 @@ fn a_revocation_arriving_after_load_unloads_the_running_plugin() -> TestResult {
     sign(&root.path().join("probe"))?;
     sign(&root.path().join("other"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"));
     assert!(registry.load_dir(root.path())?.is_clean());
     assert_eq!(registry.len(), 2);
@@ -606,7 +588,7 @@ fn a_revocation_arriving_after_load_unloads_the_running_plugin() -> TestResult {
         .get("other")
         .ok_or("`other` should still be loaded")?;
     assert_eq!(other.name(), "other");
-    assert_eq!(other.instance().run(String::new())?, "fine");
+    assert_eq!(run_probe(&registry, "other")?, "fine");
     Ok(())
 }
 
@@ -615,7 +597,7 @@ fn an_identity_revocation_after_load_needs_no_digest() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
     sign(&root.path().join("probe"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"));
     assert!(registry.load_dir(root.path())?.is_clean());
 
@@ -641,7 +623,7 @@ fn an_unrelated_revocation_leaves_a_loaded_plugin_alone() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
     sign(&root.path().join("probe"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"));
     assert!(registry.load_dir(root.path())?.is_clean());
 
@@ -660,7 +642,7 @@ fn the_new_list_also_governs_later_loads() -> TestResult {
     let root = one_plugin("name = \"probe\"\n", r#"return "ok""#)?;
     sign(&root.path().join("probe"))?;
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
         .with_verifier(StubVerifier::new("repo:acme/plugins"));
     assert!(registry.load_dir(root.path())?.is_clean());
     assert_eq!(
@@ -695,15 +677,15 @@ fn removing_a_plugin_keeps_the_rest_addressable() -> TestResult {
         )?;
     }
 
-    let mut registry: Registry<ProbeClass> = Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry: Registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())));
     assert!(registry.load_dir(root.path())?.is_clean());
 
     let removed = registry.remove("a")?;
     assert_eq!(removed.name(), "a");
     assert_eq!(registry.len(), 2);
     for name in ["b", "c"] {
-        let plugin = registry.get(name).ok_or("the plugin should remain")?;
-        assert_eq!(plugin.instance().run(String::new())?, name);
+        registry.get(name).ok_or("the plugin should remain")?;
+        assert_eq!(run_probe(&registry, name)?, name);
     }
     assert!(registry.remove("a").is_err());
     Ok(())

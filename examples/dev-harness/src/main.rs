@@ -14,15 +14,9 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
-use stanchion_registry::{DirectoryDigest, Registry, Sandbox};
-
-#[lua_class]
-pub trait Counter {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn describe(&self) -> Result<String>;
-}
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
+use stanchion_registry::{DirectoryDigest, Registry, Value};
 
 fn main() -> std::result::Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -34,8 +28,9 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
         .ok_or("usage: harness-watch <plugins-dir> <name>")?;
     let root = PathBuf::from(root);
 
-    let mut registry: Registry<CounterClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(
+        Sandbox::restricted(),
+    )));
     let report = registry.load_dir(&root)?;
     for failure in &report.failures {
         println!("load failed: {} — {}", failure.name, failure.reason);
@@ -69,10 +64,14 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
 
 /// Calls the plugin and prints what it says. The point is what this proves after
 /// a reload: the new code answering, or the old code surviving a refused one.
-fn smoke(registry: &Registry<CounterClass>, name: &str) -> std::result::Result<(), Box<dyn Error>> {
+fn smoke(registry: &Registry, name: &str) -> std::result::Result<(), Box<dyn Error>> {
     let plugin = registry
         .get(name)
         .ok_or_else(|| format!("`{name}` is not loaded"))?;
-    println!("{} says: {}", plugin.name(), plugin.instance().describe()?);
+    match registry.call(name, "describe", &[]) {
+        Ok(Value::Str(text)) => println!("{} says: {text}", plugin.name()),
+        Ok(other) => println!("{} answered unexpectedly: {other:?}", plugin.name()),
+        Err(err) => println!("{} stopped: {err}", plugin.name()),
+    }
     Ok(())
 }

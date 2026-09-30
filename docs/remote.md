@@ -64,10 +64,10 @@ outlives the buffer it arrived in.
 
 Calls are **dynamically typed**, and that is forced rather than chosen: a host binary
 is compiled before anyone writes a plugin, so it cannot know a `#[lua_class]` trait.
-Plugins load as `DynClass` — any table with a constructor — and methods resolve by name
+Plugins load dynamically — any table with a constructor — and methods resolve by name
 at call time. Arguments and results cross as JSON, converted at the Lua boundary by
-`mlua`'s serde support. In-process hosting keeps the typed contract; use it when you
-can.
+the backend. Direct in-process use of `stanchion-lua` keeps the typed contract; use
+it when you can.
 
 ## Calling back into your application
 

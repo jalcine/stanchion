@@ -13,17 +13,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use stanchion::registry::{
-    CapabilityRequest, Decision, DirectoryDigest, HostSetup, PluginVerifier, Registry, Revocations,
-    Rules, Sandbox, Signer, VerifyError,
+    CapabilityCall, CapabilityRequest, Decision, DirectoryDigest, HostSetup, PluginVerifier,
+    Registry, Revocations, Rules, Signer, Value, VerifyError,
 };
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table, Value};
-
-#[lua_class]
-pub trait Task {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn run(&self) -> Result<String>;
-}
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
 
 /// Trusts whatever identity a `plugin.sig` file names.
 ///
@@ -57,23 +51,15 @@ fn plugin_root() -> PathBuf {
 }
 
 /// Everything the host offers: a `kv` capability whose approved namespace is baked
-/// into the value, so a plugin cannot widen it at call time.
-fn offer_kv(host: &mut HostSetup) -> Result<()> {
-    host.capability("kv", |runtime, grant| {
-        let namespace: String = grant.get_or_default("namespace");
-        let state = runtime
-            .lua_state()
-            .ok_or_else(|| stanchion_abi::Error::Config("`kv` needs a Lua runtime".into()))?;
-        let lua = state
-            .lock()
-            .map_err(|_| stanchion_abi::Error::Config("the Lua state is poisoned".into()))?;
-        let kv = lua
-            .create_function(move |_, key: String| Ok(format!("{namespace}/{key}")))
-            .map_err(|err| stanchion_abi::Error::Config(err.to_string()))?;
-        Ok(stanchion_abi::value::lua::lua_to_abi(
-            &lua,
-            &Value::Function(kv),
-        ))
+/// into the grant, so a plugin cannot widen it at call time.
+fn offer_kv(host: &mut HostSetup) -> std::result::Result<(), String> {
+    host.capability("kv", |call: &CapabilityCall| {
+        let namespace: String = call.grant.get_or_default("namespace");
+        let key = match call.args.first() {
+            Some(Value::Str(key)) => key.clone(),
+            _ => return Err("expected a key string".to_string()),
+        };
+        Ok(Value::Str(format!("{namespace}/{key}")))
     });
     Ok(())
 }
@@ -82,18 +68,25 @@ fn offer_kv(host: &mut HostSetup) -> Result<()> {
 /// than refused the load.
 fn first_party_kv() -> Rules {
     Rules::deny_all().allow_with("kv", |request: &CapabilityRequest| {
-        match request.signer().identity() {
-            Some(identity) if identity.starts_with("repo:acme/") => Decision::Grant,
-            Some(identity) => Decision::deny(format!(
-                "`kv` needs a first-party signature, not {identity}"
-            )),
-            None => Decision::deny("`kv` needs a first-party signature"),
+        if request.signer.starts_with("repo:acme/") {
+            Decision::Grant
+        } else if request.signer == "unsigned" {
+            Decision::deny("`kv` needs a first-party signature")
+        } else {
+            Decision::deny(format!(
+                "`kv` needs a first-party signature, not {}",
+                request.signer
+            ))
         }
     })
 }
 
+fn restricted() -> Registry {
+    Registry::new().with_runtime(Box::new(LuaBackend::isolated(Sandbox::restricted())))
+}
+
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let mut registry: Registry<TaskClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut registry = restricted()
         .with_setup(offer_kv)
         .with_policy(first_party_kv())
         .with_verifier(FileVerifier);
@@ -114,8 +107,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             plugin.name(),
             plugin.signer().to_string()
         );
-        match plugin.instance().run() {
-            Ok(text) => println!("{text}"),
+        match registry.call(plugin.name(), "run", &[]) {
+            Ok(Value::Str(text)) => println!("{text}"),
+            Ok(other) => println!("{other:?}"),
             Err(err) => println!("stopped: {}", first_line(&err.to_string())),
         }
     }
@@ -126,7 +120,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Requiring signatures turns the gradient into a cliff: the unsigned plugin is
     // refused outright instead of loading degraded.
-    let mut strict: Registry<TaskClass> = Registry::isolated(Lua::new(), Sandbox::restricted())
+    let mut strict = restricted()
         .with_setup(offer_kv)
         .with_policy(first_party_kv())
         .with_verifier(FileVerifier)

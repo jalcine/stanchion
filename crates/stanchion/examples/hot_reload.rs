@@ -14,17 +14,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use stanchion::registry::Registry;
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
-
-/// Every plugin in this bus implements this.
-#[lua_class]
-pub trait Handler {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn name(&self) -> Result<String>;
-    fn handle(&self, kind: String, payload: String) -> Result<String>;
-}
+use stanchion::registry::{Registry, Value};
+use stanchion_lua::backend::LuaBackend;
 
 const FORMATTER_V2: &str = r#"
 local Formatter = {}
@@ -69,13 +60,23 @@ fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn counter_line(registry: &Registry<HandlerClass>) -> String {
-    for outcome in registry.dispatch(|plugin| plugin.handle("deploy".into(), "v1".into())) {
-        if outcome.name == "counter" {
-            return outcome
-                .result
-                .map_err(|err| err.to_string())
-                .unwrap_or_else(|err| format!("counter failed: {}", first_line(&err)));
+fn counter_line(registry: &Registry) -> String {
+    for outcome in registry.dispatch(
+        "handle",
+        &[
+            Value::Str("deploy".into()),
+            Value::Str("v1".into()),
+        ],
+    ) {
+        if outcome.plugin == "counter" {
+            return match outcome.value {
+                Some(Value::Str(text)) => text,
+                Some(other) => format!("counter answered unexpectedly: {other:?}"),
+                None => format!(
+                    "counter failed: {}",
+                    first_line(outcome.error.as_deref().unwrap_or("unknown"))
+                ),
+            };
         }
     }
     "counter produced nothing".to_string()
@@ -87,7 +88,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     copy_dir(&fixture_root().join("formatter"), &root.join("formatter"))?;
     copy_dir(&fixture_root().join("counter"), &root.join("counter"))?;
 
-    let mut registry: Registry<HandlerClass> = Registry::new(Lua::new());
+    let mut registry =
+        Registry::new().with_runtime(Box::new(LuaBackend::shared()));
     let report = registry.load_dir(&root)?;
     println!("loaded: {:?}", report.loaded);
 

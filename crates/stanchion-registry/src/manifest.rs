@@ -1,8 +1,8 @@
 //! Plugin manifest discovery and dependency resolution.
 //!
-//! The manifest *types* live in [`stanchion_abi`] so a WASM-only build can read a
-//! manifest without linking Lua; the discovery and ordering here report into this
-//! crate's richer error types, which carry Lua variants.
+//! The manifest *types* live in [`stanchion_abi`] so backends can read one
+//! without linking each other; the discovery and ordering here report into
+//! this crate's richer error types.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -29,7 +29,7 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest, FailureReason> {
     // Catch a malformed requirement at discovery rather than at load.
     #[cfg(feature = "luarocks")]
     for (rock, requirement) in &manifest.rocks {
-        crate::rocks::Requirement::parse(requirement)
+        stanchion_abi::rocks::Requirement::parse(requirement)
             .map_err(|err| FailureReason::Manifest(format!("rock `{rock}`: {err}")))?;
     }
 

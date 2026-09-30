@@ -3,10 +3,10 @@
 Using stanchion from Python, Ruby and Kotlin today, with Swift generated but not yet
 run and a JavaScript binding still planned.
 
-The Rust API's `Registry<C: LuaClass>` is generic over a contract `#[lua_class]` derives
-from a trait at compile time. No foreign language can supply one, so the bindings take
-the same path [out-of-process hosting](remote.md) already takes: plugins load as
-`DynClass` — any table with a constructor — and methods resolve by name at call time.
+A `#[lua_class]` trait derives a typed contract at compile time. No foreign
+language can supply one, so the bindings take the same path
+[out-of-process hosting](remote.md) already takes: plugins load dynamically —
+any table with a constructor — and methods resolve by name at call time.
 
 `stanchion-ffi` is the seam every binding sits on. It carries no binding dependencies
 of its own, so nothing `pyo3` or `uniffi` finds convenient can leak into the shape the

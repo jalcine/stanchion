@@ -13,10 +13,33 @@ use crate::value::Value;
 /// A loaded plugin instance, callable by exported function/method name.
 pub trait PluginInstance: Send + Sync {
     /// Calls a method (or exported function) on this plugin and returns the result.
+    ///
+    /// Budgets are enforced inside: each call gets a fresh allowance.
     fn call(&self, method: &str, args: &[Value]) -> Result<Value>;
+
+    /// Awaits a method on this plugin.
+    ///
+    /// The default runs [`call`](Self::call) synchronously. Backends whose
+    /// plugins can yield (e.g. Lua coroutines awaiting the host) override
+    /// this; sequential dispatch means concurrent calls never contend.
+    /// Boxed (rather than `async fn`) so the trait stays object-safe.
+    fn call_async(
+        &self,
+        method: &str,
+        args: &[Value],
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Value>> + Send + '_>,
+    > {
+        let owned_method = method.to_string();
+        let owned_args = args.to_vec();
+        Box::pin(async move { self.call(&owned_method, &owned_args) })
+    }
 
     /// A human-readable label for the runtime that produced this instance.
     fn runtime(&self) -> &str;
+
+    /// Backend-local downcasting (revocation, reload settling).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// A factory for one kind of plugin runtime.

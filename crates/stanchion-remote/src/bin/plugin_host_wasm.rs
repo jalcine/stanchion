@@ -44,7 +44,7 @@ fn run() -> Result<(), String> {
         BufReader::new(io::stdin()),
         io::BufWriter::new(io::stdout()),
     );
-    let mut registry = build_registry(&config, &channel)?;
+    let (mut registry, isolation) = build_registry(&config, &channel)?;
 
     if let Some(root) = &config.plugins {
         let report = registry
@@ -55,7 +55,7 @@ fn run() -> Result<(), String> {
         }
     }
 
-    serve(&mut registry, &channel).map_err(|err| format!("serving: {err}"))
+    serve(&mut registry, &channel, isolation).map_err(|err| format!("serving: {err}"))
 }
 
 const USAGE: &str = "\

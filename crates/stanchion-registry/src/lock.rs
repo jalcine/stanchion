@@ -35,7 +35,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::manifest::Manifest;
-use crate::signature::{DirectoryDigest, Signer};
+use stanchion_abi::signature::{DirectoryDigest, Signer};
 
 /// Name of the lockfile a host conventionally keeps beside its plugin root.
 pub const LOCK_FILE: &str = "stanchion.lock";

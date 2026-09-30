@@ -1,75 +1,57 @@
 //! Runtime-agnostic interface for plugin execution.
 //!
-//! Defines the [`Runtime`] trait that replaces direct `mlua::Lua`
-//! usage inside `stanchion-registry`. Implemented by `stanchion-lua`
-//! (via [`LuaBackend`]/[`LuaInstance`]) and `stanchion-wasm`.
+//! [`PluginBackend`](crate::backend::PluginBackend) loads one plugin.
+//! [`Runtime`] loads and manages *groups* of plugins: dependency wiring,
+//! shared states, reload and capability revocation all need visibility
+//! beyond a single instance, so they live here. Hosts (e.g.
+//! `stanchion-registry`) program against this trait and never touch a
+//! backend's native types.
 //!
-//! The registry holds a [`Box<dyn Runtime>`] and delegates all
-//! runtime-specific operations (load, call, verify, audit, budget)
-//! to it. This allows the registry to be runtime-agnostic while
-//! the concrete runtime implementations live in their respective
-//! crates.
+//! Per-call budgets are enforced inside
+//! [`PluginInstance::call`](crate::backend::PluginInstance::call), not
+//! here: each call gets a fresh allowance, so a long-lived plugin never
+//! exhausts a lifetime budget.
 
-use std::io::Write;
-use std::path::Path;
-
-use crate::backend::PluginInstance;
+use crate::backend::PluginBackend;
 use crate::error::Result;
-use crate::manifest::{Manifest, PluginType};
-use crate::value::Value;
+use crate::load::{GroupOutcome, LoadContext, LoadItem};
 
-#[cfg(feature = "lua")]
-use mlua;
-
-/// A runtime backend (Lua, Wasm, etc.) that can load, call, verify,
-/// audit and enforce budgets for plugins.
+/// A runtime backend (Lua, Wasm, etc.) managing the plugins it loaded.
 ///
-/// This trait replaces `&Lua` parameters in registry functions,
-/// enabling runtime-agnostic plugin management.
-pub trait Runtime: Send + Sync {
-    /// Loads a plugin from directory and returns an instance.
-    fn load(&self, manifest: &Manifest, dir: &Path) -> Result<Box<dyn PluginInstance>>;
-
-    /// Verifies plugin artifacts (manifest integrity, rocks, signatures).
-    fn verify(&self, manifest: &Manifest, dir: &Path) -> Result<()>;
-
-    /// Writes audit information to `log` (called before plugin execution).
-    fn audit(&self, log: &mut dyn Write) -> Result<()>;
-
-    /// Calls a method on a loaded plugin instance.
-    fn call(&self, instance: &dyn PluginInstance, method: &str, args: &[Value]) -> Result<Value>;
-
-    /// Gets remaining instruction budget for a plugin.
-    fn budget(&self, plugin_name: &str) -> Result<u64>;
-
-    /// Resets the instruction budget for a plugin.
-    fn reset_budget(&self, plugin_name: &str) -> Result<()>;
-
+/// One plugin failing never stops the others: group loads report per-plugin
+/// outcomes, and reload leaves the old instance in place on failure.
+pub trait Runtime: PluginBackend {
     /// Human-readable runtime name (e.g. `"lua"`, `"wasm"`).
     fn runtime_name(&self) -> &'static str;
 
-    /// The [`PluginType`] this runtime handles.
-    fn plugin_type(&self) -> PluginType;
-
-    /// Installs a capability function into the plugin environment.
+    /// Instantiates a verified group, wiring dependencies between members.
     ///
-    /// The runtime creates the appropriate callable (e.g. a Lua
-    /// function) and binds it in each plugin's state.
-    fn install_capability(
-        &self,
-        name: &str,
-        provider: &dyn crate::callback::CapabilityProvider,
-        grant: &crate::callback::Grant,
-    ) -> Result<()>;
+    /// `items` arrive in dependency order with entry bytes already bound to
+    /// their digests. Members that must share state (a dependency chain)
+    /// do; failures are reported per plugin in the returned outcomes.
+    fn load_group(&self, items: &[LoadItem], ctx: &LoadContext) -> Vec<GroupOutcome>;
 
-    /// Returns the underlying Lua state for Lua backends.
-    /// Returns `None` for non-Lua backends.
-    #[cfg(feature = "lua")]
-    fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
-        None
-    }
-    #[cfg(not(feature = "lua"))]
-    fn lua_state(&self) -> Option<std::sync::Arc<std::sync::Mutex<mlua::Lua>>> {
-        None
-    }
+    /// Re-reads one plugin, swapping in a fresh instance.
+    ///
+    /// On failure the old instance keeps serving; the error describes why
+    /// the new one did not take its place.
+    fn reload_plugin(
+        &self,
+        item: &LoadItem,
+        ctx: &LoadContext,
+    ) -> Result<Box<dyn crate::backend::PluginInstance>>;
+
+    /// Unbinds a granted capability from a live instance.
+    ///
+    /// Returns whether the instance held it. Code that already captured the
+    /// value keeps it, so this defangs a misbehaving plugin without
+    /// rewinding it.
+    fn revoke_capability(&self, instance: &dyn crate::backend::PluginInstance, capability: &str)
+    -> bool;
+
+    /// Forgets everything retained for `name`: states, proxies, budgets.
+    ///
+    /// Called after a plugin is removed so a later plugin reusing the name
+    /// starts clean instead of resurrecting the old state.
+    fn unload(&self, name: &str);
 }

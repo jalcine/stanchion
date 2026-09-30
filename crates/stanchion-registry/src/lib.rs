@@ -1,68 +1,47 @@
-//! A registry of Lua plugins, in one shared Lua state or one state per plugin.
+//! A registry of plugins, loaded through runtime backends.
 //!
-//! Plugins live in `<root>/<plugin>/plugin.toml` alongside their entry chunk. Each is
-//! evaluated as a [`LuaClass`] and constructed once, with its manifest's `[config]`
-//! table passed to the constructor:
+//! Plugins live in `<root>/<plugin>/plugin.toml` alongside their entry
+//! artifact. The registry discovers them, orders them by dependency,
+//! verifies provenance (signatures, revocations, lockfile), checks
+//! `[rocks]`, decides capabilities through [`Policy`], and hands each
+//! backend the verified plugins of its type. Backends instantiate and own
+//! all runtime state; this crate never touches a backend's native types —
+//! every boundary speaks [`stanchion_abi`] interfaces.
 //!
-//! ```lua
-//! local Greeter = {}
-//! Greeter.__index = Greeter
-//!
-//! function Greeter.new(config)
-//!   return setmetatable({ greeting = config.greeting }, Greeter)
-//! end
-//! ```
-//!
-//! # Isolation
-//!
-//! All plugins share one [`Lua`], so they share `require`d modules and host functions.
-//! Each chunk is evaluated with its own environment table whose `__index` is the real
-//! globals: a plugin **reads** globals normally but its **writes** stay local, so one
-//! plugin cannot redefine `string.format` for the others. Resource limits are a
-//! property of the whole state, not of a plugin — if you need per-plugin memory or
-//! instruction limits, you need one [`Lua`] per plugin instead.
+//! One plugin failing never stops the others: [`load_dir`](Registry::load_dir)
+//! reports both halves in [`LoadReport`] rather than returning at the first
+//! problem.
 
-mod capability;
-#[cfg(feature = "config")]
-pub mod config;
-pub mod dynamic;
 mod error;
 #[cfg(feature = "signatures")]
 pub mod lock;
 mod manifest;
-mod panics;
-mod runtime;
-#[cfg(feature = "signatures")]
-pub mod signature;
 pub mod upgrade;
-#[cfg(feature = "luarocks")]
-pub use stanchion_lua::rocks;
 
-pub use dynamic::{DynClass, DynInstance};
 pub use error::{FailureReason, LoadFailure, RegistryError};
 pub use manifest::{discover, read_manifest, resolve_order};
-pub use panics::Panicked;
 pub use stanchion_abi::manifest::{
     DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType,
 };
-pub use stanchion_abi::runtime::Runtime;
-/// Re-exported because [`Decision::GrantWith`] takes a `toml::Table`: a public API
-/// that names a foreign type has to hand you that type.
+/// Re-exported so hosts can read manifests without naming another dependency.
 pub use toml;
-
-pub use capability::{CapabilityRequest, Decision, Grant, HostSetup, OPTIONAL_KEY, Policy, Rules};
-#[cfg(feature = "config")]
-pub use config::{CapabilityConfig, HostConfig, SandboxConfig, SignatureConfig, load_config};
+pub use stanchion_abi::panics::Panicked;
+pub use stanchion_abi::runtime::Runtime;
+/// Re-exported capability vocabulary: the registry, hosts and policies all
+/// name the same types rather than three that drift.
+pub use stanchion_abi::{
+    CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Grant, HostSetup, Policy,
+    Rules, Value, OPTIONAL_KEY,
+};
 #[cfg(feature = "signatures")]
-pub use lock::{LOCK_FILE, LockError, LockedPlugin, Lockfile};
-#[cfg(feature = "signatures")]
-pub use signature::{
+pub use stanchion_abi::signature::{
     BUNDLE_FILE, DirectoryDigest, PluginVerifier, Revocation, Revocations, SIGNATURE_FILE, Signer,
     VerifyError,
 };
-/// Re-exported because [`Registry::isolated`] takes a [`Sandbox`] and
-/// [`Plugin::budget`] hands back a [`Budget`].
-pub use stanchion_lua::sandbox::{Budget, RESTRICTED_DENY_LIST, Sandbox};
+#[cfg(feature = "signatures")]
+pub use lock::{LOCK_FILE, LockError, LockedPlugin, Lockfile};
+#[cfg(feature = "luarocks")]
+pub use stanchion_abi::rocks;
 pub use upgrade::{Change, UpgradeReview};
 
 use std::collections::{HashMap, HashSet};
@@ -70,118 +49,28 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
-use mlua::{Lua, LuaSerdeExt, Table, Value};
-
-use stanchion_abi::value::lua::{FUNCTION_CACHE, abi_to_lua};
-use stanchion_lua::{LuaClass, LuaObject};
+use stanchion_abi::{GroupOutcome, LoadContext, LoadItem};
 
 /// Constructor looked up on a plugin's class table when none is configured.
 pub const DEFAULT_CONSTRUCTOR: &str = "new";
 
-/// Which plugins have to share a Lua state.
+/// A loaded plugin: its manifest and its live instance.
 ///
-/// Two plugins must share one exactly when a chain of `[dependencies]` connects them,
-/// because that chain is what carries Lua values between them. So the grouping is the
-/// connected components of the dependency graph, read as undirected: a dependency binds
-/// both ends.
-///
-/// Returns a component representative per plugin name. A dependency has to be present
-/// in the same load for the plugin to load at all, so a component is always resolved
-/// within one call and never has to join a state that is already running.
-fn dependency_components(manifests: &[Manifest]) -> HashMap<String, usize> {
-    // Union-find over manifest positions, with path halving. Plugin counts are small,
-    // so this is written to be obviously correct rather than to be fast.
-    let mut parent: Vec<usize> = (0..manifests.len()).collect();
-
-    fn find(parent: &mut [usize], mut node: usize) -> usize {
-        while let Some(&up) = parent.get(node) {
-            if up == node {
-                return node;
-            }
-            // Halve the path on the way up so repeated lookups stay cheap.
-            if let Some(&grand) = parent.get(up)
-                && let Some(slot) = parent.get_mut(node)
-            {
-                *slot = grand;
-            }
-            node = up;
-        }
-        node
-    }
-
-    let position: HashMap<&str, usize> = manifests
-        .iter()
-        .enumerate()
-        .map(|(at, manifest)| (manifest.name.as_str(), at))
-        .collect();
-
-    for (at, manifest) in manifests.iter().enumerate() {
-        for name in manifest.dependencies.keys() {
-            if let Some(&other) = position.get(name.as_str()) {
-                let (left, right) = (find(&mut parent, at), find(&mut parent, other));
-                if left != right
-                    && let Some(slot) = parent.get_mut(left)
-                {
-                    *slot = right;
-                }
-            }
-        }
-    }
-
-    // A representative only means anything once every union is done.
-    let mut root = HashMap::with_capacity(manifests.len());
-    for (at, manifest) in manifests.iter().enumerate() {
-        let representative = find(&mut parent, at);
-        root.insert(manifest.name.clone(), representative);
-    }
-    root
-}
-
-/// Key a plugin publishes its public surface under.
-pub const EXPORTS_KEY: &str = "exports";
-
-/// A plugin's published surface, behind a handle that survives reload.
-///
-/// Dependents receive `proxy`, an empty table whose metatable forwards reads and
-/// writes to the live exports table. Reloading the provider repoints the metatable,
-/// so every dependent sees the new surface without being rebuilt.
-#[derive(Clone)]
-struct Exports {
-    proxy: Table,
-    metatable: Table,
-}
-
-impl Exports {
-    /// Points the stable proxy at a freshly built exports table.
-    ///
-    /// Only `__index` (reads) is repointed. Writes are refused by the read-only
-    /// `__newindex` installed in [`Registry::make_proxy`], so a dependent cannot write
-    /// through the proxy into the provider's live table. See #32.
-    fn repoint(&self, table: Table) -> mlua::Result<()> {
-        self.metatable.set("__index", table)?;
-        Ok(())
-    }
-}
-
-/// A loaded plugin: its manifest and its constructed instance.
-pub struct Plugin<C: LuaClass> {
-    lua: Lua,
-    budget: Option<Budget>,
-    environment: Table,
+/// The instance is opaque — only its backend knows how to drive it. Use
+/// [`Registry::call`] and [`Registry::dispatch`] to reach it.
+pub struct LoadedPlugin {
+    manifest: Manifest,
+    instance: Box<dyn stanchion_abi::PluginInstance>,
     granted: Vec<String>,
-    group: Group,
     #[cfg(feature = "signatures")]
     signer: Signer,
     // Kept so a revocation list arriving after load can be applied without going back
     // to the filesystem, where the bytes may no longer be the ones that were verified.
     #[cfg(feature = "signatures")]
     digest: Option<DirectoryDigest>,
-    manifest: Manifest,
-    instance: C::Instance,
-    exports: Option<Exports>,
 }
 
-impl<C: LuaClass> Plugin<C> {
+impl LoadedPlugin {
     /// The plugin's manifest, including its `[config]` table and directory.
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
@@ -192,33 +81,9 @@ impl<C: LuaClass> Plugin<C> {
         &self.manifest.name
     }
 
-    /// The constructed instance, which implements the `#[lua_class]` trait.
-    pub fn instance(&self) -> &C::Instance {
-        &self.instance
-    }
-
-    /// The Lua state this plugin runs in.
-    ///
-    /// Under [`Isolation::Shared`] every plugin returns the same state; under
-    /// per-plugin isolation each returns its own.
-    pub fn lua(&self) -> &Lua {
-        &self.lua
-    }
-
-    /// This plugin's instruction allowance, when one is configured.
-    ///
-    /// Under [`Isolation::PerGroup`] the allowance belongs to the group, so every
-    /// member of a dependency chain reports the same one.
-    pub fn budget(&self) -> Option<&Budget> {
-        self.budget.as_ref()
-    }
-
-    /// Which state this plugin runs in.
-    ///
-    /// Meaningful under [`Isolation::PerGroup`], where two plugins reporting the same
-    /// [`Group`] share a state; the other modes report group `0` for everything.
-    pub fn group(&self) -> Group {
-        self.group
+    /// The live instance, drivable only through its backend's interface.
+    pub fn instance(&self) -> &dyn stanchion_abi::PluginInstance {
+        &*self.instance
     }
 
     /// Who signed this plugin.
@@ -227,10 +92,10 @@ impl<C: LuaClass> Plugin<C> {
         &self.signer
     }
 
-    /// The digest of the bytes this plugin was loaded from, when one was computed.
+    /// The digest of the bytes this plugin was loaded from, when computed.
     ///
-    /// `None` when nothing needed it: no verifier, no lockfile and no revocation list
-    /// were configured, so the directory was never hashed.
+    /// `None` when nothing needed it: no verifier, no lockfile and no
+    /// revocation list were configured, so the directory was never hashed.
     #[cfg(feature = "signatures")]
     pub fn digest(&self) -> Option<&DirectoryDigest> {
         self.digest.as_ref()
@@ -240,18 +105,14 @@ impl<C: LuaClass> Plugin<C> {
     pub fn granted_capabilities(&self) -> impl Iterator<Item = &str> {
         self.granted.iter().map(String::as_str)
     }
+}
 
-    /// The environment granted capabilities are bound in.
-    pub fn environment(&self) -> &Table {
-        &self.environment
-    }
-
-    /// The stable handle dependents receive, or `None` if this plugin publishes nothing.
-    ///
-    /// Reads and writes forward to the plugin's current exports table, so the handle
-    /// stays valid across reloads of this plugin.
-    pub fn exports(&self) -> Option<&Table> {
-        self.exports.as_ref().map(|exports| &exports.proxy)
+impl fmt::Debug for LoadedPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadedPlugin")
+            .field("name", &self.manifest.name)
+            .field("granted", &self.granted)
+            .finish_non_exhaustive()
     }
 }
 
@@ -302,7 +163,7 @@ impl Audit {
         self.plugins
             .iter()
             .flat_map(|plugin| plugin.requests.iter())
-            .filter(|request| !self.offered.contains(&request.name))
+            .filter(|request| !self.offered.contains(&request.capability))
     }
 }
 
@@ -320,107 +181,60 @@ pub struct PluginAudit {
     pub signer: Signer,
 }
 
-/// Everything `instantiate` produces for one plugin.
-struct Loaded<C: LuaClass> {
-    instance: C::Instance,
-    exports: Option<Table>,
-    environment: Table,
-    granted: Vec<String>,
-}
-
 /// One plugin's result from a dispatch.
-#[derive(Debug)]
-pub struct Outcome<'a, R> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outcome {
     /// The plugin that produced this result.
-    pub name: &'a str,
-    /// What the call returned. A failure here does not affect the other plugins.
-    pub result: mlua::Result<R>,
-}
-
-/// How plugin states relate to each other.
-pub enum Isolation {
-    /// Every plugin runs in the state handed to [`Registry::new`].
-    Shared,
-    /// Every plugin gets its own state, built under a [`Sandbox`] policy.
-    ///
-    /// Memory and instruction limits are properties of a Lua state, so this is the
-    /// only mode in which they can be enforced per plugin. The cost is that Lua
-    /// values cannot cross states, so `[dependencies]` exports cannot be injected.
-    PerPlugin(Box<Sandbox>),
-    /// One state per dependency group, built under a [`Sandbox`] policy.
-    ///
-    /// Plugins wired together by `[dependencies]` share a state, because that is what
-    /// lets exports cross between them; plugins with nothing between them are kept
-    /// apart. The group, not the plugin, is then the accounting unit: memory and
-    /// instruction limits apply to the whole group.
-    PerGroup(Box<Sandbox>),
-}
-
-/// Which state a plugin runs in, when the registry is the one deciding.
-///
-/// Two plugins reporting the same group share a Lua state, and so share a heap, a
-/// memory limit and an instruction budget. Under the other isolation modes every plugin
-/// reports group `0`, which is the truth: one state for all of them, or one each.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Group(u64);
-
-impl fmt::Display for Group {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
+    pub plugin: String,
+    /// Present when the call succeeded.
+    pub value: Option<Value>,
+    /// Present when it failed. One plugin failing never affects the others.
+    pub error: Option<String>,
 }
 
 /// A policy decision, boxed for storage.
-#[cfg(feature = "send")]
-type PolicyFn = Box<dyn Policy + Send + Sync>;
-
-/// A policy decision, boxed for storage.
-#[cfg(not(feature = "send"))]
 type PolicyFn = Box<dyn Policy>;
 
-/// Plugins of one class.
-pub struct Registry<C: LuaClass> {
-    host: Lua,
-    isolation: Isolation,
+/// A registry of plugins, loaded through runtime backends.
+///
+/// Backends are selected by each manifest's `plugin_type`. Capabilities and
+/// policy cannot be changed after the first plugin loads, which is
+/// deliberate: a host that can widen a plugin's reach after that plugin is
+/// running has given up the guarantee the whole capability system exists to
+/// make. (Enforced by convention: setup and policy are read at load time;
+/// `&mut self` is required to replace them.)
+pub struct Registry {
+    runtimes: Vec<Box<dyn Runtime>>,
     host_setup: HostSetup,
-    setup_error: Option<mlua::Error>,
-    shared_configured: bool,
-    policy: Option<PolicyFn>,
+    setup_error: Option<String>,
+    policy: PolicyFn,
     constructor: String,
-    plugins: Vec<Plugin<C>>,
+    plugins: Vec<LoadedPlugin>,
     index: HashMap<String, usize>,
-    next_group: u64,
     #[cfg(feature = "signatures")]
     verifier: Option<Box<dyn PluginVerifier>>,
     #[cfg(feature = "signatures")]
     require_signatures: bool,
     #[cfg(feature = "signatures")]
-    revocations: Option<signature::Revocations>,
+    revocations: Option<Revocations>,
     #[cfg(feature = "signatures")]
-    lockfile: Option<lock::Lockfile>,
+    lockfile: Option<Lockfile>,
     #[cfg(feature = "luarocks")]
-    rocks: Option<rocks::RocksConfig>,
+    rocks: Option<stanchion_abi::rocks::RocksConfig>,
     #[cfg(feature = "luarocks")]
-    rock_paths: Option<rocks::RockPaths>,
+    rock_paths: Option<stanchion_abi::rocks::RockPaths>,
 }
 
-impl<C: LuaClass> Registry<C> {
-    /// Creates an empty registry over an existing Lua state.
-    ///
-    /// Register host functions on the state before loading, since plugin chunks read
-    /// globals through their environment's `__index`.
-    pub fn new(lua: Lua) -> Self {
+impl Default for Registry {
+    fn default() -> Self {
         Registry {
-            host: lua,
-            isolation: Isolation::Shared,
+            runtimes: Vec::new(),
             host_setup: HostSetup::default(),
             setup_error: None,
-            shared_configured: false,
-            policy: None,
+            policy: Box::new(Rules::deny_all()),
             constructor: DEFAULT_CONSTRUCTOR.to_string(),
             plugins: Vec::new(),
             index: HashMap::new(),
-            next_group: 0,
             #[cfg(feature = "signatures")]
             verifier: None,
             #[cfg(feature = "signatures")]
@@ -435,78 +249,41 @@ impl<C: LuaClass> Registry<C> {
             rock_paths: None,
         }
     }
+}
 
-    /// Gives every plugin its own Lua state, built under `sandbox`.
+impl Registry {
+    /// Creates an empty registry with a deny-all policy.
     ///
-    /// This is what makes per-plugin memory and instruction limits possible, since
-    /// both are properties of a state rather than of a table or function. In exchange,
-    /// plugins cannot exchange Lua values, so a `[dependencies]` entry that would
-    /// inject exports fails to load.
-    ///
-    /// `host` is the state the registry itself keeps; plugins never see it.
-    pub fn isolated(host: Lua, sandbox: Sandbox) -> Self {
-        let mut registry = Registry::new(host);
-        registry.isolation = Isolation::PerPlugin(Box::new(sandbox));
-        registry
+    /// Register backends with [`with_runtime`](Self::with_runtime), offer
+    /// capabilities with [`with_setup`](Self::with_setup), then open them
+    /// with [`with_policy`](Self::with_policy).
+    pub fn new() -> Self {
+        Registry::default()
     }
 
-    /// Gives every *dependency group* its own Lua state, built under `sandbox`.
+    /// Registers a runtime backend, replacing any previous one for its type.
     ///
-    /// This is [`Registry::isolated`] without the trade-off that `[dependencies]` stops
-    /// working. A Lua value still cannot cross states, so the registry puts the plugins
-    /// that need to exchange values in the same one: each connected component of the
-    /// dependency graph gets a state, and a plugin depending on nothing gets one to
-    /// itself.
-    ///
-    /// What that buys is bounded rather than free. Group members share a heap, a memory
-    /// limit and an instruction budget, and they see each other's globals — declaring a
-    /// dependency is declaring that you accept that. Plugins in different groups are as
-    /// separated as they are under per-plugin isolation.
-    ///
-    /// `host` is the state the registry itself keeps; plugins never see it.
-    pub fn grouped(host: Lua, sandbox: Sandbox) -> Self {
-        let mut registry = Registry::new(host);
-        registry.isolation = Isolation::PerGroup(Box::new(sandbox));
-        registry
+    /// Each variant of [`PluginType`] has exactly one backend; the last
+    /// registration wins.
+    pub fn with_runtime(mut self, backend: Box<dyn Runtime>) -> Self {
+        let ty = backend.plugin_type();
+        self.runtimes.retain(|b| b.plugin_type() != ty);
+        self.runtimes.push(backend);
+        self
     }
 
     /// Declares everything plugins can reach.
     ///
     /// Runs before the first plugin loads. Capabilities registered here are
-    /// gated: a plugin gets one only by declaring it and passing [`Policy`]. Anything
-    /// registered with [`HostSetup::ambient`] is ungated and reaches every plugin.
+    /// gated: a plugin gets one only by declaring it and passing [`Policy`].
+    /// Anything registered with [`HostSetup::ambient`] is ungated and reaches
+    /// every plugin.
     ///
     /// **Additive.** Calling `with_setup` more than once accumulates onto the
-    /// capabilities already registered rather than replacing them, so a host built
-    /// by a helper (e.g. the remote host's `build_registry`) can be extended with
-    /// application-specific capabilities:
-    ///
-    /// ```ignore
-    /// build_registry(&config, &channel)?
-    ///     .with_setup(|host| {
-    ///         host.capability("xml", |lua, _grant| { /* ... */ });
-    ///         Ok(())
-    ///     })
-    /// ```
-    ///
-    /// ```ignore
-    /// Registry::isolated(Lua::new(), Sandbox::restricted())
-    ///     .with_setup(|host| {
-    ///         host.capability("log", |lua, _grant| {
-    ///             Ok(Value::Function(lua.create_function(|_, m: String| {
-    ///                 println!("{m}");
-    ///                 Ok(())
-    ///             })?))
-    ///         });
-    ///         host.ambient("HOST_VERSION", |lua| lua.globals().set("HOST_VERSION", "1.0"));
-    ///         Ok(())
-    ///     })
-    ///     .with_policy(Rules::deny_all().allow("log"))
-    /// ```
-    pub fn with_setup(mut self, setup: impl FnOnce(&mut HostSetup) -> mlua::Result<()>) -> Self {
-        // Start from what earlier `with_setup` calls registered so capabilities
-        // accumulate. Collected immediately so `audit` can report the host's offer
-        // before any plugin loads; a failure is held and surfaced by the next
+    /// capabilities already registered rather than replacing them.
+    pub fn with_setup(mut self, setup: impl FnOnce(&mut HostSetup) -> Result<(), String>) -> Self {
+        // Collected immediately so `audit` can report the host's offer before
+        // any plugin loads; a failure is held and surfaced by the next
         // fallible call.
         let mut host_setup = std::mem::take(&mut self.host_setup);
         match setup(&mut host_setup) {
@@ -518,10 +295,11 @@ impl<C: LuaClass> Registry<C> {
 
     /// Decides which requested capabilities are actually granted.
     ///
-    /// Without a policy every capability is denied, even one with a registered
-    /// provider: offering a capability and granting it are separate decisions.
+    /// Without a policy every capability is denied, even one with a
+    /// registered provider: offering a capability and granting it are
+    /// separate decisions.
     pub fn with_policy(mut self, policy: impl Policy + 'static) -> Self {
-        self.policy = Some(Box::new(policy));
+        self.policy = Box::new(policy);
         self
     }
 
@@ -532,9 +310,9 @@ impl<C: LuaClass> Registry<C> {
 
     /// Checks every plugin's signature before it loads.
     ///
-    /// Verification covers every file in the plugin directory, and the loader
-    /// re-checks each file's hash as it reads it, so the bytes that run are the bytes
-    /// that were verified.
+    /// Verification covers every file in the plugin directory, and each
+    /// file's hash is re-checked as it is read, so the bytes that run are
+    /// the bytes that were verified.
     #[cfg(feature = "signatures")]
     pub fn with_verifier(mut self, verifier: impl PluginVerifier + 'static) -> Self {
         self.verifier = Some(Box::new(verifier));
@@ -543,9 +321,10 @@ impl<C: LuaClass> Registry<C> {
 
     /// Whether an unsigned plugin is refused outright.
     ///
-    /// When `false` (the default) an unsigned plugin loads as [`Signer::Unsigned`],
-    /// and capability policy can still refuse it privileges — signing becomes a
-    /// gradient rather than a cliff. When `true` every plugin must be signed.
+    /// When `false` (the default) an unsigned plugin loads as
+    /// [`Signer::Unsigned`], and capability policy can still refuse it
+    /// privileges — signing becomes a gradient rather than a cliff. When
+    /// `true` every plugin must be signed.
     #[cfg(feature = "signatures")]
     pub fn require_signatures(mut self, required: bool) -> Self {
         self.require_signatures = required;
@@ -554,10 +333,8 @@ impl<C: LuaClass> Registry<C> {
 
     /// Whether this registry refuses to load an unsigned plugin.
     ///
-    /// Reflects [`require_signatures`](Self::require_signatures), so a supervisor (such
-    /// as the out-of-process host reporting `host/info`) can attest the real posture
-    /// rather than a constant. Always `false` when the `signatures` feature is off,
-    /// since nothing is verified.
+    /// Always `false` when the `signatures` feature is off, since nothing is
+    /// verified.
     pub fn signatures_required(&self) -> bool {
         #[cfg(feature = "signatures")]
         {
@@ -571,156 +348,160 @@ impl<C: LuaClass> Registry<C> {
 
     /// Refuses builds or signers on a revocation list.
     ///
-    /// Checked after verification, because a withdrawn plugin's signature is still
-    /// valid — that is precisely why a separate, mutable list is needed. Works without
-    /// a verifier too: a digest denylist refuses a specific build with no signing
-    /// infrastructure at all.
+    /// Checked after verification, because a withdrawn plugin's signature is
+    /// still valid — that is precisely why a separate, mutable list is
+    /// needed. Works without a verifier too: a digest denylist refuses a
+    /// specific build with no signing infrastructure at all.
     #[cfg(feature = "signatures")]
-    pub fn with_revocations(mut self, revocations: signature::Revocations) -> Self {
+    pub fn with_revocations(mut self, revocations: Revocations) -> Self {
         self.revocations = Some(revocations);
         self
     }
 
     /// Refuses any plugin whose bytes are not the ones this lockfile pins.
     ///
-    /// This is the control that makes a transport untrusted: a package source, mirror
-    /// or index can serve whatever it likes, and anything other than the pinned digest
-    /// fails to load. It needs no signing infrastructure — a lockfile alone already
-    /// refuses substitution and downgrade, neither of which a signature stops.
-    ///
-    /// Every discovered plugin must be pinned. One in the root with no entry fails as
-    /// [`LockError::Unlocked`] rather than loading, because once a host keeps a
-    /// lockfile, an unpinned directory appearing beside the pinned ones is exactly the
-    /// event worth refusing.
+    /// Every discovered plugin must be pinned. One in the root with no entry
+    /// fails as [`LockError::Unlocked`] rather than loading, because once a
+    /// host keeps a lockfile, an unpinned directory appearing beside the
+    /// pinned ones is exactly the event worth refusing.
     #[cfg(feature = "signatures")]
-    pub fn with_lockfile(mut self, lockfile: lock::Lockfile) -> Self {
+    pub fn with_lockfile(mut self, lockfile: Lockfile) -> Self {
         self.lockfile = Some(lockfile);
         self
     }
 
     /// The lockfile this registry enforces, if any.
     #[cfg(feature = "signatures")]
-    pub fn lockfile(&self) -> Option<&lock::Lockfile> {
+    pub fn lockfile(&self) -> Option<&Lockfile> {
         self.lockfile.as_ref()
     }
 
-    /// How plugin states are allocated.
-    pub fn isolation(&self) -> &Isolation {
-        &self.isolation
-    }
-
-    /// Verifies `[rocks]` declarations against a LuaRocks tree and puts that tree on
-    /// the shared state's module path.
+    /// Verifies `[rocks]` declarations against a LuaRocks tree.
     ///
-    /// Without this, a plugin declaring `[rocks]` fails to load rather than silently
-    /// resolving its `require`s from whatever happens to be on the machine.
+    /// Without this, a plugin declaring `[rocks]` fails to load rather than
+    /// silently resolving its modules from whatever happens to be on the
+    /// machine.
     #[cfg(feature = "luarocks")]
-    pub fn with_rocks(mut self, config: rocks::RocksConfig) -> Self {
+    pub fn with_rocks(mut self, config: stanchion_abi::rocks::RocksConfig) -> Self {
         self.rocks = Some(config);
         self
     }
 
-    /// Uses a different constructor name than `new`.
+    /// Uses a different constructor name than `new` for class-based plugins.
     pub fn with_constructor(mut self, name: impl Into<String>) -> Self {
         self.constructor = name.into();
         self
     }
 
-    /// The state the registry holds.
-    ///
-    /// Under [`Isolation::Shared`] this is the state every plugin runs in. Under
-    /// per-plugin isolation it is the host's own state, which no plugin can see; use
-    /// [`Plugin::lua`] to reach a particular plugin's state.
-    pub fn lua(&self) -> &Lua {
-        &self.host
-    }
-
-    /// Produces a state to run plugins in, applying setup and rock paths.
-    ///
-    /// Under [`Isolation::PerGroup`] this makes a state for *one* group; `load_dir`
-    /// decides which plugins share it.
-    fn acquire_state(&mut self) -> Result<(Lua, Option<Budget>), RegistryError> {
-        if let Isolation::PerPlugin(sandbox) | Isolation::PerGroup(sandbox) = &self.isolation {
-            let sandbox = sandbox.clone();
-            let (lua, budget) = sandbox.build().map_err(RegistryError::Lua)?;
-            let runtime = crate::runtime::LuaRuntime::new(lua.clone());
-            self.configure(&runtime)?;
-            return Ok((lua, budget));
-        }
-
-        let lua = self.host.clone();
-        let runtime = crate::runtime::LuaRuntime::new(lua.clone());
-        if !self.shared_configured {
-            self.configure(&runtime)?;
-            self.shared_configured = true;
-        }
-        Ok((lua, None))
-    }
-
-    /// Decides which state one plugin runs in, creating it on the group's first member.
-    fn group_state(
-        &mut self,
-        components: Option<&HashMap<String, usize>>,
-        states: &mut HashMap<usize, (Lua, Option<Budget>, Group)>,
-        manifest: &Manifest,
-    ) -> Result<(Lua, Option<Budget>, Group), RegistryError> {
-        // Not grouping, or a manifest that somehow was not partitioned: either way the
-        // plugin gets whatever the isolation mode hands out, on its own.
-        let Some(representative) = components
-            .and_then(|root| root.get(&manifest.name))
-            .copied()
-        else {
-            let (lua, budget) = self.acquire_state()?;
-            return Ok((lua, budget, Group(0)));
-        };
-
-        if let Some((lua, budget, group)) = states.get(&representative) {
-            return Ok((lua.clone(), budget.clone(), *group));
-        }
-
-        let (lua, budget) = self.acquire_state()?;
-        let state = (lua, budget, self.fresh_group());
-        states.insert(representative, state.clone());
-        Ok(state)
-    }
-
-    /// Hands out the next group identifier.
-    fn fresh_group(&mut self) -> Group {
-        let group = Group(self.next_group);
-        self.next_group = self.next_group.saturating_add(1);
-        group
-    }
-
     /// Surfaces a failure from the `with_setup` closure, which ran at build time.
     fn check_setup(&self) -> Result<(), RegistryError> {
         match &self.setup_error {
-            Some(err) => Err(RegistryError::Lua(err.clone())),
+            Some(err) => Err(RegistryError::Backend(err.clone())),
             None => Ok(()),
         }
     }
 
-    /// Installs ambient globals and cached rock paths on one state.
-    fn configure(&self, runtime: &dyn Runtime) -> Result<(), RegistryError> {
-        self.host_setup
-            .install_ambient(runtime)
-            .map_err(|err| RegistryError::Lua(mlua::Error::RuntimeError(err.to_string())))?;
-        #[cfg(feature = "luarocks")]
-        if let Some(paths) = &self.rock_paths
-            && let Some(state) = runtime.lua_state()
-        {
-            let lua = state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            prepend_module_paths(&lua, paths).map_err(RegistryError::Lua)?;
-        }
-        Ok(())
+    fn runtime_for(&self, ty: &PluginType) -> Option<&dyn Runtime> {
+        self.runtimes
+            .iter()
+            .find(|b| b.plugin_type() == *ty)
+            .map(|b| &**b)
     }
 
-    /// Discovers, orders and loads every plugin under `root`.
+    /// Applies the rocks tree's module paths once, and lists what it holds.
+    #[cfg(feature = "luarocks")]
+    fn prepare_rocks(
+        &mut self,
+    ) -> Result<
+        Option<std::collections::BTreeMap<String, stanchion_abi::rocks::RockVersion>>,
+        RegistryError,
+    > {
+        let Some(config) = self.rocks.clone() else {
+            return Ok(None);
+        };
+        if self.rock_paths.is_none() {
+            // Cached once: every state the backends create gets the same paths.
+            self.rock_paths = Some(config.paths().map_err(RegistryError::Rocks)?);
+        }
+        let installed = config.installed().map_err(RegistryError::Rocks)?;
+        Ok(Some(installed))
+    }
+
+    /// Installs every rock declared by any plugin under `root`.
     ///
-    /// Only an unreadable root is fatal. A plugin with a broken manifest, a failing
-    /// chunk, a missing dependency, or a place in a dependency cycle is reported in
-    /// [`LoadReport::failures`] while the rest still load.
+    /// Loading never installs anything; call this when the host wants to provision.
+    #[cfg(feature = "luarocks")]
+    pub fn install_rocks(&self, root: impl AsRef<Path>) -> Result<InstallReport, RegistryError> {
+        use stanchion_abi::rocks::{Requirement, RocksError};
+        let config = self.rocks.as_ref().ok_or_else(|| {
+            RegistryError::Rocks(RocksError::Requirement {
+                raw: String::new(),
+                message: "no LuaRocks tree configured; call `with_rocks` first".to_string(),
+            })
+        })?;
+
+        let (manifests, _) = manifest::discover(root.as_ref())?;
+        let mut wanted: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for manifest in &manifests {
+            for (name, requirement) in &manifest.rocks {
+                wanted.insert(name.clone(), requirement.clone());
+            }
+        }
+
+        let installed = config.installed().map_err(RegistryError::Rocks)?;
+        let mut report = InstallReport::default();
+
+        for (name, raw) in wanted {
+            let requirement = match Requirement::parse(&raw) {
+                Ok(requirement) => requirement,
+                Err(err) => {
+                    report.failures.push((name, err.to_string()));
+                    continue;
+                }
+            };
+            if installed
+                .get(&name)
+                .is_some_and(|found| requirement.matches(found))
+            {
+                report.satisfied.push(name);
+                continue;
+            }
+            match config.install(&name, &requirement) {
+                Ok(()) => report.installed.push(name),
+                Err(err) => report.failures.push((name, err.to_string())),
+            }
+        }
+        Ok(report)
+    }
+
+    /// The rock search paths to hand backends, when a tree is configured.
+    #[cfg(feature = "luarocks")]
+    fn rock_path_list(&self) -> Vec<String> {
+        self.rock_paths
+            .as_ref()
+            .map(|paths| {
+                paths
+                    .path
+                    .split(';')
+                    .filter(|template| !template.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The rock search paths to hand backends: none without a tree.
+    #[cfg(not(feature = "luarocks"))]
+    fn rock_path_list(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Discovers, verifies and loads every plugin under `root`.
+    ///
+    /// Only an unreadable root is fatal. A plugin with a broken manifest, a
+    /// failing chunk, a missing dependency, or a place in a dependency cycle
+    /// is reported in [`LoadReport::failures`] while the rest still load.
     pub fn load_dir(&mut self, root: impl AsRef<Path>) -> Result<LoadReport, RegistryError> {
         self.check_setup()?;
         let (manifests, mut failures) = manifest::discover(root.as_ref())?;
@@ -730,20 +511,10 @@ impl<C: LuaClass> Registry<C> {
         #[cfg(feature = "luarocks")]
         let installed_rocks = self.prepare_rocks()?;
 
-        // Under grouped isolation the partition is decided before anything is built, so
-        // a plugin's state is a property of the whole dependency graph rather than of
-        // whichever member happened to load first.
-        let components = if matches!(self.isolation, Isolation::PerGroup(_)) {
-            Some(dependency_components(&ordered))
-        } else {
-            None
-        };
-        // The state each component runs in, made on its first member.
-        let mut group_states: HashMap<usize, (Lua, Option<Budget>, Group)> = HashMap::new();
-
+        // Verify each manifest in load order, keeping what is loadable.
+        // Dependency failures short-circuit dependents, mirroring order.
         let mut failed: HashSet<String> = failures.iter().map(|f| f.name.clone()).collect();
-        let mut loaded = Vec::new();
-
+        let mut ready: Vec<ReadyItem> = Vec::new();
         for manifest in ordered {
             if self.index.contains_key(&manifest.name) {
                 failed.insert(manifest.name.clone());
@@ -757,9 +528,8 @@ impl<C: LuaClass> Registry<C> {
                 });
                 continue;
             }
-
             // A required dependency that failed leaves this plugin unwired; an
-            // optional one just stays nil.
+            // optional one just stays unfilled.
             let unmet = manifest
                 .dependencies
                 .iter()
@@ -774,19 +544,6 @@ impl<C: LuaClass> Registry<C> {
                 });
                 continue;
             }
-
-            if let Isolation::PerPlugin(_) = self.isolation
-                && let Some((dependency, _)) = manifest.dependencies.first_key_value()
-            {
-                failed.insert(manifest.name.clone());
-                failures.push(LoadFailure {
-                    name: manifest.name.clone(),
-                    dir: manifest.dir.clone(),
-                    reason: FailureReason::CrossStateDependency(dependency.clone()),
-                });
-                continue;
-            }
-
             #[cfg(feature = "luarocks")]
             if let Err(reason) = verify_rocks(&manifest, installed_rocks.as_ref()) {
                 failed.insert(manifest.name.clone());
@@ -809,7 +566,6 @@ impl<C: LuaClass> Registry<C> {
                 });
                 continue;
             }
-
             #[cfg(feature = "signatures")]
             let (signer, digest) = match self.verify_plugin(&manifest) {
                 Ok(verified) => verified,
@@ -823,68 +579,181 @@ impl<C: LuaClass> Registry<C> {
                     continue;
                 }
             };
-
-            let (lua, budget, group) =
-                self.group_state(components.as_ref(), &mut group_states, &manifest)?;
-            let runtime = crate::runtime::LuaRuntime::new(lua.clone());
-            // Evaluating a chunk and running a constructor is plugin code, so a panic
-            // there is this plugin's failure rather than the whole load's.
-            let built = panics::guard(|| {
-                self.instantiate(
-                    &lua,
-                    &runtime,
-                    budget.as_ref(),
-                    &manifest,
-                    #[cfg(feature = "signatures")]
-                    &signer,
-                    #[cfg(feature = "signatures")]
-                    digest.as_ref(),
-                )
-            })
-            .unwrap_or_else(|panicked| Err(FailureReason::Panicked(panicked)));
-            match built.and_then(|built| {
-                let exports = built
-                    .exports
-                    .map(|table| self.make_proxy(&lua, &table))
-                    .transpose()?;
-                Ok((built.instance, exports, built.environment, built.granted))
-            }) {
-                Ok((instance, exports, environment, granted)) => {
-                    loaded.push(manifest.name.clone());
-                    self.index.insert(manifest.name.clone(), self.plugins.len());
-                    self.plugins.push(Plugin {
-                        lua,
-                        budget,
-                        environment,
-                        granted,
-                        group,
-                        #[cfg(feature = "signatures")]
-                        signer,
-                        #[cfg(feature = "signatures")]
-                        digest,
-                        manifest,
-                        instance,
-                        exports,
-                    });
-                }
-                Err(reason) => {
+            // Read the entry once, here, and bind it to the digest before
+            // handing it to a backend. Backends build from these exact bytes,
+            // so the file cannot be swapped between verification and loading.
+            let entry_bytes = match fs::read(manifest.entry_path()) {
+                Ok(bytes) => bytes,
+                Err(source) => {
                     failed.insert(manifest.name.clone());
                     failures.push(LoadFailure {
                         name: manifest.name.clone(),
                         dir: manifest.dir.clone(),
-                        reason,
+                        reason: FailureReason::Io(source),
+                    });
+                    continue;
+                }
+            };
+            #[cfg(feature = "signatures")]
+            if let Some(digest) = &digest
+                && let Err(reason) = bind_entry(&manifest, digest, &entry_bytes)
+            {
+                failed.insert(manifest.name.clone());
+                failures.push(LoadFailure {
+                    name: manifest.name.clone(),
+                    dir: manifest.dir.clone(),
+                    reason,
+                });
+                continue;
+            }
+            ready.push(ReadyItem {
+                #[cfg(feature = "signatures")]
+                signer,
+                #[cfg(feature = "signatures")]
+                digest,
+                manifest,
+                entry_bytes,
+            });
+        }
+
+        // Hand each backend the verified plugins of its type, in load order.
+        // One call per backend: dependency wiring needs the whole group.
+        let mut loaded = Vec::new();
+        let mut groups: Vec<(PluginType, Vec<&ReadyItem>)> = Vec::new();
+        for item in &ready {
+            match groups
+                .iter_mut()
+                .find(|(ty, _)| *ty == item.manifest.plugin_type)
+            {
+                Some((_, members)) => members.push(item),
+                None => groups.push((item.manifest.plugin_type.clone(), vec![item])),
+            }
+        }
+        // Deterministic backend order: by debug name of the plugin type.
+        groups.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
+        for (ty, members) in &groups {
+            let Some(backend) = self.runtimes.iter().find(|b| b.plugin_type() == *ty) else {
+                for item in members {
+                    failed.insert(item.manifest.name.clone());
+                    failures.push(LoadFailure {
+                        name: item.manifest.name.clone(),
+                        dir: item.manifest.dir.clone(),
+                        reason: FailureReason::NoBackend(format!(
+                            "no backend registered for plugin type '{ty:?}'"
+                        )),
                     });
                 }
+                continue;
+            };
+            let items: Vec<LoadItem> = members
+                .iter()
+                .map(|item| LoadItem {
+                    manifest: &item.manifest,
+                    #[cfg(feature = "signatures")]
+                    signer: item.signer.clone(),
+                    #[cfg(not(feature = "signatures"))]
+                    signer: stanchion_abi::signature::Signer::Unsigned,
+                    #[cfg(feature = "signatures")]
+                    digest: item.digest.clone(),
+                    #[cfg(not(feature = "signatures"))]
+                    digest: None,
+                    entry_bytes: item.entry_bytes.clone(),
+                })
+                .collect();
+            let by_name: HashMap<&str, &ReadyItem> = members
+                .iter()
+                .map(|item| (item.manifest.name.as_str(), *item))
+                .collect();
+            let outcomes = {
+                let ctx = LoadContext {
+                    setup: &self.host_setup,
+                    policy: &*self.policy,
+                    rock_paths: self.rock_path_list(),
+                    #[cfg(feature = "luarocks")]
+                    rocks: self.rocks.as_ref(),
+                    #[cfg(not(feature = "luarocks"))]
+                    rocks: None,
+                    constructor: &self.constructor,
+                };
+                backend.load_group(&items, &ctx)
+            };
+            for outcome in outcomes {
+                match outcome {
+                    GroupOutcome::Loaded {
+                        name,
+                        instance,
+                        granted,
+                    } => {
+                        let Some(item) = by_name.get(name.as_str()) else {
+                            failed.insert(name.clone());
+                            failures.push(LoadFailure {
+                                name,
+                                dir: std::path::PathBuf::new(),
+                                reason: FailureReason::Runtime(
+                                    "backend reported an outcome for an unknown plugin"
+                                        .to_string(),
+                                ),
+                            });
+                            continue;
+                        };
+                        loaded.push(name.clone());
+                        self.index.insert(name, self.plugins.len());
+                        self.plugins.push(LoadedPlugin {
+                            manifest: item.manifest.clone(),
+                            instance,
+                            granted,
+                            #[cfg(feature = "signatures")]
+                            signer: item.signer.clone(),
+                            #[cfg(feature = "signatures")]
+                            digest: item.digest.clone(),
+                        });
+                    }
+                    GroupOutcome::Failed { name, dir, reason } => {
+                        failed.insert(name.clone());
+                        failures.push(LoadFailure {
+                            name,
+                            dir,
+                            reason: FailureReason::Runtime(reason),
+                        });
+                    }
+                }
             }
+        }
+
+        // A required dependent of a plugin that failed *inside* a backend
+        // group was ordered after it but never reported: mark it skipped
+        // rather than silently dropping it.
+        for item in &ready {
+            if failed.contains(&item.manifest.name) || self.index.contains_key(&item.manifest.name)
+            {
+                continue;
+            }
+            let unmet = item
+                .manifest
+                .dependencies
+                .iter()
+                .find(|(name, spec)| !spec.is_optional() && failed.contains(*name))
+                .map(|(name, _)| name.clone());
+            let reason = match unmet {
+                Some(dep) => FailureReason::DependencyFailed(dep),
+                None => FailureReason::Runtime(
+                    "backend did not report an outcome".to_string(),
+                ),
+            };
+            failed.insert(item.manifest.name.clone());
+            failures.push(LoadFailure {
+                name: item.manifest.name.clone(),
+                dir: item.manifest.dir.clone(),
+                reason,
+            });
         }
 
         Ok(LoadReport { loaded, failures })
     }
 
-    /// Re-reads a plugin's manifest and chunk and swaps in a fresh instance.
+    /// Re-reads one plugin from disk.
     ///
-    /// The old instance is dropped only once the caller releases it, so handles held
-    /// across a reload stay valid and keep talking to the old object.
+    /// A plugin that fails to reload leaves the old instance in place.
     pub fn reload(&mut self, name: &str) -> Result<(), RegistryError> {
         let position = *self
             .index
@@ -895,10 +764,7 @@ impl<C: LuaClass> Registry<C> {
             .get(position)
             .ok_or_else(|| RegistryError::UnknownPlugin(name.to_string()))?;
         let dir = current.manifest.dir.clone();
-        let existing = current.exports.clone();
-        let lua = current.lua.clone();
-        let budget = current.budget.clone();
-        let group = current.group;
+        let ty = current.manifest.plugin_type.clone();
 
         let fail = |reason: FailureReason| {
             RegistryError::Reload(Box::new(LoadFailure {
@@ -915,71 +781,80 @@ impl<C: LuaClass> Registry<C> {
                 manifest.name
             ))));
         }
+        if manifest.plugin_type != ty {
+            return Err(fail(FailureReason::Manifest(format!(
+                "plugin changed type from `{ty:?}` to `{:?}`; remove and load it again instead",
+                manifest.plugin_type
+            ))));
+        }
+        if let Err(message) = manifest.validate() {
+            return Err(fail(FailureReason::Manifest(message)));
+        }
 
         #[cfg(feature = "signatures")]
         let (signer, digest) = self.verify_plugin(&manifest).map_err(&fail)?;
+        let entry_bytes =
+            fs::read(manifest.entry_path()).map_err(|source| fail(FailureReason::Io(source)))?;
+        #[cfg(feature = "signatures")]
+        if let Some(digest) = &digest {
+            bind_entry(&manifest, digest, &entry_bytes).map_err(&fail)?;
+        }
 
-        let runtime = crate::runtime::LuaRuntime::new(lua.clone());
-        let built = panics::guard(|| {
-            self.instantiate(
-                &lua,
-                &runtime,
-                budget.as_ref(),
-                &manifest,
-                #[cfg(feature = "signatures")]
-                &signer,
-                #[cfg(feature = "signatures")]
-                digest.as_ref(),
-            )
-        })
-        .unwrap_or_else(|panicked| Err(FailureReason::Panicked(panicked)))
-        .map_err(&fail)?;
-        let (instance, table) = (built.instance, built.exports);
-
-        // Reusing the old proxy is what makes a reload visible to dependents: they
-        // hold that table, and repointing it swaps the surface underneath them.
-        let exports = match (existing, table) {
-            (Some(exports), Some(table)) => {
-                exports.repoint(table).map_err(|err| fail(err.into()))?;
-                Some(exports)
-            }
-            (None, Some(table)) => Some(
-                self.make_proxy(&lua, &table)
-                    .map_err(|err| fail(err.into()))?,
-            ),
-            (Some(_), None) => {
-                return Err(fail(FailureReason::MissingExports(name.to_string())));
-            }
-            (None, None) => None,
+        let backend = self
+            .runtime_for(&ty)
+            .ok_or_else(|| fail(FailureReason::NoBackend(format!("no backend for `{ty:?}`"))))?;
+        let item = LoadItem {
+            manifest: &manifest,
+            #[cfg(feature = "signatures")]
+            signer: signer.clone(),
+            #[cfg(not(feature = "signatures"))]
+            signer: stanchion_abi::signature::Signer::Unsigned,
+            #[cfg(feature = "signatures")]
+            digest: digest.clone(),
+            #[cfg(not(feature = "signatures"))]
+            digest: None,
+            entry_bytes,
         };
-
+        let ctx = LoadContext {
+            setup: &self.host_setup,
+            policy: &*self.policy,
+            rock_paths: self.rock_path_list(),
+            #[cfg(feature = "luarocks")]
+            rocks: self.rocks.as_ref(),
+            #[cfg(not(feature = "luarocks"))]
+            rocks: None,
+            constructor: &self.constructor,
+        };
+        let instance = match backend.reload_plugin(&item, &ctx) {
+            Ok(instance) => instance,
+            Err(err) => return Err(fail(FailureReason::Runtime(err.to_string()))),
+        };
+        // Re-evaluate policy so a changed manifest gets fresh grants.
+        #[cfg(feature = "signatures")]
+        let granted = self.evaluate_policy(&manifest, &item.signer);
+        #[cfg(not(feature = "signatures"))]
+        let granted = self.evaluate_policy(&manifest);
         let slot = self
             .plugins
             .get_mut(position)
             .ok_or_else(|| RegistryError::UnknownPlugin(name.to_string()))?;
-        *slot = Plugin {
-            lua,
-            budget,
-            environment: built.environment,
-            granted: built.granted,
-            group,
+        *slot = LoadedPlugin {
+            manifest,
+            instance,
+            granted,
             #[cfg(feature = "signatures")]
             signer,
             #[cfg(feature = "signatures")]
             digest,
-            manifest,
-            instance,
-            exports,
         };
         Ok(())
     }
 
-    /// Unloads one plugin, returning it so the caller decides when it is dropped.
+    /// Unloads one plugin, forgetting everything its backend retained.
     ///
-    /// Dropping it releases the plugin's Lua state under per-plugin isolation, and its
-    /// exports proxy stops resolving, so dependents see the table empty rather than
-    /// stale. Handles the caller still holds keep working until then.
-    pub fn remove(&mut self, name: &str) -> Result<Plugin<C>, RegistryError> {
+    /// Dependents holding live surfaces keep working until dropped; the name
+    /// is free for a later load to reuse cleanly.
+    pub fn remove(&mut self, name: &str) -> Result<LoadedPlugin, RegistryError> {
         let position = *self
             .index
             .get(name)
@@ -989,46 +864,37 @@ impl<C: LuaClass> Registry<C> {
         }
         let plugin = self.plugins.remove(position);
 
-        // Removal shifts every later plugin down, so the name index is rebuilt rather
-        // than patched: an off-by-one here would hand a caller another plugin.
+        // Removal shifts every later plugin down, so the name index is
+        // rebuilt rather than patched: an off-by-one here would hand a
+        // caller another plugin.
         self.index.clear();
         for (position, plugin) in self.plugins.iter().enumerate() {
             self.index.insert(plugin.manifest.name.clone(), position);
         }
+        if let Some(backend) = self.runtime_for(&plugin.manifest.plugin_type) {
+            backend.unload(name);
+        }
         Ok(plugin)
     }
 
-    /// Replaces the revocation list and unloads every loaded plugin it now names.
+    /// Replaces the revocation list and unloads every loaded plugin it names.
     ///
-    /// A revocation list is the mutable half of provenance: it changes while your
-    /// process is running, which is precisely when it matters. Consulting it only at
-    /// load would mean a plugin withdrawn at noon keeps running until something else
-    /// happens to reload it. This applies a new list to what is already loaded, and
-    /// to every later load.
-    ///
-    /// Each returned [`LoadFailure`] names a plugin that was unloaded and why. The
-    /// plugins themselves are dropped here, so a caller holding an instance across
-    /// this call keeps talking to a plugin the host has just refused — take the
-    /// unloaded names as the signal to release those handles.
-    ///
-    /// A digest-bearing list needs a digest to compare against. Plugins loaded with
-    /// one recorded are checked against that, not against the directory as it stands
-    /// now. For a plugin loaded without one — nothing at load needed it — the
-    /// directory is hashed here; if that read fails the plugin is unloaded with the
-    /// I/O error as its reason, because a trust decision that cannot be made is not
-    /// one to resolve in the plugin's favour.
+    /// Each returned [`LoadFailure`] names a plugin that was unloaded and
+    /// why. Consulting the list only at load would let a plugin withdrawn at
+    /// noon keep running until something else happens to reload it.
     #[cfg(feature = "signatures")]
     pub fn apply_revocations(&mut self, revocations: Revocations) -> Vec<LoadFailure> {
+        use std::borrow::Cow;
         let mut refused: Vec<LoadFailure> = Vec::new();
 
         if !revocations.is_empty() {
             let needs_digest = revocations.needs_digest();
             for plugin in &self.plugins {
                 let digest = match (&plugin.digest, needs_digest) {
-                    (Some(digest), _) => Some(::std::borrow::Cow::Borrowed(digest)),
+                    (Some(digest), _) => Some(Cow::Borrowed(digest)),
                     (None, false) => None,
                     (None, true) => match DirectoryDigest::compute(&plugin.manifest.dir) {
-                        Ok(digest) => Some(::std::borrow::Cow::Owned(digest)),
+                        Ok(digest) => Some(Cow::Owned(digest)),
                         Err(source) => {
                             refused.push(LoadFailure {
                                 name: plugin.manifest.name.clone(),
@@ -1049,71 +915,114 @@ impl<C: LuaClass> Registry<C> {
             }
         }
 
-        // Stored before the removals so a later load is judged by the same list, and
-        // after the loop so the loop reads the list it was handed.
+        // Stored before the removals so a later load is judged by the same list.
         self.revocations = Some(revocations);
 
         for failure in &refused {
-            // The name came from the plugin list a moment ago, so a failure to find it
-            // is not something a caller can act on: the unload has already happened
-            // for every other name.
             let _ = self.remove(&failure.name);
         }
         refused
     }
 
-    /// Calls every plugin, collecting one result each.
+    /// Calls one method on one plugin.
+    pub fn call(
+        &self,
+        plugin: &str,
+        method: &str,
+        args: &[Value],
+    ) -> stanchion_abi::Result<Value> {
+        let entry = self
+            .index
+            .get(plugin)
+            .and_then(|position| self.plugins.get(*position))
+            .ok_or_else(|| stanchion_abi::Error::UnknownPlugin(plugin.to_string()))?;
+        entry.instance.call(method, args)
+    }
+
+    /// Awaits one method on one plugin.
     ///
-    /// A plugin that errors does not stop the others; its error is returned in place.
-    /// The same holds for a plugin that *panics*: the unwind is caught and reported as
-    /// a [`Panicked`] error rather than reaching the caller. That does not make the
-    /// plugin trustworthy afterwards — see [`Panicked`] — and it cannot help with a
-    /// crash that never unwinds, which is what the `remote` feature is for.
-    pub fn dispatch<'a, R>(
-        &'a self,
-        call: impl Fn(&'a C::Instance) -> mlua::Result<R>,
-    ) -> Vec<Outcome<'a, R>> {
+    /// Sequential, not concurrent: backends sharing a state would only
+    /// contend on it. A panic during resumption is caught per poll and
+    /// reported, exactly as for synchronous calls.
+    pub async fn call_async(
+        &self,
+        plugin: &str,
+        method: &str,
+        args: &[Value],
+    ) -> stanchion_abi::Result<Value> {
+        let entry = self
+            .index
+            .get(plugin)
+            .and_then(|position| self.plugins.get(*position))
+            .ok_or_else(|| stanchion_abi::Error::UnknownPlugin(plugin.to_string()))?;
+        stanchion_abi::panics::guard_future(entry.instance.call_async(method, args))
+            .await
+            .map_err(|panicked| {
+                stanchion_abi::Error::Runtime(stanchion_abi::RuntimeError {
+                    runtime_name: entry.instance.runtime().to_string(),
+                    error: panicked.to_string(),
+                })
+            })?
+    }
+
+    /// Calls the same method on every plugin, collecting one result each.
+    ///
+    /// A plugin that fails reports its error in place rather than ending the
+    /// dispatch.
+    pub fn dispatch(&self, method: &str, args: &[Value]) -> Vec<Outcome> {
         self.plugins
             .iter()
             .map(|plugin| {
-                // The instruction limit applies per call, not per plugin lifetime.
-                if let Some(budget) = &plugin.budget {
-                    budget.reset();
-                }
-                Outcome {
-                    name: plugin.name(),
-                    // A panicking plugin is reported like a failing one rather than
-                    // taking the caller's stack with it.
-                    result: panics::guard(|| call(&plugin.instance))
-                        .unwrap_or_else(|panicked| Err(panicked.into())),
+                let result = stanchion_abi::panics::guard(|| plugin.instance.call(method, args));
+                match result {
+                    Ok(Ok(value)) => Outcome {
+                        plugin: plugin.name().to_string(),
+                        value: Some(value),
+                        error: None,
+                    },
+                    Ok(Err(err)) => Outcome {
+                        plugin: plugin.name().to_string(),
+                        value: None,
+                        error: Some(err.to_string()),
+                    },
+                    Err(panicked) => Outcome {
+                        plugin: plugin.name().to_string(),
+                        value: None,
+                        error: Some(panicked.to_string()),
+                    },
                 }
             })
             .collect()
     }
 
-    /// Awaits every plugin in turn, collecting one result each.
-    ///
-    /// Calls are sequential: they all reach the same Lua state, so running them
-    /// concurrently would only contend on it. A panic in any poll is caught, exactly
-    /// as in [`Registry::dispatch`].
-    #[cfg(feature = "async")]
-    pub async fn dispatch_async<'a, R, Fut>(
-        &'a self,
-        call: impl Fn(&'a C::Instance) -> Fut,
-    ) -> Vec<Outcome<'a, R>>
-    where
-        Fut: std::future::Future<Output = mlua::Result<R>>,
-    {
+    /// Awaits the same method on every plugin, in turn.
+    pub async fn dispatch_async(&self, method: &str, args: &[Value]) -> Vec<Outcome> {
         let mut outcomes = Vec::with_capacity(self.plugins.len());
         for plugin in &self.plugins {
-            if let Some(budget) = &plugin.budget {
-                budget.reset();
-            }
-            outcomes.push(Outcome {
-                name: plugin.name(),
-                result: panics::guard_future(call(&plugin.instance))
-                    .await
-                    .unwrap_or_else(|panicked| Err(panicked.into())),
+            let result = stanchion_abi::panics::guard_future(
+                plugin.instance.call_async(method, args),
+            )
+            .await;
+            let result = match result {
+                Err(panicked) => Err(stanchion_abi::Error::Runtime(
+                    stanchion_abi::RuntimeError {
+                        runtime_name: plugin.instance.runtime().to_string(),
+                        error: panicked.to_string(),
+                    },
+                )),
+                Ok(inner) => inner,
+            };
+            outcomes.push(match result {
+                Ok(value) => Outcome {
+                    plugin: plugin.name().to_string(),
+                    value: Some(value),
+                    error: None,
+                },
+                Err(err) => Outcome {
+                    plugin: plugin.name().to_string(),
+                    value: None,
+                    error: Some(err.to_string()),
+                },
             });
         }
         outcomes
@@ -1121,35 +1030,45 @@ impl<C: LuaClass> Registry<C> {
 
     /// Unbinds a granted capability from a live plugin.
     ///
-    /// The name becomes `nil` in the plugin's environment, so subsequent calls fail
-    /// rather than reaching the host. Code that already captured the value in a local
-    /// keeps it, so this defangs a misbehaving plugin but does not rewind it.
+    /// Returns whether the plugin held it. Code that already captured the
+    /// value in a local keeps it, so this defangs a misbehaving plugin
+    /// without rewinding it.
     pub fn revoke(&mut self, plugin: &str, capability: &str) -> Result<bool, RegistryError> {
         let position = *self
             .index
             .get(plugin)
             .ok_or_else(|| RegistryError::UnknownPlugin(plugin.to_string()))?;
-        let entry = self
-            .plugins
-            .get_mut(position)
-            .ok_or_else(|| RegistryError::UnknownPlugin(plugin.to_string()))?;
-
-        let Some(index) = entry.granted.iter().position(|name| name == capability) else {
-            return Ok(false);
+        let (ty, granted) = {
+            let entry = self
+                .plugins
+                .get(position)
+                .ok_or_else(|| RegistryError::UnknownPlugin(plugin.to_string()))?;
+            let Some(index) = entry.granted.iter().position(|name| name == capability) else {
+                return Ok(false);
+            };
+            (entry.manifest.plugin_type.clone(), index)
         };
-        entry
-            .environment
-            .set(capability, mlua::Value::Nil)
-            .map_err(RegistryError::Lua)?;
-        entry.granted.remove(index);
-        Ok(true)
+        let held = {
+            let entry = self
+                .plugins
+                .get(position)
+                .ok_or_else(|| RegistryError::UnknownPlugin(plugin.to_string()))?;
+            self.runtime_for(&ty)
+                .map(|backend| backend.revoke_capability(&*entry.instance, capability))
+                .unwrap_or(false)
+        };
+        self.plugins
+            .get_mut(position)
+            .ok_or_else(|| RegistryError::UnknownPlugin(plugin.to_string()))?
+            .granted
+            .remove(granted);
+        Ok(held)
     }
 
-    /// Reports what every plugin under `root` requests, without executing anything.
+    /// Reports what every plugin under a root asks for, without running any of it.
     ///
-    /// This is the review-before-you-run surface: manifests are static, so a host can
-    /// see exactly what a plugin wants before any of its code runs. Ambient globals
-    /// are listed too, since they reach a plugin whether it declared them or not.
+    /// This is the call to make before `load` when the plugins are not yet trusted:
+    /// it reads manifests and signatures only.
     pub fn audit(&self, root: impl AsRef<Path>) -> Result<Audit, RegistryError> {
         self.check_setup()?;
         let (manifests, unreadable) = manifest::discover(root.as_ref())?;
@@ -1165,14 +1084,17 @@ impl<C: LuaClass> Registry<C> {
                     .capabilities
                     .iter()
                     .map(|(name, declared)| {
-                        let (params, optional) = capability::split_optional(declared);
+                        let (params, optional) =
+                            stanchion_abi::callback::split_optional(declared);
                         CapabilityRequest {
                             plugin: manifest.name.clone(),
-                            #[cfg(feature = "signatures")]
-                            signer: signer.clone(),
-                            name: name.clone(),
+                            capability: name.clone(),
                             params,
                             optional,
+                            #[cfg(feature = "signatures")]
+                            signer: signer.to_string(),
+                            #[cfg(not(feature = "signatures"))]
+                            signer: "unsigned".to_string(),
                         }
                     })
                     .collect();
@@ -1200,20 +1122,20 @@ impl<C: LuaClass> Registry<C> {
     }
 
     /// Looks a plugin up by name.
-    pub fn get(&self, name: &str) -> Option<&Plugin<C>> {
+    pub fn get(&self, name: &str) -> Option<&LoadedPlugin> {
         self.index
             .get(name)
             .and_then(|position| self.plugins.get(*position))
     }
 
     /// Every loaded plugin, in load order.
-    pub fn plugins(&self) -> &[Plugin<C>] {
+    pub fn plugins(&self) -> &[LoadedPlugin] {
         &self.plugins
     }
 
     /// Names of every loaded plugin, in load order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.plugins.iter().map(Plugin::name)
+        self.plugins.iter().map(LoadedPlugin::name)
     }
 
     /// Number of loaded plugins.
@@ -1226,173 +1148,11 @@ impl<C: LuaClass> Registry<C> {
         self.plugins.is_empty()
     }
 
-    /// Applies the rocks tree's module paths once, and lists what it holds.
-    #[cfg(feature = "luarocks")]
-    fn prepare_rocks(
-        &mut self,
-    ) -> Result<Option<std::collections::BTreeMap<String, rocks::RockVersion>>, RegistryError> {
-        let Some(config) = self.rocks.clone() else {
-            return Ok(None);
-        };
-        if self.rock_paths.is_none() {
-            // Cached once: every state the registry creates gets the same paths.
-            self.rock_paths = Some(config.paths().map_err(RegistryError::Rocks)?);
-        }
-        let installed = config.installed().map_err(RegistryError::Rocks)?;
-        Ok(Some(installed))
-    }
-
-    /// Installs every rock declared by any plugin under `root`.
-    ///
-    /// Loading never installs anything; call this when the host wants to provision.
-    #[cfg(feature = "luarocks")]
-    pub fn install_rocks(&self, root: impl AsRef<Path>) -> Result<InstallReport, RegistryError> {
-        let config = self.rocks.as_ref().ok_or_else(|| {
-            RegistryError::Rocks(rocks::RocksError::Requirement {
-                raw: String::new(),
-                message: "no LuaRocks tree configured; call `with_rocks` first".to_string(),
-            })
-        })?;
-
-        let (manifests, _) = manifest::discover(root.as_ref())?;
-        let mut wanted: std::collections::BTreeMap<String, String> =
-            std::collections::BTreeMap::new();
-        for manifest in &manifests {
-            for (name, requirement) in &manifest.rocks {
-                wanted.insert(name.clone(), requirement.clone());
-            }
-        }
-
-        let installed = config.installed().map_err(RegistryError::Rocks)?;
-        let mut report = InstallReport::default();
-
-        for (name, raw) in wanted {
-            let requirement = match rocks::Requirement::parse(&raw) {
-                Ok(requirement) => requirement,
-                Err(err) => {
-                    report.failures.push((name, err.to_string()));
-                    continue;
-                }
-            };
-            if installed
-                .get(&name)
-                .is_some_and(|found| requirement.matches(found))
-            {
-                report.satisfied.push(name);
-                continue;
-            }
-            match config.install(&name, &requirement) {
-                Ok(()) => report.installed.push(name),
-                Err(err) => report.failures.push((name, err.to_string())),
-            }
-        }
-        Ok(report)
-    }
-
-    /// Evaluates a plugin's chunk and constructs its instance, wired to its
-    /// dependencies. Returns the instance and its raw exports table, if it published one.
-    fn instantiate(
-        &self,
-        lua: &Lua,
-        runtime: &dyn Runtime,
-        budget: Option<&Budget>,
-        manifest: &Manifest,
-        #[cfg(feature = "signatures")] signer: &Signer,
-        #[cfg(feature = "signatures")] digest: Option<&DirectoryDigest>,
-    ) -> Result<Loaded<C>, FailureReason> {
-        let path = manifest.entry_path();
-        let source = fs::read_to_string(&path)?;
-
-        // Confirm these are the bytes that were verified, not whatever is on disk now.
-        #[cfg(feature = "signatures")]
-        if let Some(digest) = digest {
-            let relative = slash_path(&manifest.entry);
-            if !digest.covers(&relative) {
-                return Err(FailureReason::UncoveredFile(relative));
-            }
-            if !digest.matches(&relative, source.as_bytes()) {
-                return Err(FailureReason::DigestMismatch(relative));
-            }
-        }
-
-        let environment = plugin_environment(lua)?;
-        let granted = self.grant_capabilities(
-            runtime,
-            &environment,
-            manifest,
-            #[cfg(feature = "signatures")]
-            signer,
-        )?;
-        // Search templates are fixed here, at load time, rather than read from the live
-        // (plugin-writable) `package.path` on each `require`. A plugin cannot steer
-        // `require` at a file the host never blessed. See #31.
-        let search_templates = self.plugin_search_templates(&manifest.dir);
-        // Submodules must see the same environment, or a plugin split across files
-        // would only half-see its capabilities.
-        install_plugin_require(
-            lua,
-            &environment,
-            true,
-            search_templates,
-            #[cfg(feature = "signatures")]
-            manifest.dir.clone(),
-            #[cfg(feature = "signatures")]
-            digest.cloned(),
-        )?;
-
-        // A runaway chunk must not hang the load either.
-        if let Some(budget) = budget {
-            budget.reset();
-        }
-
-        let class: C = lua
-            .load(source)
-            .set_name(path.display().to_string())
-            .set_environment(environment.clone())
-            .eval()?;
-
-        let config = lua.to_value(&manifest.config)?;
-        let dependencies = self.dependency_table(lua, manifest)?;
-        let instance: C::Instance = class
-            .handle()
-            .call_function(&self.constructor, (config, dependencies))?;
-
-        let exports = self.extract_exports(instance.handle())?;
-        Ok(Loaded {
-            instance,
-            exports,
-            environment,
-            granted,
-        })
-    }
-
-    /// The module search templates a plugin's `require` is allowed to consult.
-    ///
-    /// The plugin's own directory, plus any host-configured rock trees. Deliberately
-    /// not derived from the live `package.path`: that table is writable by the plugin,
-    /// and reading it per call let a plugin point `require` at any file the host could
-    /// read (see #31).
-    fn plugin_search_templates(&self, dir: &Path) -> Vec<String> {
-        let dir = dir.display();
-        #[cfg_attr(not(feature = "luarocks"), allow(unused_mut))]
-        let mut templates = vec![format!("{dir}/?.lua"), format!("{dir}/?/init.lua")];
-        #[cfg(feature = "luarocks")]
-        if let Some(paths) = &self.rock_paths {
-            templates.extend(
-                paths
-                    .path
-                    .split(';')
-                    .filter(|template| !template.is_empty())
-                    .map(str::to_string),
-            );
-        }
-        templates
-    }
-
     /// Verifies a plugin directory and reports who signed it.
     ///
-    /// A missing signature is not fraud: it becomes [`Signer::Unsigned`] unless the
-    /// registry requires signatures, so hosts can adopt signing incrementally.
+    /// A missing signature is not fraud: it becomes [`Signer::Unsigned`]
+    /// unless the registry requires signatures, so hosts can adopt signing
+    /// incrementally.
     #[cfg(feature = "signatures")]
     pub fn verify_plugin(
         &self,
@@ -1448,188 +1208,88 @@ impl<C: LuaClass> Registry<C> {
         Ok((signer, digest))
     }
 
-    /// Resolves and binds one plugin's declared capabilities into its environment.
+    /// Applies policy to a manifest's declared capabilities.
     ///
-    /// Denial of a required capability fails the plugin; denial of an optional one
-    /// simply leaves the name unbound.
-    fn grant_capabilities(
-        &self,
-        runtime: &dyn Runtime,
-        _environment: &Table,
-        manifest: &Manifest,
-        #[cfg(feature = "signatures")] signer: &Signer,
-    ) -> Result<Vec<String>, FailureReason> {
-        let mut granted = Vec::new();
-
-        for (name, declared) in &manifest.capabilities {
-            let (params, optional) = capability::split_optional(declared);
-            let request = CapabilityRequest {
-                plugin: manifest.name.clone(),
-                #[cfg(feature = "signatures")]
-                signer: signer.clone(),
-                name: name.clone(),
-                params,
-                optional,
-            };
-
-            let Some(provider) = self.host_setup.provider(name) else {
-                if optional {
-                    continue;
-                }
-                return Err(FailureReason::UnknownCapability(name.clone()));
-            };
-
-            // Deny by default: offering a capability is not granting it.
-            let decision = match &self.policy {
-                Some(policy) => policy.decide(&request),
-                None => Decision::Deny("no capability policy is configured".to_string()),
-            };
-
-            let approved = match decision {
-                Decision::Grant => request.params.clone(),
-                Decision::GrantWith(params) => params,
-                Decision::Deny(reason) => {
-                    if optional {
-                        continue;
-                    }
-                    return Err(FailureReason::CapabilityDenied {
-                        name: name.clone(),
-                        reason,
-                    });
-                }
-            };
-
-            let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
-            let value_abi = provider(runtime, &grant)?;
-            let Some(lua_arc) = runtime.lua_state() else {
-                return Err(FailureReason::Lua(mlua::Error::RuntimeError(
-                    "Lua runtime required for capability binding".to_string(),
-                )));
-            };
-            let lua = lua_arc.lock().map_err(|_| {
-                FailureReason::Lua(mlua::Error::RuntimeError(
-                    "the Lua state is poisoned".to_string(),
-                ))
-            })?;
-            let value_lua = if matches!(value_abi, stanchion_abi::Value::Function) {
-                FUNCTION_CACHE
-                    .with(|cache| {
-                        cache.borrow_mut().take().ok_or_else(|| {
-                            mlua::Error::RuntimeError("cached function not found".to_string())
-                        })
-                    })
-                    .map_err(FailureReason::Lua)?
-            } else {
-                abi_to_lua(&value_abi, &lua)
-                    .map_err(|e| FailureReason::Lua(mlua::Error::RuntimeError(e.to_string())))?
-            };
-            _environment.set(name.as_str(), value_lua)?;
-            granted.push(name.clone());
-        }
-
-        Ok(granted)
-    }
-
-    /// Evaluates policy for a plugin's declared capabilities (non-Lua path).
+    /// Returns the names actually granted. Backends run the same decision
+    /// when binding; this is the host-visible half for auditing and for
+    /// backends that check grants at call time.
     pub fn evaluate_policy(
         &self,
         manifest: &Manifest,
         #[cfg(feature = "signatures")] signer: &Signer,
     ) -> Vec<String> {
+        #[cfg(feature = "signatures")]
+        let signer = signer.to_string();
+        #[cfg(not(feature = "signatures"))]
+        let signer = "unsigned".to_string();
         let mut granted = Vec::new();
         for (name, declared) in &manifest.capabilities {
-            let (params, optional) = capability::split_optional(declared);
+            let (params, optional) = stanchion_abi::callback::split_optional(declared);
             let request = CapabilityRequest {
                 plugin: manifest.name.clone(),
-                #[cfg(feature = "signatures")]
-                signer: signer.clone(),
-                name: name.clone(),
+                capability: name.clone(),
                 params,
                 optional,
+                signer: signer.clone(),
             };
             let Some(_) = self.host_setup.provider(name) else {
                 continue;
             };
-            let decision = match &self.policy {
-                Some(p) => p.decide(&request),
-                None => Decision::Deny("no policy".to_string()),
-            };
-            if matches!(decision, Decision::Grant | Decision::GrantWith(_)) {
+            if matches!(
+                self.policy.decide(&request),
+                Decision::Grant | Decision::GrantWith(_)
+            ) {
                 granted.push(name.clone());
             }
         }
         granted
     }
+}
 
-    /// Builds the `deps` table handed to a constructor: dependency name to proxy.
-    ///
-    /// Load order guarantees every required dependency is already present.
-    fn dependency_table(&self, lua: &Lua, manifest: &Manifest) -> Result<Table, FailureReason> {
-        let dependencies = lua.create_table()?;
-        for (name, spec) in &manifest.dependencies {
-            match self.get(name) {
-                Some(plugin) => match plugin.exports() {
-                    Some(proxy) => dependencies.set(name.as_str(), proxy.clone())?,
-                    None => return Err(FailureReason::MissingExports(name.clone())),
-                },
-                // An absent optional dependency simply leaves a nil slot.
-                None if spec.is_optional() => {}
-                None => return Err(FailureReason::MissingDependency(name.clone())),
-            }
-        }
-        Ok(dependencies)
-    }
+/// One verified manifest with its digest-bound entry bytes, awaiting a backend.
+struct ReadyItem {
+    manifest: Manifest,
+    entry_bytes: Vec<u8>,
+    #[cfg(feature = "signatures")]
+    signer: Signer,
+    #[cfg(feature = "signatures")]
+    digest: Option<DirectoryDigest>,
+}
 
-    /// Reads a plugin's `exports`, accepting either a table or a function returning one.
-    fn extract_exports(
-        &self,
-        instance: &stanchion_lua::LuaHandle,
-    ) -> Result<Option<Table>, FailureReason> {
-        match instance.get::<Value>(EXPORTS_KEY)? {
-            Value::Nil => Ok(None),
-            Value::Table(table) => Ok(Some(table)),
-            Value::Function(function) => Ok(Some(function.call(instance.to_value())?)),
-            other => Err(FailureReason::Lua(mlua::Error::RuntimeError(format!(
-                "`{EXPORTS_KEY}` must be a table or a function returning one, found {}",
-                other.type_name()
-            )))),
-        }
+/// Confirms `entry_bytes` are the bytes the digest verified.
+#[cfg(feature = "signatures")]
+fn bind_entry(
+    manifest: &Manifest,
+    digest: &DirectoryDigest,
+    entry_bytes: &[u8],
+) -> Result<(), FailureReason> {
+    let relative = slash_path(&manifest.entry);
+    if !digest.covers(&relative) {
+        return Err(FailureReason::UncoveredFile(relative));
     }
+    if !digest.matches(&relative, entry_bytes) {
+        return Err(FailureReason::DigestMismatch(relative));
+    }
+    Ok(())
+}
 
-    /// Wraps an exports table in the stable proxy dependents hold.
-    ///
-    /// The proxy forwards reads to the live exports table but is otherwise sealed:
-    /// writes are refused, and the forwarding metatable is hidden behind `__metatable`
-    /// so a dependent cannot repoint `__index` at a table of its own or write through
-    /// `__newindex` — both of which would let it hijack the provider's surface for
-    /// every other dependent. See #32.
-    fn make_proxy(&self, lua: &Lua, table: &Table) -> mlua::Result<Exports> {
-        let proxy = lua.create_table()?;
-        let metatable = lua.create_table()?;
-        let exports = Exports { proxy, metatable };
-        exports.repoint(table.clone())?;
-        let readonly = lua.create_function(|_, (_, _, _): (Table, Value, Value)| {
-            Err::<(), _>(mlua::Error::RuntimeError(
-                "plugin exports are read-only".to_string(),
-            ))
-        })?;
-        exports.metatable.set("__newindex", readonly)?;
-        exports
-            .metatable
-            .set("__metatable", "locked: plugin exports")?;
-        exports
-            .proxy
-            .set_metatable(Some(exports.metatable.clone()))?;
-        Ok(exports)
-    }
+/// Renders a relative path with `/` separators, matching the digest's keys.
+#[cfg(feature = "signatures")]
+fn slash_path(path: impl AsRef<Path>) -> String {
+    path.as_ref()
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Checks one plugin's `[rocks]` against what the tree holds.
 #[cfg(feature = "luarocks")]
 fn verify_rocks(
     manifest: &Manifest,
-    installed: Option<&std::collections::BTreeMap<String, rocks::RockVersion>>,
+    installed: Option<&std::collections::BTreeMap<String, stanchion_abi::rocks::RockVersion>>,
 ) -> Result<(), FailureReason> {
+    use stanchion_abi::rocks::Requirement;
     if manifest.rocks.is_empty() {
         return Ok(());
     }
@@ -1641,7 +1301,7 @@ fn verify_rocks(
 
     for (name, raw) in &manifest.rocks {
         let requirement =
-            rocks::Requirement::parse(raw).map_err(|err| FailureReason::Rocks(err.to_string()))?;
+            Requirement::parse(raw).map_err(|err| FailureReason::Rocks(err.to_string()))?;
         match installed.get(name) {
             None => {
                 return Err(FailureReason::MissingRock {
@@ -1660,201 +1320,4 @@ fn verify_rocks(
         }
     }
     Ok(())
-}
-
-/// Prepends a rocks tree's search paths to the shared state.
-#[cfg(feature = "luarocks")]
-fn prepend_module_paths(lua: &Lua, paths: &rocks::RockPaths) -> mlua::Result<()> {
-    let Some(package) = lua.globals().get::<Option<Table>>("package")? else {
-        return Ok(());
-    };
-    for (key, addition) in [("path", Some(&paths.path)), ("cpath", paths.cpath.as_ref())] {
-        let Some(addition) = addition else { continue };
-        if addition.is_empty() {
-            continue;
-        }
-        let current: String = package.get(key).unwrap_or_default();
-        if !current.contains(addition.as_str()) {
-            package.set(key, format!("{addition};{current}"))?;
-        }
-    }
-    Ok(())
-}
-
-/// Renders a relative path with `/` separators, matching the digest's keys.
-#[cfg(feature = "signatures")]
-fn slash_path(path: impl AsRef<Path>) -> String {
-    path.as_ref()
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-/// Largest module file `require` will read, in bytes.
-///
-/// A cap matters because the search is over host-readable paths: without it a file
-/// such as `/dev/zero` (were it ever reachable) would read without bound in Rust,
-/// outside the Lua memory limit. 8 MiB is far above any realistic Lua module.
-const MAX_MODULE_BYTES: u64 = 8 * 1024 * 1024;
-
-/// Gives a plugin a `require` that loads its modules into its own environment.
-///
-/// Lua's stock `require` runs a module chunk in the global environment and caches it
-/// in the shared `package.loaded`. Both are wrong here: a submodule would not see the
-/// capabilities bound in its plugin's environment, and two plugins could not load
-/// different versions of the same module name. This replacement searches a fixed set of
-/// `search_templates` captured at load time (never the live, plugin-writable
-/// `package.path`), loads with the plugin's environment, and caches per plugin.
-///
-/// Each candidate is canonicalised and must be a regular file that stays within the
-/// directory its own template names; symlinks, devices and files reached via `..` are
-/// refused, as is anything larger than [`MAX_MODULE_BYTES`]. When a digest is present,
-/// a file inside the plugin's own directory must be covered by and match it.
-///
-/// Anything it cannot resolve falls through to the original `require`, so preloaded and
-/// C modules still resolve — but only when not `restricted`.
-fn install_plugin_require(
-    lua: &Lua,
-    environment: &Table,
-    restricted: bool,
-    search_templates: Vec<String>,
-    #[cfg(feature = "signatures")] plugin_dir: std::path::PathBuf,
-    #[cfg(feature = "signatures")] digest: Option<DirectoryDigest>,
-) -> mlua::Result<()> {
-    let loaded = lua.create_table()?;
-    let fallback: Option<mlua::Function> = lua.globals().get("require")?;
-    let plugin_env = environment.clone();
-
-    // Bound each template to the directory it names, resolved once up front. A candidate
-    // may only resolve to a real path beneath the root of the template that produced it.
-    let roots: Vec<Option<std::path::PathBuf>> = search_templates
-        .iter()
-        .map(|template| template_root(template))
-        .collect();
-
-    // The plugin directory, resolved to compare against canonicalised candidates.
-    #[cfg(feature = "signatures")]
-    let plugin_dir = fs::canonicalize(&plugin_dir).unwrap_or(plugin_dir);
-
-    let require = lua.create_function(move |lua, name: String| {
-        if let Some(cached) = loaded.get::<Option<Value>>(name.as_str())? {
-            return Ok(cached);
-        }
-
-        let relative = name.replace('.', std::path::MAIN_SEPARATOR_STR);
-
-        for (template, root) in search_templates.iter().zip(roots.iter()) {
-            let candidate = template.replace('?', &relative);
-
-            // Resolve symlinks and `..`, which also confirms the file exists.
-            let Ok(resolved) = fs::canonicalize(&candidate) else {
-                continue;
-            };
-            // Only regular files: never a FIFO, device or directory, whose reads could
-            // block forever or run unbounded.
-            let Ok(meta) = fs::metadata(&resolved) else {
-                continue;
-            };
-            if !meta.is_file() || meta.len() > MAX_MODULE_BYTES {
-                continue;
-            }
-            // The resolved target must stay under the template's own directory, so a
-            // name laced with `..` or a symlink out cannot reach elsewhere.
-            match root {
-                Some(root) if resolved.starts_with(root) => {}
-                _ => continue,
-            }
-
-            let Ok(source) = fs::read_to_string(&resolved) else {
-                continue;
-            };
-
-            // A submodule inside a verified plugin must match what was signed.
-            #[cfg(feature = "signatures")]
-            if let Some(digest) = &digest
-                && let Ok(relative) = resolved.strip_prefix(&plugin_dir)
-            {
-                let relative = slash_path(relative);
-                if !digest.covers(&relative) {
-                    return Err(mlua::Error::RuntimeError(format!(
-                        "`{relative}` was not part of the verified plugin"
-                    )));
-                }
-                if !digest.matches(&relative, source.as_bytes()) {
-                    return Err(mlua::Error::RuntimeError(format!(
-                        "`{relative}` changed between verification and loading"
-                    )));
-                }
-            }
-
-            let value: Value = lua
-                .load(source)
-                .set_name(resolved.display().to_string())
-                .set_environment(plugin_env.clone())
-                .eval()?;
-            // Lua treats a module returning nothing as `true`.
-            let value = if value.is_nil() {
-                Value::Boolean(true)
-            } else {
-                value
-            };
-            loaded.set(name.as_str(), value.clone())?;
-            return Ok(value);
-        }
-
-        match &fallback {
-            Some(fallback) if !restricted => fallback.call(name),
-            _ => Err(mlua::Error::RuntimeError(format!(
-                "module `{name}` not found"
-            ))),
-        }
-    })?;
-
-    environment.set("require", require)
-}
-
-/// The fixed directory a search template resolves within, canonicalised.
-///
-/// A template such as `/plugins/foo/?.lua` yields the resolved `/plugins/foo`. The
-/// portion before the first `?` is treated as a path; its directory is the root every
-/// candidate from this template must stay beneath. Returns `None` when that directory
-/// cannot be resolved (it does not exist), which makes the template match nothing.
-fn template_root(template: &str) -> Option<std::path::PathBuf> {
-    let prefix = template.split('?').next().unwrap_or("");
-    let dir = Path::new(prefix).parent().unwrap_or_else(|| Path::new(""));
-    fs::canonicalize(dir).ok()
-}
-
-/// A table that reads through to the real globals but keeps writes to itself.
-fn plugin_environment(lua: &Lua) -> mlua::Result<Table> {
-    let environment = lua.create_table()?;
-    let metatable = lua.create_table()?;
-    metatable.set("__index", lua.globals())?;
-    environment.set_metatable(Some(metatable))?;
-
-    // Under shared/grouped isolation every plugin's environment `__index`es the same
-    // globals, so `string.format = ...` would mutate the library table every other
-    // plugin sees. Give each environment its own shallow copy of the mutable core
-    // library tables as *own* fields, so a field reassignment stays local. Method-call
-    // syntax (`s:upper()`) and the string metatable still resolve through the one
-    // shared state and are not a boundary — see docs/isolation.md; untrusted plugins
-    // need per-plugin isolation. See #32.
-    let globals = lua.globals();
-    for name in ["string", "table", "math", "coroutine", "os", "io"] {
-        if let Some(lib) = globals.get::<Option<Table>>(name)? {
-            environment.set(name, shallow_copy(lua, &lib)?)?;
-        }
-    }
-    Ok(environment)
-}
-
-/// Copies a table's own key/value pairs into a fresh table (values shared, not cloned).
-fn shallow_copy(lua: &Lua, table: &Table) -> mlua::Result<Table> {
-    let copy = lua.create_table()?;
-    for pair in table.clone().pairs::<Value, Value>() {
-        let (key, value) = pair?;
-        copy.set(key, value)?;
-    }
-    Ok(copy)
 }

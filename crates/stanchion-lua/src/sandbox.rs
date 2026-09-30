@@ -96,17 +96,18 @@ impl Default for Sandbox {
 
 impl Sandbox {
     /// String, table, math, coroutine and package — no `io`, `os` or `debug` — with
-    /// [`RESTRICTED_DENY_LIST`] removed on top.
+    /// [`RESTRICTED_DENY_LIST`] removed on top, bounded to 64 MiB and 50M
+    /// instructions per call.
     ///
-    /// Leaves `pcall` and `xpcall` as Lua defines them, which means a plugin can catch
-    /// a panic raised in one of your callbacks. See
-    /// [`Sandbox::catch_rust_panics`] for why that is a choice rather than a detail.
+    /// A panic in one of your callbacks always reaches the host: `pcall` cannot
+    /// swallow it. See [`Sandbox::catch_rust_panics`] to opt back into stock
+    /// handlers when you need them.
     pub fn restricted() -> Self {
         Sandbox {
             libs: core_libs(),
-            options: LuaOptions::new().catch_rust_panics(true),
-            memory_limit: None,
-            instruction_limit: None,
+            options: LuaOptions::new().catch_rust_panics(false),
+            memory_limit: Some(64 * 1024 * 1024),
+            instruction_limit: Some(50_000_000),
             denied: RESTRICTED_DENY_LIST
                 .iter()
                 .map(|name| (*name).to_string())
@@ -123,7 +124,7 @@ impl Sandbox {
     pub fn permissive() -> Self {
         Sandbox {
             libs: core_libs() | StdLib::IO | StdLib::OS,
-            options: LuaOptions::new().catch_rust_panics(true),
+            options: LuaOptions::new().catch_rust_panics(false),
             memory_limit: None,
             instruction_limit: None,
             denied: Vec::new(),
@@ -183,14 +184,12 @@ impl Sandbox {
     /// option decides is whether Lua's own `pcall`/`xpcall` get to intercept that
     /// object on the way.
     ///
-    /// - `true` (the default, and what both presets use): stock `pcall`/`xpcall`, so a
-    ///   plugin wrapping a host call in `pcall` **swallows the panic** and carries on.
-    /// - `false`: mlua substitutes handlers that rethrow a panic past the plugin's
-    ///   handler, so it always reaches the host.
-    ///
-    /// For plugins you did not write, `false` is the defensible setting: a panic in
-    /// your code is not a plugin's to discard. It is not the default here because
-    /// changing it changes what already-working plugins observe.
+    /// - `false` (the default, and what both presets use): mlua substitutes
+    ///   handlers that rethrow a panic past the plugin's handler, so it always
+    ///   reaches the host. A panic in your code is not a plugin's to discard.
+    /// - `true`: stock `pcall`/`xpcall`, so a plugin wrapping a host call in
+    ///   `pcall` **swallows the panic** and carries on. Opt in only when you
+    ///   need observable compatibility with already-working plugins.
     pub fn catch_rust_panics(mut self, enabled: bool) -> Self {
         self.options = self.options.catch_rust_panics(enabled);
         self

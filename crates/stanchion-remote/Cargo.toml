@@ -9,9 +9,9 @@ publish.workspace = true
 exclude.workspace = true
 
 [dependencies]
-mlua = { workspace = true, features = ["serde"] }
 stanchion-abi.workspace = true
-stanchion-registry = { workspace = true, features = ["config"] }
+stanchion-lua = { workspace = true }
+stanchion-registry = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 jsonrpsee-types.workspace = true
@@ -29,16 +29,16 @@ required-features = ["wasm-backend"]
 
 [features]
 default = []
-lua-backend = ["mlua/lua54"]
+lua-backend = ["stanchion-lua/lua54"]
 wasm-backend = []
-async = ["stanchion-registry/async"]
+async = ["stanchion-lua/async"]
 luarocks = ["stanchion-registry/luarocks"]
 signatures = ["stanchion-registry/signatures"]
-lua54 = ["mlua/lua54"]
-lua53 = ["mlua/lua53"]
-luajit = ["mlua/luajit"]
-luau = ["mlua/luau"]
-vendored = ["mlua/vendored"]
+lua54 = ["stanchion-lua/lua54"]
+lua53 = ["stanchion-lua/lua53"]
+luajit = ["stanchion-lua/luajit"]
+luau = ["stanchion-lua/luau"]
+vendored = ["stanchion-lua/vendored"]
 
 [lints]
 workspace = true

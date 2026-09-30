@@ -19,15 +19,9 @@ use std::path::PathBuf;
 
 use semver::VersionReq;
 use stanchion_dist::{HttpIndex, HttpSource, Installer};
-use stanchion_lua::lua_class;
-use stanchion_lua::mlua::{Lua, Result, Table};
-use stanchion_registry::{Lockfile, Registry, Sandbox};
-
-#[lua_class]
-pub trait Greeter {
-    fn new(config: Table, deps: Table) -> Result<Self>;
-    fn greet(&self) -> Result<String>;
-}
+use stanchion_lua::backend::LuaBackend;
+use stanchion_lua::sandbox::Sandbox;
+use stanchion_registry::{Lockfile, Registry, Value};
 
 struct Args {
     base: String,
@@ -73,8 +67,9 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
     lockfile.save(&lock_path)?;
     println!("installed to {}", args.root.display());
 
-    let mut registry: Registry<GreeterClass> =
-        Registry::isolated(Lua::new(), Sandbox::restricted());
+    let mut registry = Registry::new().with_runtime(Box::new(LuaBackend::isolated(
+        Sandbox::restricted(),
+    )));
     let report = registry.load_dir(&args.root)?;
     if !report.failures.is_empty() {
         for failure in &report.failures {
@@ -82,10 +77,16 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
         }
         return Err("the installed plugin does not load".into());
     }
-    let plugin = registry
+    let name = registry
         .get(&args.name)
-        .ok_or_else(|| format!("`{}` is installed but not loaded", args.name))?;
-    println!("{} says: {}", plugin.name(), plugin.instance().greet()?);
+        .ok_or_else(|| format!("`{}` is installed but not loaded", args.name))?
+        .name()
+        .to_string();
+    match registry.call(&name, "greet", &[]) {
+        Ok(Value::Str(text)) => println!("{name} says: {text}"),
+        Ok(other) => println!("{name} answered unexpectedly: {other:?}"),
+        Err(err) => return Err(format!("greet failed: {err}").into()),
+    }
     Ok(())
 }
 

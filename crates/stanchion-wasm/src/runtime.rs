@@ -204,7 +204,7 @@ fn wasm_to_value(results: &[Val]) -> Result<Value, String> {
     }
 }
 
-/// A handle to a loaded WASM plugin instance, analogous to DynInstance.
+/// A handle to a loaded WASM plugin instance: an entry point plus its runtime.
 pub struct WasmInstance {
     runtime: WasmRuntime,
     entry_point: String,

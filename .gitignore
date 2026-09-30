@@ -5,3 +5,6 @@ target/
 
 # From Godot's import system
 *.uid
+
+# Local git worktrees.
+.worktrees/

@@ -207,15 +207,14 @@ fn extract_issuer(parsed: &x509_parser::certificate::X509Certificate) -> Option<
 /// legacy form is the raw UTF-8 issuer string.
 fn decode_issuer_value(value: &[u8]) -> Option<String> {
     // v2: DER UTF8String with a short-form length.
-    if value.len() >= 2 && value[0] == 0x0c && value[1] < 0x80 {
-        let len = value[1] as usize;
-        if value.len() >= 2 + len {
-            if let Ok(text) = std::str::from_utf8(&value[2..2 + len]) {
-                let text = text.trim();
-                if !text.is_empty() {
-                    return Some(text.to_string());
-                }
-            }
+    if let [0x0c, len, rest @ ..] = value
+        && *len < 0x80
+        && let Some(body) = rest.get(..usize::from(*len))
+        && let Ok(text) = std::str::from_utf8(body)
+    {
+        let text = text.trim();
+        if !text.is_empty() {
+            return Some(text.to_string());
         }
     }
     // Legacy (or anything not a clean DER UTF8String): treat as raw UTF-8.

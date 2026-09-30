@@ -4779,7 +4779,7 @@ name = "stanchion-sigstore"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.10.9",
  "sigstore",
  "sigstore_protobuf_specs",
  "stanchion-registry",

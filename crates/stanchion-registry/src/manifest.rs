@@ -204,6 +204,7 @@ pub fn resolve_order(manifests: Vec<Manifest>) -> (Vec<Manifest>, Vec<LoadFailur
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

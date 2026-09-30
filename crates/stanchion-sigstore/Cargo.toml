@@ -11,7 +11,9 @@ exclude.workspace = true
 [dependencies]
 stanchion-registry = { workspace = true, features = ["signatures"] }
 serde_json.workspace = true
-sha2.workspace = true
+# 0.10, not the workspace 0.11: sigstore 0.14's `verify_digest` takes this
+# version's `Sha256`, and the hasher here exists only to feed it.
+sha2 = "0.10"
 sigstore = { version = "0.14", default-features = false, features = [
     "verify",
     "sigstore-trust-root",

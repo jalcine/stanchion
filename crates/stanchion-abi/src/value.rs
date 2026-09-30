@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 thread_local! {
-    static FUNCTION_CACHE: RefCell<Option<mlua::Value>> = RefCell::new(None);
+    static FUNCTION_CACHE: RefCell<Option<mlua::Value>> = const { RefCell::new(None) };
 }
 
 /// A value crossing the boundary between a plugin and a foreign host.
@@ -110,7 +110,7 @@ pub mod lua {
     use std::collections::BTreeMap;
 
     thread_local! {
-        pub static FUNCTION_CACHE: RefCell<Option<LuaValue>> = RefCell::new(None);
+        pub static FUNCTION_CACHE: RefCell<Option<LuaValue>> = const { RefCell::new(None) };
     }
 
     /// Converts a `stanchion_abi::Value` to an `mlua::Value`.
@@ -124,7 +124,7 @@ pub mod lua {
             Value::List(items) => {
                 let table = lua.create_table()?;
                 for (i, item) in items.iter().enumerate() {
-                    table.set(i + 1, abi_to_lua(item, lua)?)?;
+                    table.set(i.saturating_add(1), abi_to_lua(item, lua)?)?;
                 }
                 Ok(LuaValue::Table(table))
             }
@@ -183,15 +183,13 @@ pub mod lua {
 
     fn lua_table_to_map(lua: &Lua, lua_table: &Table) -> BTreeMap<String, Value> {
         let mut result = BTreeMap::new();
-        for pair_result in lua_table.pairs::<mlua::Value, mlua::Value>() {
-            if let Ok((k, v)) = pair_result {
-                let key_str = match k {
-                    LuaValue::String(s) => Some(lua_string_to_string(s)),
-                    _ => None,
-                };
-                if let Some(key) = key_str {
-                    result.insert(key, lua_to_abi(lua, &v));
-                }
+        for (k, v) in lua_table.pairs::<mlua::Value, mlua::Value>().flatten() {
+            let key_str = match k {
+                LuaValue::String(s) => Some(lua_string_to_string(s)),
+                _ => None,
+            };
+            if let Some(key) = key_str {
+                result.insert(key, lua_to_abi(lua, &v));
             }
         }
         result

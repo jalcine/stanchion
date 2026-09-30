@@ -168,16 +168,13 @@ impl Builder {
                     let granted = crate::value::table_to_map(grant.params());
                     let lua = runtime
                         .lua_state()
-                        .map(|arc| {
-                            let guard = arc.lock().unwrap();
-                            guard.clone()
-                        })
+                        .and_then(|arc| arc.lock().ok().map(|guard| guard.clone()))
                         .unwrap_or_else(stanchion_lua::new_lua);
                     let function = lua
                         .create_function(move |lua, args: MultiValue| {
                             let mut converted = Vec::with_capacity(args.len());
                             for arg in args {
-                                converted.push(crate::value::lua_to_abi(&lua, &arg));
+                                converted.push(crate::value::lua_to_abi(lua, &arg));
                             }
                             let call = crate::callback::CapabilityCall {
                                 plugin: plugin.clone(),
@@ -188,7 +185,7 @@ impl Builder {
                             let answer = provider.invoke(&call).map_err(|e| {
                                 stanchion_lua::mlua::Error::RuntimeError(e.to_string())
                             })?;
-                            Ok(crate::value::abi_to_lua(&answer, &lua))
+                            Ok(crate::value::abi_to_lua(&answer, lua))
                         })
                         .map_err(|e| stanchion_abi::Error::Config(e.to_string()))?;
                     Ok(crate::value::lua_to_abi(
@@ -885,7 +882,7 @@ impl Stanchion {
                         .call_method_async(&method, lua_args)
                         .await
                         .map_err(|e| Error::Runtime(stanchion_abi::RuntimeError::from(e)))
-                        .and_then(|value| Ok(crate::value::lua_to_abi(plugin.lua(), &value))),
+                        .map(|value| crate::value::lua_to_abi(plugin.lua(), &value)),
                     Err(err) => Err(err),
                 };
                 outcomes.push(match outcome {

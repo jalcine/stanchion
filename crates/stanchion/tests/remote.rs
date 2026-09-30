@@ -466,16 +466,23 @@ fn a_capability_outside_the_allowlist_never_reaches_the_handler() -> TestResult 
         .config(&config)
         .plugins(root.path())
         .inherit_stderr(false);
+    let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&ran);
     let mut remote = RemoteRegistry::launch(options)?
         .allow_capabilities(["something-else"])
-        .on_callback(|_: &CallbackCall| -> Result<Json, String> {
-            panic!("the handler must not run for a capability outside the allowlist")
+        .on_callback(move |_: &CallbackCall| -> Result<Json, String> {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err("the handler must not run for a capability outside the allowlist".to_string())
         });
 
     let result: Result<String, _> = remote.call("caller", "lookup", [json!("alpha")]);
     assert!(
         result.is_err(),
         "a blocked capability should fail the call, got {result:?}"
+    );
+    assert!(
+        !ran.load(std::sync::atomic::Ordering::SeqCst),
+        "the handler ran for a capability outside the allowlist"
     );
     remote.shutdown()?;
     Ok(())
@@ -497,7 +504,8 @@ fn a_call_times_out_when_the_host_never_answers() -> TestResult {
 
     let err = remote
         .list()
-        .expect_err("a non-responding host must time out");
+        .err()
+        .ok_or("a non-responding host must time out")?;
     assert!(matches!(err, RemoteError::Timeout { .. }), "got: {err}");
     Ok(())
 }

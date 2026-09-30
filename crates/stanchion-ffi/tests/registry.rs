@@ -1,13 +1,13 @@
 //! Tests for the registry interface in stanchion-ffi.
 
 use stanchion_abi::manifest::PluginType;
-use stanchion_ffi::{BackendRegistry, PluginBackend, PluginInstance, Result, Value};
+use stanchion_ffi::{BackendRegistry, Error, PluginBackend, PluginInstance, Result, Value};
 use std::path::Path;
 
 struct MockPluginInstance;
 impl PluginInstance for MockPluginInstance {
     fn call(&self, _method: &str, _args: &[Value]) -> Result<Value> {
-        unimplemented!()
+        Err(Error::config("mock backends do not run calls"))
     }
 
     fn runtime(&self) -> &str {
@@ -71,7 +71,9 @@ fn backend_registry_iter() {
 
     let backends: Vec<_> = registry.iter().collect();
     assert_eq!(backends.len(), 1);
-    assert_eq!(backends[0].plugin_type(), PluginType::Lua);
+    for backend in &backends {
+        assert_eq!(backend.plugin_type(), PluginType::Lua);
+    }
 }
 
 #[test]

@@ -2,8 +2,7 @@
 //!
 //! This crate implements the full Lua trait stack (LuaClass, LuaObject,
 //! LuaHandle, load_class, __private) and provides the Lua-specific
-//! [`LuaBackend`] and [`LuaInstance`] implementations that satisfy
-//! [`stanchion_abi::PluginBackend`] and [`stanchion_abi::PluginInstance`].
+//! [`LuaBackend`] implementation that satisfies [`stanchion_abi::PluginBackend`].
 
 use std::future::Future;
 use std::io::Write;
@@ -14,7 +13,6 @@ use std::sync::{Arc, Mutex};
 use mlua::chunk::AsChunk;
 use mlua::{FromLua, Lua, ObjectLike, Result as LuaResult, Table, Value};
 use stanchion_abi::runtime::Runtime;
-use stanchion_abi::{Result as AbiResult, Value as AbiValue};
 
 pub use stanchion_macros::lua_class;
 
@@ -432,36 +430,4 @@ pub fn new_lua() -> mlua::Lua {
 /// Creates a new `Runtime` backed by a fresh Lua state.
 pub fn new_runtime() -> std::sync::Arc<dyn stanchion_abi::Runtime> {
     std::sync::Arc::new(LuaBackend::new(new_lua()))
-}
-
-/// A Lua-specific plugin instance that implements [`stanchion_abi::PluginInstance`].
-///
-/// Wraps a constructed Lua class instance and delegates method calls through
-/// the full Lua trait stack.
-pub struct LuaInstance {
-    lua: Arc<Mutex<Lua>>,
-    instance: LuaHandle,
-    exports: Option<Table>,
-}
-
-impl stanchion_abi::PluginInstance for LuaInstance {
-    fn call(&self, _method: &str, _args: &[AbiValue]) -> AbiResult<AbiValue> {
-        // Convert args to mlua values, call the method, convert result back
-        unimplemented!("LuaInstance::call")
-    }
-
-    fn runtime(&self) -> &str {
-        "lua"
-    }
-}
-
-impl LuaInstance {
-    /// Creates a new LuaInstance from a constructed Lua class.
-    pub fn new(lua: Lua, instance: LuaHandle, exports: Option<Table>) -> Self {
-        Self {
-            lua: Arc::new(Mutex::new(lua)),
-            instance,
-            exports,
-        }
-    }
 }

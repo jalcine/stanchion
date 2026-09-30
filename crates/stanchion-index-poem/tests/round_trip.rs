@@ -98,8 +98,12 @@ async fn the_real_client_resolves_against_the_real_server() -> TestResult {
         let release = index.resolve("formatter", &VersionReq::parse("^1.0")?)?;
         assert_eq!(release.version.to_string(), "1.4.2");
 
-        // And the package it names is fetchable from the same server.
-        let bytes = HttpSource::new().fetch(&format!("{base}/v1/blobs/{}", release.digest))?;
+        // And the package it names is fetchable from the same server. The test
+        // server is cleartext localhost, which `HttpSource` refuses unless the
+        // caller opts a trusted local mirror in — exactly what this enables.
+        let bytes = HttpSource::new()
+            .allow_http(true)
+            .fetch(&format!("{base}/v1/blobs/{}", release.digest))?;
         Ok((release.digest.clone(), bytes))
     })
     .await??;
@@ -164,6 +168,7 @@ async fn a_large_package_streams_intact_over_the_socket() -> TestResult {
     let base = start(&root).await?;
     let fetched = tokio::task::spawn_blocking(move || -> Fallible<Vec<u8>> {
         Ok(HttpSource::new()
+            .allow_http(true)
             .limit(64 * 1024 * 1024)
             .fetch(&format!("{base}/v1/blobs/{digest}"))?)
     })

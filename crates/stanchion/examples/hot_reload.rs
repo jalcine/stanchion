@@ -72,10 +72,10 @@ fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
 fn counter_line(registry: &Registry<HandlerClass>) -> String {
     for outcome in registry.dispatch(|plugin| plugin.handle("deploy".into(), "v1".into())) {
         if outcome.name == "counter" {
-            return outcome.result.map_err(|err| err.to_string()).map_or_else(
-                |err| format!("counter failed: {}", first_line(&err)),
-                |text| text,
-            );
+            return outcome
+                .result
+                .map_err(|err| err.to_string())
+                .unwrap_or_else(|err| format!("counter failed: {}", first_line(&err)));
         }
     }
     "counter produced nothing".to_string()

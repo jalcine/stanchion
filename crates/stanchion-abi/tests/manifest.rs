@@ -3,6 +3,11 @@
 use semver::VersionReq;
 use stanchion_abi::manifest::{DependencySpec, DetailedDependency, Manifest, PluginType};
 
+/// Fallible tests read better than `unwrap` and keep the workspace deny on
+/// panicking helpers intact.
+type Boxed = Box<dyn std::error::Error + Send + Sync>;
+type Fallible<T> = std::result::Result<T, Boxed>;
+
 #[test]
 fn lua_plugin_defaults() {
     let manifest = Manifest {
@@ -23,7 +28,7 @@ fn lua_plugin_defaults() {
 }
 
 #[test]
-fn wasm_plugin_defaults() {
+fn wasm_plugin_defaults() -> Fallible<()> {
     let mut manifest = Manifest {
         name: "test".to_string(),
         version: None,
@@ -42,13 +47,17 @@ fn wasm_plugin_defaults() {
 
     // Wrong extension for WASM
     manifest.entry = "init.lua".to_string();
-    let err = manifest.validate().unwrap_err();
+    let err = manifest
+        .validate()
+        .err()
+        .ok_or("a lua entry must fail a wasm manifest")?;
     assert!(err.contains("wasm"));
     assert!(err.contains(".lua"));
+    Ok(())
 }
 
 #[test]
-fn lua_wrong_entry_is_rejected() {
+fn lua_wrong_entry_is_rejected() -> Fallible<()> {
     let manifest = Manifest {
         name: "test".to_string(),
         version: None,
@@ -62,9 +71,13 @@ fn lua_wrong_entry_is_rejected() {
         dir: std::path::PathBuf::from("/tmp/test"),
     };
 
-    let err = manifest.validate().unwrap_err();
+    let err = manifest
+        .validate()
+        .err()
+        .ok_or("a wasm entry must fail a lua manifest")?;
     assert!(err.contains("Lua plugin entry"));
     assert!(err.contains(".lua"));
+    Ok(())
 }
 
 #[test]
@@ -125,57 +138,62 @@ fn entry_path_joins_dir_and_entry() {
 }
 
 #[test]
-fn dependency_spec_requirement_is_not_optional() {
-    let dep = DependencySpec::Requirement(VersionReq::parse("^1.0").unwrap());
+fn dependency_spec_requirement_is_not_optional() -> Fallible<()> {
+    let dep = DependencySpec::Requirement(VersionReq::parse("^1.0")?);
     assert!(!dep.is_optional());
+    Ok(())
 }
 
 #[test]
-fn detailed_dependency_can_be_optional() {
+fn detailed_dependency_can_be_optional() -> Fallible<()> {
     let dep = DependencySpec::Detailed(DetailedDependency {
-        version: VersionReq::parse("^1.0").unwrap(),
+        version: VersionReq::parse("^1.0")?,
         optional: true,
     });
     assert!(dep.is_optional());
 
     let dep = DependencySpec::Detailed(DetailedDependency {
-        version: VersionReq::parse("^1.0").unwrap(),
+        version: VersionReq::parse("^1.0")?,
         optional: false,
     });
     assert!(!dep.is_optional());
+    Ok(())
 }
 
 #[test]
-fn dependency_spec_requirement_access() {
-    let dep = DependencySpec::Requirement(VersionReq::parse("^1.0").unwrap());
+fn dependency_spec_requirement_access() -> Fallible<()> {
+    let dep = DependencySpec::Requirement(VersionReq::parse("^1.0")?);
     let req = dep.requirement();
     assert_eq!(req.to_string(), "^1.0");
+    Ok(())
 }
 
 #[test]
-fn detailed_dependency_requirement_access() {
+fn detailed_dependency_requirement_access() -> Fallible<()> {
     let dep = DependencySpec::Detailed(DetailedDependency {
-        version: VersionReq::parse("^2.0").unwrap(),
+        version: VersionReq::parse("^2.0")?,
         optional: false,
     });
     let req = dep.requirement();
     assert_eq!(req.to_string(), "^2.0");
+    Ok(())
 }
 
 #[test]
-fn manifest_serde_defaults() {
+fn manifest_serde_defaults() -> Fallible<()> {
     // Minimal manifest deserializes with defaults
     let toml_str = r#"
 name = "greeter"
 "#;
-    let manifest: Manifest = toml::from_str(toml_str).unwrap();
+    let manifest: Manifest = toml::from_str(toml_str)?;
     assert_eq!(manifest.name, "greeter");
     assert_eq!(manifest.plugin_type, PluginType::Lua);
     assert_eq!(manifest.entry, "init.lua");
+    Ok(())
 }
 
 #[test]
-fn manifest_serde_explicit_fields() {
+fn manifest_serde_explicit_fields() -> Fallible<()> {
     let toml_str = r#"
 name = "greeter"
 version = "1.2.0"
@@ -188,16 +206,17 @@ greeting = "hello"
 [dependencies]
 formatter = "^1.0"
 "#;
-    let manifest: Manifest = toml::from_str(toml_str).unwrap();
+    let manifest: Manifest = toml::from_str(toml_str)?;
     assert_eq!(manifest.name, "greeter");
     assert_eq!(manifest.version, Some(semver::Version::new(1, 2, 0)));
     assert_eq!(manifest.plugin_type, PluginType::Lua);
     assert_eq!(manifest.entry, "main.lua");
     assert!(manifest.dependencies.contains_key("formatter"));
+    Ok(())
 }
 
 #[test]
-fn manifest_serde_optional_dependency() {
+fn manifest_serde_optional_dependency() -> Fallible<()> {
     let toml_str = r#"
 name = "caller"
 
@@ -205,7 +224,11 @@ name = "caller"
 version = "^2.0"
 optional = true
 "#;
-    let manifest: Manifest = toml::from_str(toml_str).unwrap();
-    let dep = manifest.dependencies.get("logger").unwrap();
+    let manifest: Manifest = toml::from_str(toml_str)?;
+    let dep = manifest
+        .dependencies
+        .get("logger")
+        .ok_or("the logger dependency must parse")?;
     assert!(matches!(dep, DependencySpec::Detailed(d) if d.optional));
+    Ok(())
 }

@@ -1501,10 +1501,16 @@ impl<C: LuaClass> Registry<C> {
 
             let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
             let value_abi = provider(runtime, &grant)?;
-            let lua_arc = runtime
-                .lua_state()
-                .expect("Lua runtime required for capability binding");
-            let lua = lua_arc.lock().unwrap();
+            let Some(lua_arc) = runtime.lua_state() else {
+                return Err(FailureReason::Lua(mlua::Error::RuntimeError(
+                    "Lua runtime required for capability binding".to_string(),
+                )));
+            };
+            let lua = lua_arc.lock().map_err(|_| {
+                FailureReason::Lua(mlua::Error::RuntimeError(
+                    "the Lua state is poisoned".to_string(),
+                ))
+            })?;
             let value_lua = if matches!(value_abi, stanchion_abi::Value::Function) {
                 FUNCTION_CACHE
                     .with(|cache| {
@@ -1512,7 +1518,7 @@ impl<C: LuaClass> Registry<C> {
                             mlua::Error::RuntimeError("cached function not found".to_string())
                         })
                     })
-                    .map_err(|e| FailureReason::Lua(e))?
+                    .map_err(FailureReason::Lua)?
             } else {
                 abi_to_lua(&value_abi, &lua)
                     .map_err(|e| FailureReason::Lua(mlua::Error::RuntimeError(e.to_string())))?

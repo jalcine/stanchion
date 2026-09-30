@@ -327,14 +327,16 @@ fn a_dependent_cannot_tamper_with_the_exports_proxy() -> TestResult {
     let err = lua
         .load(r#"p.decorate = function() return "pwned" end"#)
         .exec()
-        .expect_err("writing through the proxy must fail");
+        .err()
+        .ok_or("writing through the proxy must fail")?;
     assert!(err.to_string().contains("read-only"), "{err}");
 
     // setmetatable is refused too, so __index cannot be repointed.
     let err = lua
         .load("setmetatable(p, { __index = { decorate = 1 } })")
         .exec()
-        .expect_err("replacing the metatable must fail");
+        .err()
+        .ok_or("replacing the metatable must fail")?;
     assert!(err.to_string().contains("metatable"), "{err}");
 
     // The genuine export still resolves and is unchanged.

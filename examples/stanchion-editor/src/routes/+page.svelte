@@ -3,11 +3,28 @@
 
   let name = $state("");
   let greetMsg = $state("");
+  let pluginName = $state("greeter-formal");
+  let plugins = $state<string[]>([]);
+  let pluginList = $state([]);
+
+  async function refreshPlugins() {
+    try {
+      const list = await invoke("stanchion_list_plugins");
+      pluginList = Array.isArray(list) ? list : [];
+      plugins = pluginList.map((p: any) => p.name);
+    } catch (e) {
+      console.error("plugin list error:", e);
+    }
+  }
 
   async function greet(event: Event) {
     event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+    try {
+      const result = await invoke("greet", { name, plugin: pluginName });
+      greetMsg = result as string;
+    } catch (e) {
+      greetMsg = String(e);
+    }
   }
 </script>
 
@@ -28,10 +45,19 @@
   <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
 
   <form class="row" onsubmit={greet}>
+    <div><label>Plugin: <select bind:value={pluginName}>
+      {#each plugins as p}<option value={p}>{p}</option>{/each}
+    </select></label>
+    <button onclick={refreshPlugins}>Refresh plugins</button></div>
     <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
+    <button type="submit">Greet via plugin</button>
   </form>
   <p>{greetMsg}</p>
+  {#if pluginList.length > 0}
+    <div><h3>Discovered plugins:</h3>
+      <ul>{#each pluginList as p}<li><b>{p.name}</b> v{p.version}</li>{/each}</ul>
+    </div>
+  {/if}
 </main>
 
 <style>

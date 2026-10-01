@@ -1,0 +1,8 @@
+name = "greeter-casual"
+version = "0.9.0"
+plugin_type = "lua"
+entry = "init.lua"
+
+[config]
+prefix = "Hey"
+suffix = "Cheers!"

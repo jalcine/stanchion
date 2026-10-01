@@ -1,0 +1,8 @@
+name = "greeter-formal"
+version = "1.0.0"
+plugin_type = "lua"
+entry = "init.lua"
+
+[config]
+prefix = "Esteemed"
+suffix = "I remain, respectfully, yours"

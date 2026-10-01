@@ -1,0 +1,8 @@
+name = "greeter-poetic"
+version = "1.2.0"
+plugin_type = "lua"
+entry = "init.lua"
+
+[config]
+prefix = "O, bright star"
+suffix = "May your light endure"

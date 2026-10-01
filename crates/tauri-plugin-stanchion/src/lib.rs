@@ -49,12 +49,13 @@ pub struct DiscoveredPlugin {
 }
 
 impl DiscoveredPlugin {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> std::result::Result<(), String> {
         let raw = format!(
             "name = \"{}\"\nplugin_type = \"{:?}\"\nentry = \"{}\"\n",
             self.name, self.plugin_type, self.entry
         );
-        toml::from_str::<Manifest>(&raw).map_err(|e| e.to_string())
+        let _ = toml::from_str::<Manifest>(&raw).map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
@@ -92,14 +93,16 @@ impl Default for PluginOptions {
 ///
 /// Call during Tauri `setup` after the app's data dir is available.
 /// Returns the list of discovered plugin names.
-pub fn init(app: &tauri::AppHandle, options: Option<PluginOptions>) -> Vec<String> {
+pub fn init(options: Option<PluginOptions>) -> Vec<String> {
     let options = options.unwrap_or_default();
     let root = match &options.plugin_root {
         Some(p) => p.clone(),
         None => {
-            let mut data_dir = app.path().data_dir().expect("failed to get data dir");
-            data_dir.push("plugins");
-            data_dir
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| std::env::temp_dir());
+            home.join(".local").join("share").join("stanchion").join("plugins")
         }
     };
 
@@ -110,7 +113,7 @@ pub fn init(app: &tauri::AppHandle, options: Option<PluginOptions>) -> Vec<Strin
             p.push("host.toml");
             p
         });
-        if let Err(e) = launch_remote_host(app, host_binary, &config_path, &root) {
+        if let Err(e) = launch_remote_host(host_binary, &config_path, &root) {
             eprintln!("tauri-plugin-stanchion: remote host launch failed: {e}");
         }
     }
@@ -171,13 +174,13 @@ pub fn discover_plugins<P: AsRef<Path>>(root: P) -> BTreeMap<String, DiscoveredP
 }
 
 /// Get snapshot of all discovered plugins.
-pub fn get_discovered_plugins() -> &'static BTreeMap<String, DiscoveredPlugin> {
-    PLUGIN_CACHE.get().unwrap_or(&BTreeMap::new())
+pub fn get_discovered_plugins() -> BTreeMap<String, DiscoveredPlugin> {
+    PLUGIN_CACHE.get().cloned().unwrap_or_default()
 }
 
 /// Get a specific discovered plugin by name.
-pub fn get_plugin(name: &str) -> Option<&DiscoveredPlugin> {
-    PLUGIN_CACHE.get().and_then(|map| map.get(name))
+pub fn get_plugin(name: &str) -> Option<DiscoveredPlugin> {
+    PLUGIN_CACHE.get().and_then(|map| map.get(name).cloned())
 }
 
 /// Tauri command payloads.
@@ -203,7 +206,7 @@ pub enum CallResult {
 /// Launch remote host for out-of-process plugin execution.
 ///
 /// Mirrors desktop's `RemoteRegistry::launch(RemoteOptions::new(...))` pattern.
-fn launch_remote_host(app: &tauri::AppHandle, host_binary: &Path, config_path: &Path, plugins_dir: &Path) -> Result<(), String> {
+fn launch_remote_host(host_binary: &Path, config_path: &Path, plugins_dir: &Path) -> Result<(), String> {
     if !host_binary.is_file() {
         return Err(format!("plugin host binary not found: {}", host_binary.display()));
     }

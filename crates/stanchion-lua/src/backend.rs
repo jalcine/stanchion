@@ -586,6 +586,12 @@ fn install_plugin_require(
             return Ok(cached);
         }
 
+        // Check environment table first for capabilities bound by grant_capabilities
+        if let Ok(Some(cap)) = plugin_env.get::<Option<LuaValue>>(name.as_str()) {
+            loaded.set(name.as_str(), cap.clone())?;
+            return Ok(cap);
+        }
+
         let relative = name.replace('.', std::path::MAIN_SEPARATOR_STR);
 
         for (template, root) in search_templates.iter().zip(roots.iter()) {

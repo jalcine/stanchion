@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    new_example_editor_lib::run()
+    stanchion_editor_lib::run()
 }

@@ -67,7 +67,30 @@ fn default_entry() -> String {
     "init.lua".to_string()
 }
 
-static PLUGIN_CACHE: OnceLock<BTreeMap<String, DiscoveredPlugin>> = OnceLock::new();
+pub struct PluginRegistry {
+    pub plugins: std::sync::Arc<std::sync::Mutex<BTreeMap<String, DiscoveredPlugin>>>,
+}
+
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self { plugins: std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new())) }
+    }
+}
+
+impl PluginRegistry {
+    pub fn get(&self, name: &str) -> Option<DiscoveredPlugin> {
+        self.plugins.lock().unwrap().get(name).cloned()
+    }
+    pub fn list(&self) -> Vec<DiscoveredPlugin> {
+        self.plugins.lock().unwrap().values().cloned().collect()
+    }
+    pub fn discover(&self, root: &Path) -> Vec<String> {
+        // ...could call discover_plugins
+        Vec::new()
+    }
+}
+
+static PLUGIN_CACHE: std::sync::OnceLock<BTreeMap<String, DiscoveredPlugin>> = std::sync::OnceLock::new();
 
 /// Plugin configuration options.
 #[derive(Debug, Clone)]

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 
+use crate::error::Error;
+
 /// File each plugin directory must contain to be discovered.
 pub const MANIFEST_FILE: &str = "plugin.toml";
 
@@ -88,6 +90,20 @@ pub struct Manifest {
     /// Directory the manifest was read from. Filled in by discovery.
     #[serde(skip)]
     pub dir: PathBuf,
+}
+
+impl Manifest {
+    /// Creates a new manifest from a file path.
+    pub fn from_path(path: &camino::Utf8Path) -> Result<Self, Error> {
+        let toml_path = path.join("plugin.toml");
+        let manifest_body =
+            fs_err::read_to_string(toml_path.as_path()).map_err(|e| Error::Io(e.to_string()))?;
+        let mut manifest: Manifest = toml::from_str(&manifest_body).map_err(Error::Toml)?;
+
+        manifest.dir = path.to_path_buf().into_std_path_buf();
+
+        Ok(manifest)
+    }
 }
 
 /// Static budget declared in a plugin manifest.

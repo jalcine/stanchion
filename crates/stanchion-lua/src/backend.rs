@@ -470,10 +470,18 @@ impl LuaBackend {
                     return Err(format!("capability `{name}` denied: {reason}"));
                 }
             };
-            let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
-            let function = mlua_err(bind_provider(lua, provider, &grant))?;
+            let grant = Grant::new(manifest.name.clone(), name.clone(), approved.clone());
+            // Option A: bind module directly, bypassing function-cache
+            let call = CapabilityCall {
+                plugin: grant.plugin().to_string(),
+                capability: grant.name().to_string(),
+                grant: stanchion_abi::Value::Str(format!("{}:{}", grant.plugin(), grant.name())),
+                args: Vec::new(),
+            };
+            let answer = provider.invoke(&call).map_err(|e| format!("capability `{name}` invoke error: {e}"))?;
+            let value = mlua_err(crate::convert::abi_to_lua(&answer, lua))?;
             environment
-                .set(name.as_str(), function)
+                .set(name.as_str(), value)
                 .map_err(|e| e.to_string())?;
             granted.push(name.clone());
         }

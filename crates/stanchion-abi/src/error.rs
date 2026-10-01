@@ -40,7 +40,10 @@ pub enum Error {
     /// No plugin by that name is loaded.
     UnknownPlugin(String),
     /// One plugin failed to load, reload, or verify.
-    Plugin { plugin: String, reason: String },
+    Plugin {
+        plugin: String,
+        reason: String,
+    },
     /// A runtime (Lua, WASM, etc.) raised, or a value could not cross a boundary.
     Runtime(RuntimeError),
     /// A WASM plugin failed to load, run, or answer a call.
@@ -50,12 +53,17 @@ pub enum Error {
     /// The host's own configuration is wrong — an unknown library, a bad root.
     Config(String),
     /// A capability provider refused or failed.
-    Capability { capability: String, reason: String },
+    Capability {
+        capability: String,
+        reason: String,
+    },
     /// A capability provider called back into the registry that invoked it.
     ///
     /// The registry is locked for the duration of a call, so this would otherwise
     /// deadlock in silence. See [`crate::PluginBackend`].
     Reentrant,
+
+    Toml(toml::de::Error),
 }
 
 impl Error {
@@ -75,6 +83,7 @@ impl Error {
             Error::Runtime(_) => "runtime",
             Error::Wasm(_) => "wasm",
             Error::Io(_) => "io",
+            Error::Toml(_) => "toml",
             Error::Config(_) => "config",
             Error::Capability { .. } => "capability",
             Error::Reentrant => "reentrant",
@@ -90,6 +99,7 @@ impl fmt::Display for Error {
             Error::Runtime(err) => write!(f, "{}", err),
             Error::Wasm(message) => write!(f, "{message}"),
             Error::Io(message) => write!(f, "{message}"),
+            Error::Toml(err) => write!(f, "{err}"),
             Error::Config(message) => write!(f, "configuration: {message}"),
             Error::Capability { capability, reason } => {
                 write!(f, "capability `{capability}`: {reason}")

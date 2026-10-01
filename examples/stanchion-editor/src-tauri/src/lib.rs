@@ -27,10 +27,8 @@ fn greet(name: &str, plugin: Option<String>) -> String {
         // Execute via stanchion-lua backend (proper backend interface)
         let backend = LuaBackend::shared();
         let dir_path = plugin_dir().join(&plugin_name);
-        let manifest_path = dir_path.join("plugin.toml");
-        let manifest_raw = std::fs::read_to_string(&manifest_path).unwrap_or_default();
-        let mut manifest: stanchion_abi::manifest::Manifest =
-            toml::from_str(&manifest_raw).unwrap();
+        let raw = std::fs::read_to_string(dir_path.join("plugin.toml")).unwrap_or_default();
+        let mut manifest: stanchion_abi::manifest::Manifest = toml::from_str(&raw).unwrap();
         manifest.dir = dir_path.clone();
         let entry_bytes = std::fs::read(dir_path.join(&p.entry)).unwrap_or_default();
         let item = LoadItem {

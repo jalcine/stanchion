@@ -5,7 +5,7 @@ use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value as Json;
-use stanchion_abi::{CapabilityCall, Value};
+use stanchion_abi::{CapabilityCall, Value, sanitize_log};
 use stanchion_lua::config::HostConfig;
 use stanchion_registry::{Registry, Rules};
 
@@ -17,34 +17,6 @@ use super::protocol::{
     AuditEntry, CallParams, CallbackCall, DispatchParams, Failure, HostInfo, LoadResult, Outcome,
     PluginInfo, PluginParams, RevokeParams, RootParams, error_code, method,
 };
-
-/// Largest log message the built-in `log` capability will emit, in characters.
-const MAX_LOG_MESSAGE: usize = 4096;
-
-/// Escapes control characters and caps length before a plugin's text reaches stderr.
-///
-/// A plugin's message is untrusted: without this it could embed newlines to forge log
-/// lines attributed to other plugins or the host, emit ANSI/OSC escape sequences that
-/// rewrite the terminal, or log unbounded text. See #40.
-fn sanitize_log(text: &str) -> String {
-    let mut out = String::with_capacity(text.len().min(MAX_LOG_MESSAGE));
-    let mut truncated = false;
-    for (seen, ch) in text.chars().enumerate() {
-        if seen >= MAX_LOG_MESSAGE {
-            truncated = true;
-            break;
-        }
-        if ch.is_control() {
-            out.extend(ch.escape_default());
-        } else {
-            out.push(ch);
-        }
-    }
-    if truncated {
-        out.push_str("…(truncated)");
-    }
-    out
-}
 
 /// Builds the registry a host serves from, plus its isolation label.
 ///
@@ -457,31 +429,6 @@ fn audit_signer(_entry: &stanchion_registry::PluginAudit) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_LOG_MESSAGE, sanitize_log};
-
-    #[test]
-    fn escapes_newlines_and_escape_sequences() {
-        // A forged second line and an ANSI sequence must not survive verbatim.
-        let sanitized = sanitize_log("ok\n[trusted] granted admin\x1b[2J");
-        assert!(!sanitized.contains('\n'), "newline survived: {sanitized:?}");
-        assert!(!sanitized.contains('\x1b'), "ESC survived: {sanitized:?}");
-        assert!(
-            sanitized.contains("\\n"),
-            "newline should be escaped: {sanitized:?}"
-        );
-    }
-
-    #[test]
-    fn ordinary_text_is_unchanged() {
-        assert_eq!(sanitize_log("hello world 123"), "hello world 123");
-    }
-
-    #[test]
-    fn a_long_message_is_truncated() {
-        let sanitized = sanitize_log(&"a".repeat(MAX_LOG_MESSAGE * 2));
-        assert!(sanitized.ends_with("…(truncated)"), "should be truncated");
-    }
-
     /// `host/info` must report the registry's real signature posture, not a constant, so
     /// a supervising application can trust what the host attests about itself. See #46.
     #[cfg(feature = "signatures")]

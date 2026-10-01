@@ -537,14 +537,7 @@ pub(crate) fn parse_releases(raw: &str, name: &str) -> Result<PluginReleases, In
 /// Exported because a server taking a name from a request needs exactly the check a
 /// client does before joining it to a base — two copies of this rule would drift.
 pub fn validate_name(name: &str) -> Result<&str, IndexError> {
-    let acceptable = !name.is_empty()
-        && name.len() <= 128
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        && name != "."
-        && name != "..";
-    if acceptable {
+    if stanchion_abi::is_valid_name(name) {
         Ok(name)
     } else {
         Err(IndexError::Malformed(format!(

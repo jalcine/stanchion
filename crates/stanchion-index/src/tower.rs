@@ -16,7 +16,7 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use tower_service::Service;
 
-use crate::{Body, IndexServer, IndexSource, Served};
+use crate::{Body, IndexServer, IndexSource, Served, request_parts};
 
 /// The body a mounted index answers with: bytes for documents, a stream for packages.
 pub type IndexBody = BoxBody<Bytes, std::io::Error>;
@@ -57,13 +57,11 @@ where
 
     fn call(&mut self, request: Request<B>) -> Self::Future {
         let server = Arc::clone(&self.server);
-        let method = request.method().clone();
-        let path = request.uri().path().to_string();
-        let if_none_match = request
-            .headers()
-            .get(header::IF_NONE_MATCH)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
+        let (method, path, if_none_match) = request_parts(
+            request.method(),
+            request.uri().path(),
+            request.headers(),
+        );
 
         Box::pin(async move {
             let served = server.serve(&method, &path, if_none_match.as_deref());

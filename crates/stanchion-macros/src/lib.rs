@@ -47,6 +47,13 @@ struct Method {
     kind: MethodKind,
 }
 
+impl Method {
+    /// `name: Type` tokens for the generated signatures, shared by trait and impl emitters.
+    fn params(&self) -> impl Iterator<Item = TokenStream2> + '_ {
+        self.args.iter().map(|(ident, ty)| quote!(#ident: #ty))
+    }
+}
+
 fn expand(args: ClassArgs, item: ItemTrait) -> syn::Result<TokenStream2> {
     if !item.generics.params.is_empty() || item.generics.where_clause.is_some() {
         return Err(Error::new(
@@ -328,14 +335,9 @@ fn required_pushes(methods: &[&Method]) -> Vec<TokenStream2> {
 /// The method signature as it appears in the generated trait.
 fn trait_signature(method: &Method) -> TokenStream2 {
     let Method {
-        sig_attrs,
-        ident,
-        args,
-        ret,
-        is_async,
-        ..
+        sig_attrs, ident, ret, is_async, ..
     } = method;
-    let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
+    let params = method.params();
     if *is_async {
         quote! {
             #(#sig_attrs)*
@@ -356,13 +358,9 @@ fn method_body_core(
     is_pub: bool,
 ) -> syn::Result<TokenStream2> {
     let Method {
-        ident,
-        args,
-        ret,
-        is_async,
-        ..
+        ident, ret, is_async, ..
     } = method;
-    let params = args.iter().map(|(ident, ty)| quote!(#ident: #ty));
+    let params = method.params();
     let table_expr = if *is_async {
         quote!(&__handle)
     } else {

@@ -41,7 +41,7 @@ mod stream;
 #[cfg(feature = "tower")]
 mod tower;
 
-pub use server::{Body, DEFAULT_TTL, IndexServer, Served};
+pub use server::{Body, DEFAULT_TTL, IndexServer, Served, request_parts};
 pub use source::{BLOBS_PREFIX, BLOBS_SUBDIR, Blob, DirectorySource, IndexSource};
 
 #[cfg(feature = "stream")]

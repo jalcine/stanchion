@@ -146,15 +146,23 @@ impl DependencySpec {
 /// grammar: 1–128 characters of ASCII letters, digits, `-`, `_` and `.`, and never `.`
 /// or `..`. This matches the distribution index's grammar so a name is validated the
 /// same way whether it came from a manifest or an index lookup. See #42.
-pub fn validate_name(name: &str) -> Result<(), String> {
-    let acceptable = !name.is_empty()
+/// Single predicate behind every `validate_name`: 1–128 chars of ASCII
+/// letters, digits, `-`, `_`, `.`, never `.` or `..`.
+///
+/// Each layer maps the failure into its own error type, so the grammar cannot
+/// drift between manifest and index checks.
+pub fn is_valid_name(name: &str) -> bool {
+    !name.is_empty()
         && name.len() <= 128
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
         && name != "."
-        && name != "..";
-    if acceptable {
+        && name != ".."
+}
+
+pub fn validate_name(name: &str) -> Result<(), String> {
+    if is_valid_name(name) {
         Ok(())
     } else {
         Err(format!(

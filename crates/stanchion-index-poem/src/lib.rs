@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use poem::http::{HeaderValue, StatusCode, header};
 use poem::{Endpoint, Request, Response};
-use stanchion_index::{Body, IndexServer, IndexSource, Served};
+use stanchion_index::{Body, IndexServer, IndexSource, Served, request_parts};
 
 /// Wraps an [`IndexServer`] as a Poem endpoint.
 ///
@@ -56,13 +56,11 @@ where
     type Output = Response;
 
     async fn call(&self, request: Request) -> poem::Result<Self::Output> {
-        let method = request.method().clone();
-        let path = request.uri().path().to_string();
-        let if_none_match = request
-            .headers()
-            .get(header::IF_NONE_MATCH)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
+        let (method, path, if_none_match) = request_parts(
+            request.method(),
+            request.uri().path(),
+            request.headers(),
+        );
 
         let server = Arc::clone(&self.server);
         // The source is synchronous — a directory read, or whatever the host wrote —

@@ -17,6 +17,7 @@
 //! let greeting: String = remote.call("greeter", "greet", [json!("world")])?;
 //! ```
 
+pub mod bin_common;
 mod client;
 mod frame;
 pub mod protocol;

@@ -13,6 +13,22 @@ use crate::source::{BLOBS_PREFIX, Blob, IndexSource};
 /// How long a served document stays believable, unless configured otherwise.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(3600);
 
+/// Splits an incoming request into what [`IndexServer::serve`] needs.
+///
+/// Both the Tower and Poem adapters did this identically; one owner keeps
+/// header handling from drifting.
+pub fn request_parts(
+    method: &Method,
+    path: &str,
+    headers: &http::HeaderMap,
+) -> (Method, String, Option<String>) {
+    let if_none_match = headers
+        .get(http::header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    (method.clone(), path.to_string(), if_none_match)
+}
+
 /// A response body.
 ///
 /// Documents are bytes because they have to be — the `ETag` is a hash of them. A

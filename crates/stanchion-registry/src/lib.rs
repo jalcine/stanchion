@@ -49,6 +49,23 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
+/// Records one plugin's failure: marks it failed and pushes the reason.
+///
+/// Every early-`continue` in `load_dir` did these three lines identically.
+fn record_failure(
+    failed: &mut HashSet<String>,
+    failures: &mut Vec<LoadFailure>,
+    manifest: &Manifest,
+    reason: FailureReason,
+) {
+    failed.insert(manifest.name.clone());
+    failures.push(LoadFailure {
+        name: manifest.name.clone(),
+        dir: manifest.dir.clone(),
+        reason,
+    });
+}
+
 use stanchion_abi::{GroupOutcome, LoadContext, LoadItem};
 
 /// Constructor looked up on a plugin's class table when none is configured.
@@ -517,15 +534,15 @@ impl Registry {
         let mut ready: Vec<ReadyItem> = Vec::new();
         for manifest in ordered {
             if self.index.contains_key(&manifest.name) {
-                failed.insert(manifest.name.clone());
-                failures.push(LoadFailure {
-                    name: manifest.name.clone(),
-                    dir: manifest.dir.clone(),
-                    reason: FailureReason::Manifest(format!(
-                        "another plugin is already registered as `{}`",
-                        manifest.name
+                let name = manifest.name.clone();
+                record_failure(
+                    &mut failed,
+                    &mut failures,
+                    &manifest,
+                    FailureReason::Manifest(format!(
+                        "another plugin is already registered as `{name}`"
                     )),
-                });
+                );
                 continue;
             }
             // A required dependency that failed leaves this plugin unwired; an
@@ -536,46 +553,36 @@ impl Registry {
                 .find(|(name, spec)| !spec.is_optional() && failed.contains(*name))
                 .map(|(name, _)| name.clone());
             if let Some(dep) = unmet {
-                failed.insert(manifest.name.clone());
-                failures.push(LoadFailure {
-                    name: manifest.name.clone(),
-                    dir: manifest.dir.clone(),
-                    reason: FailureReason::DependencyFailed(dep),
-                });
+                record_failure(
+                    &mut failed,
+                    &mut failures,
+                    &manifest,
+                    FailureReason::DependencyFailed(dep),
+                );
                 continue;
             }
             #[cfg(feature = "luarocks")]
             if let Err(reason) = verify_rocks(&manifest, installed_rocks.as_ref()) {
-                failed.insert(manifest.name.clone());
-                failures.push(LoadFailure {
-                    name: manifest.name.clone(),
-                    dir: manifest.dir.clone(),
-                    reason,
-                });
+                record_failure(&mut failed, &mut failures, &manifest, reason);
                 continue;
             }
             #[cfg(not(feature = "luarocks"))]
             if !manifest.rocks.is_empty() {
-                failed.insert(manifest.name.clone());
-                failures.push(LoadFailure {
-                    name: manifest.name.clone(),
-                    dir: manifest.dir.clone(),
-                    reason: FailureReason::Rocks(
+                record_failure(
+                    &mut failed,
+                    &mut failures,
+                    &manifest,
+                    FailureReason::Rocks(
                         "declares `[rocks]` but the `luarocks` feature is not enabled".to_string(),
                     ),
-                });
+                );
                 continue;
             }
             #[cfg(feature = "signatures")]
             let (signer, digest) = match self.verify_plugin(&manifest) {
                 Ok(verified) => verified,
                 Err(reason) => {
-                    failed.insert(manifest.name.clone());
-                    failures.push(LoadFailure {
-                        name: manifest.name.clone(),
-                        dir: manifest.dir.clone(),
-                        reason,
-                    });
+                    record_failure(&mut failed, &mut failures, &manifest, reason);
                     continue;
                 }
             };
@@ -585,12 +592,12 @@ impl Registry {
             let entry_bytes = match fs::read(manifest.entry_path()) {
                 Ok(bytes) => bytes,
                 Err(source) => {
-                    failed.insert(manifest.name.clone());
-                    failures.push(LoadFailure {
-                        name: manifest.name.clone(),
-                        dir: manifest.dir.clone(),
-                        reason: FailureReason::Io(source),
-                    });
+                    record_failure(
+                        &mut failed,
+                        &mut failures,
+                        &manifest,
+                        FailureReason::Io(source),
+                    );
                     continue;
                 }
             };
@@ -598,12 +605,7 @@ impl Registry {
             if let Some(digest) = &digest
                 && let Err(reason) = bind_entry(&manifest, digest, &entry_bytes)
             {
-                failed.insert(manifest.name.clone());
-                failures.push(LoadFailure {
-                    name: manifest.name.clone(),
-                    dir: manifest.dir.clone(),
-                    reason,
-                });
+                record_failure(&mut failed, &mut failures, &manifest, reason);
                 continue;
             }
             ready.push(ReadyItem {

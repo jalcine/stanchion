@@ -9,6 +9,7 @@ publish.workspace = true
 exclude.workspace = true
 
 [dependencies]
+stanchion-abi = { workspace = true }
 stanchion-registry = { workspace = true, features = ["signatures"] }
 semver.workspace = true
 serde.workspace = true

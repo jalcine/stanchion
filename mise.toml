@@ -24,7 +24,7 @@ rust = "1.97.0"
 # bindings/python: `uv` drives everything, and builds the extension through
 # maturin, which it installs itself from pyproject.toml's build-system.
 python = "3.14.2"
-uv = "0.11.21"
+uv = "latest"
 
 # examples/chess: gdtoolkit (Scony/godot-gdscript-toolkit) provides gdlint and
 # gdformat for the Godot scripts. Pinned: the 4.x line targets Godot 4, and a
@@ -55,6 +55,7 @@ gradle = "8.9"
 # so this is a floor for what is tested, not a ceiling on what works.
 ruby = "3.3.12"
 node = "26.3.0"
+jj = "0.45.1"
 
 # Swift is deliberately absent. The bindings generate on any platform but can
 # only be compiled and run where a Swift toolchain exists, which for this

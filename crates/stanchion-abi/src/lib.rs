@@ -17,6 +17,7 @@ pub mod panics;
 pub mod manifest;
 pub mod rocks;
 pub mod runtime;
+pub mod sanitize;
 pub mod signature;
 pub mod value;
 
@@ -29,7 +30,9 @@ pub use error::{Error, Result, RuntimeError};
 pub use limits::ResourceLimits;
 pub use load::{GroupOutcome, LoadContext, LoadItem};
 pub use manifest::{
-    DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType, validate_name,
+    DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType, is_valid_name,
+    validate_name,
 };
 pub use runtime::Runtime;
+pub use sanitize::{MAX_LOG_MESSAGE, sanitize_log};
 pub use value::Value;

@@ -8,6 +8,7 @@ use std::ffi::{CStr, CString};
 use std::sync::Arc;
 
 use serde_json::Value as Json;
+use stanchion_abi::sanitize_log;
 use stanchion_ffi::{Builder, HostConfig, Stanchion, Value as FfiValue};
 
 const STANCHION_OK: i32 = 0;
@@ -111,6 +112,71 @@ fn set_error(out_error: *mut *mut std::ffi::c_char, msg: &str) {
     unsafe { *out_error = c_msg.into_raw() };
 }
 
+/// Null-handle guard shared by every exported function.
+///
+/// A caller that ignored a failed `stanchion_init` must get an error, never a
+/// dereference (see #41).
+unsafe fn require_handle<'a>(
+    s: *mut Stanchion,
+    out_error: *mut *mut std::ffi::c_char,
+) -> Option<&'a Stanchion> {
+    if s.is_null() {
+        set_error(out_error, "stanchion handle is null");
+        return None;
+    }
+    Some(unsafe { &*s })
+}
+
+/// Reads a required C string argument as UTF-8.
+///
+/// The caller checks for null first (its message depends on which arguments are
+/// missing); this owns the UTF-8 failure with the field's name.
+unsafe fn str_arg<'a>(
+    ptr: *const std::ffi::c_char,
+    field: &str,
+    out_error: *mut *mut std::ffi::c_char,
+) -> Option<&'a str> {
+    match unsafe { CStr::from_ptr(ptr) }.to_str() {
+        Ok(s) => Some(s),
+        Err(e) => {
+            set_error(out_error, &format!("{field} not UTF-8: {e}"));
+            None
+        }
+    }
+}
+
+/// Shared preamble for `stanchion_load` / `stanchion_audit`: handle + root.
+unsafe fn handle_and_root<'a>(
+    s: *mut Stanchion,
+    root: *const std::ffi::c_char,
+    out_error: *mut *mut std::ffi::c_char,
+) -> Option<(&'a Stanchion, Option<std::path::PathBuf>)> {
+    let stanchion = unsafe { require_handle(s, out_error) }?;
+    match root_arg(root) {
+        Ok(path) => Some((stanchion, path)),
+        Err(msg) => {
+            set_error(out_error, &msg);
+            None
+        }
+    }
+}
+
+/// Shared preamble for `stanchion_call` / `stanchion_dispatch`: method + args.
+unsafe fn method_and_args<'a>(
+    method: *const std::ffi::c_char,
+    args_json: *const std::ffi::c_char,
+    out_error: *mut *mut std::ffi::c_char,
+) -> Option<(&'a str, Vec<FfiValue>)> {
+    let method = unsafe { str_arg(method, "method name", out_error) }?;
+    match parse_args_json(args_json) {
+        Ok(args) => Some((method, args)),
+        Err(msg) => {
+            set_error(out_error, &msg);
+            None
+        }
+    }
+}
+
 /// Reads an optional root path from a C string.
 ///
 /// A NULL pointer, or an empty string, means "use the configured default root";
@@ -130,34 +196,6 @@ fn root_arg(root: *const std::ffi::c_char) -> Result<Option<std::path::PathBuf>,
 }
 
 // ---- built-in capability provider for "log" ----------------------------
-
-/// Largest log message the built-in `log` provider will emit, in characters.
-const MAX_LOG_MESSAGE: usize = 4096;
-
-/// Escapes control characters and caps length before a plugin's text reaches stderr.
-///
-/// The message comes verbatim from the plugin, so without this it could embed newlines
-/// to forge log lines attributed to other plugins or the host, emit ANSI/OSC escape
-/// sequences that rewrite the terminal, or log unbounded text. See #40.
-fn sanitize_log(text: &str) -> String {
-    let mut out = String::with_capacity(text.len().min(MAX_LOG_MESSAGE));
-    let mut truncated = false;
-    for (seen, ch) in text.chars().enumerate() {
-        if seen >= MAX_LOG_MESSAGE {
-            truncated = true;
-            break;
-        }
-        if ch.is_control() {
-            out.extend(ch.escape_default());
-        } else {
-            out.push(ch);
-        }
-    }
-    if truncated {
-        out.push_str("…(truncated)");
-    }
-    out
-}
 
 struct LogProvider;
 impl stanchion_ffi::CapabilityProvider for LogProvider {
@@ -297,17 +335,8 @@ pub unsafe extern "C" fn stanchion_load(
     root: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if s.is_null() {
-        set_error(out_error, "stanchion handle is null");
+    let Some((stanchion, root_path)) = (unsafe { handle_and_root(s, root, out_error) }) else {
         return std::ptr::null_mut();
-    }
-    let stanchion = unsafe { &*s };
-    let root_path = match root_arg(root) {
-        Ok(path) => path,
-        Err(msg) => {
-            set_error(out_error, &msg);
-            return std::ptr::null_mut();
-        }
     };
 
     match stanchion.load(root_path.as_deref()) {
@@ -358,11 +387,9 @@ pub unsafe extern "C" fn stanchion_list(
     s: *mut Stanchion,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if s.is_null() {
-        set_error(out_error, "stanchion handle is null");
+    let Some(stanchion) = (unsafe { require_handle(s, out_error) }) else {
         return std::ptr::null_mut();
-    }
-    let stanchion = unsafe { &*s };
+    };
     match stanchion.list() {
         Ok(plugins) => {
             let list: Vec<Json> = plugins
@@ -407,17 +434,8 @@ pub unsafe extern "C" fn stanchion_audit(
     root: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if s.is_null() {
-        set_error(out_error, "stanchion handle is null");
+    let Some((stanchion, root_path)) = (unsafe { handle_and_root(s, root, out_error) }) else {
         return std::ptr::null_mut();
-    }
-    let stanchion = unsafe { &*s };
-    let root_path = match root_arg(root) {
-        Ok(path) => path,
-        Err(msg) => {
-            set_error(out_error, &msg);
-            return std::ptr::null_mut();
-        }
     };
 
     match stanchion.audit(root_path.as_deref()) {
@@ -465,35 +483,18 @@ pub unsafe extern "C" fn stanchion_call(
     args_json: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if s.is_null() {
-        set_error(out_error, "stanchion handle is null");
+    let Some(stanchion) = (unsafe { require_handle(s, out_error) }) else {
         return std::ptr::null_mut();
-    }
+    };
     if plugin.is_null() || method.is_null() {
         set_error(out_error, "plugin and method must not be null");
         return std::ptr::null_mut();
     }
-    let stanchion = unsafe { &*s };
-    let plugin = match unsafe { CStr::from_ptr(plugin) }.to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("plugin name not UTF-8: {e}"));
-            return std::ptr::null_mut();
-        }
+    let Some(plugin) = (unsafe { str_arg(plugin, "plugin name", out_error) }) else {
+        return std::ptr::null_mut();
     };
-    let method = match unsafe { CStr::from_ptr(method) }.to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("method name not UTF-8: {e}"));
-            return std::ptr::null_mut();
-        }
-    };
-    let args = match parse_args_json(args_json) {
-        Ok(a) => a,
-        Err(msg) => {
-            set_error(out_error, &msg);
-            return std::ptr::null_mut();
-        }
+    let Some((method, args)) = (unsafe { method_and_args(method, args_json, out_error) }) else {
+        return std::ptr::null_mut();
     };
 
     match stanchion.call(plugin, method, &args) {
@@ -519,28 +520,15 @@ pub unsafe extern "C" fn stanchion_dispatch(
     args_json: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if s.is_null() {
-        set_error(out_error, "stanchion handle is null");
+    let Some(stanchion) = (unsafe { require_handle(s, out_error) }) else {
         return std::ptr::null_mut();
-    }
+    };
     if method.is_null() {
         set_error(out_error, "method must not be null");
         return std::ptr::null_mut();
     }
-    let stanchion = unsafe { &*s };
-    let method = match unsafe { CStr::from_ptr(method) }.to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("method name not UTF-8: {e}"));
-            return std::ptr::null_mut();
-        }
-    };
-    let args = match parse_args_json(args_json) {
-        Ok(a) => a,
-        Err(msg) => {
-            set_error(out_error, &msg);
-            return std::ptr::null_mut();
-        }
+    let Some((method, args)) = (unsafe { method_and_args(method, args_json, out_error) }) else {
+        return std::ptr::null_mut();
     };
 
     match stanchion.dispatch(method, &args) {
@@ -580,21 +568,15 @@ pub unsafe extern "C" fn stanchion_reload(
     plugin: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> i32 {
-    if s.is_null() {
-        set_error(out_error, "stanchion handle is null");
+    let Some(stanchion) = (unsafe { require_handle(s, out_error) }) else {
         return STANCHION_ERR_CONFIG;
-    }
+    };
     if plugin.is_null() {
         set_error(out_error, "plugin must not be null");
         return STANCHION_ERR_CONFIG;
     }
-    let stanchion = unsafe { &*s };
-    let plugin = match unsafe { CStr::from_ptr(plugin) }.to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("plugin name not UTF-8: {e}"));
-            return STANCHION_ERR_CONFIG;
-        }
+    let Some(plugin) = (unsafe { str_arg(plugin, "plugin name", out_error) }) else {
+        return STANCHION_ERR_CONFIG;
     };
     match stanchion.reload(plugin) {
         Ok(()) => STANCHION_OK,
@@ -618,28 +600,18 @@ pub unsafe extern "C" fn stanchion_revoke(
     capability: *const std::ffi::c_char,
     out_error: *mut *mut std::ffi::c_char,
 ) -> i32 {
-    if s.is_null() {
-        set_error(out_error, "stanchion handle is null");
+    let Some(stanchion) = (unsafe { require_handle(s, out_error) }) else {
         return STANCHION_ERR_CONFIG;
-    }
+    };
     if plugin.is_null() || capability.is_null() {
         set_error(out_error, "plugin and capability must not be null");
         return STANCHION_ERR_CONFIG;
     }
-    let stanchion = unsafe { &*s };
-    let plugin = match unsafe { CStr::from_ptr(plugin) }.to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("plugin name not UTF-8: {e}"));
-            return STANCHION_ERR_CONFIG;
-        }
+    let Some(plugin) = (unsafe { str_arg(plugin, "plugin name", out_error) }) else {
+        return STANCHION_ERR_CONFIG;
     };
-    let cap = match unsafe { CStr::from_ptr(capability) }.to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("capability name not UTF-8: {e}"));
-            return STANCHION_ERR_CONFIG;
-        }
+    let Some(cap) = (unsafe { str_arg(capability, "capability name", out_error) }) else {
+        return STANCHION_ERR_CONFIG;
     };
     match stanchion.revoke(plugin, cap) {
         Ok(true) => STANCHION_OK,

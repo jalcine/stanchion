@@ -144,6 +144,11 @@ description = "Format the chess example scripts with gdformat"
 dir = "examples/chess"
 run = "gdformat src/"
 
+[tasks."tauri:dev"]
+description = "Run the example Tauri app with plugins"
+dir = "examples/stanchion-editor/"
+run = "pnpm tauri dev"
+
 [tasks."android:lint"]
 description = "ktlint check the Android example"
 dir = "examples/kotlin-android-app"

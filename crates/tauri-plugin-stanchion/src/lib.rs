@@ -27,7 +27,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use stanchion_abi::manifest::{self, MANIFEST_FILE};
-use stanchion_abi::{Manifest, PluginType};
+use stanchion_abi::Manifest;
 
 /// Metadata loaded from each `plugin.toml` discovered on disk.
 #[derive(Debug, Clone, Deserialize)]
@@ -36,8 +36,8 @@ pub struct DiscoveredPlugin {
     pub name: String,
     #[serde(default)]
     pub version: Option<semver::Version>,
-    #[serde(default)]
-    pub plugin_type: PluginType,
+    #[serde(default = "lua_default")]
+    pub plugin_type: String,
     #[serde(default = "default_entry")]
     pub entry: String,
     #[serde(default)]
@@ -51,12 +51,16 @@ pub struct DiscoveredPlugin {
 impl DiscoveredPlugin {
     pub fn validate(&self) -> std::result::Result<(), String> {
         let raw = format!(
-            "name = \"{}\"\nplugin_type = \"{:?}\"\nentry = \"{}\"\n",
+            "name = \"{}\"\nplugin_type = \"{}\"\nentry = \"{}\"\n",
             self.name, self.plugin_type, self.entry
         );
         let _ = toml::from_str::<Manifest>(&raw).map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+fn lua_default() -> String {
+    "lua".to_string()
 }
 
 fn default_entry() -> String {
@@ -102,9 +106,14 @@ pub fn init(options: Option<PluginOptions>) -> Vec<String> {
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| std::env::temp_dir());
-            home.join(".local").join("share").join("stanchion").join("plugins")
+            home.join(".local")
+                .join("share")
+                .join("stanchion")
+                .join("plugins")
         }
     };
+
+    println!("plugin root: {:?}", root);
 
     // Remote mode: launch host binary (out-of-process isolation)
     if let Some(host_binary) = &options.host_binary {
@@ -124,11 +133,14 @@ pub fn init(options: Option<PluginOptions>) -> Vec<String> {
     } else {
         BTreeMap::new()
     };
-    let _ = PLUGIN_CACHE.set(plugins.clone());
+    println!("{:#?}", PLUGIN_CACHE.set(plugins.clone()));
 
     // Ensure plugins directory exists
-    if let Err(e) = std::fs::create_dir_all(&root) {
-        eprintln!("tauri-plugin-stanchion: failed to create plugins dir `{}`: {e}", root.display());
+    if let Err(e) = fs_err::create_dir_all(&root) {
+        eprintln!(
+            "tauri-plugin-stanchion: failed to create plugins dir `{}`: {e}",
+            root.display()
+        );
     }
 
     plugins.keys().cloned().collect()
@@ -156,13 +168,20 @@ pub fn discover_plugins<P: AsRef<Path>>(root: P) -> BTreeMap<String, DiscoveredP
                     match toml::from_str::<DiscoveredPlugin>(&raw) {
                         Ok(plugin) => {
                             if let Err(e) = plugin.validate() {
-                                eprintln!("tauri-plugin-stanchion: skipping invalid plugin manifest at {}: {e}", manifest_path.display());
+                                eprintln!(
+                                    "tauri-plugin-stanchion: skipping invalid plugin manifest at {}: {e}",
+                                    manifest_path.display()
+                                );
+                                println!("Raw manifest content:\n{raw}");
                                 continue;
                             }
                             plugins.insert(plugin.name.clone(), plugin);
                         }
                         Err(e) => {
-                            eprintln!("tauri-plugin-stanchion: failed to parse plugin manifest at {}: {e}", manifest_path.display());
+                            eprintln!(
+                                "tauri-plugin-stanchion: failed to parse plugin manifest at {}: {e}",
+                                manifest_path.display()
+                            );
                         }
                     }
                 }
@@ -206,12 +225,25 @@ pub enum CallResult {
 /// Launch remote host for out-of-process plugin execution.
 ///
 /// Mirrors desktop's `RemoteRegistry::launch(RemoteOptions::new(...))` pattern.
-fn launch_remote_host(host_binary: &Path, config_path: &Path, plugins_dir: &Path) -> Result<(), String> {
+fn launch_remote_host(
+    host_binary: &Path,
+    config_path: &Path,
+    plugins_dir: &Path,
+) -> Result<(), String> {
     if !host_binary.is_file() {
-        return Err(format!("plugin host binary not found: {}", host_binary.display()));
+        return Err(format!(
+            "plugin host binary not found: {}",
+            host_binary.display()
+        ));
     }
-    std::fs::create_dir_all(plugins_dir).map_err(|e| format!("creating plugins dir `{}`: {e}", plugins_dir.display()))?;
-    eprintln!("tauri-plugin-stanchion: remote host configured: binary={}, config={}, plugins={}", host_binary.display(), config_path.display(), plugins_dir.display());
+    std::fs::create_dir_all(plugins_dir)
+        .map_err(|e| format!("creating plugins dir `{}`: {e}", plugins_dir.display()))?;
+    eprintln!(
+        "tauri-plugin-stanchion: remote host configured: binary={}, config={}, plugins={}",
+        host_binary.display(),
+        config_path.display(),
+        plugins_dir.display()
+    );
     Ok(())
 }
 
@@ -219,7 +251,8 @@ fn launch_remote_host(host_binary: &Path, config_path: &Path, plugins_dir: &Path
 ///
 /// Mirrors desktop's `install_plugin_dir` — copies tree, rejects symlinks (security).
 pub fn install_plugin_dir(src: &Path, plugins_root: &Path) -> Result<String, String> {
-    let plugin_name = src.file_name()
+    let plugin_name = src
+        .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| "Invalid source path".to_string())?;
     ensure_safe_name(plugin_name)?;
@@ -227,7 +260,10 @@ pub fn install_plugin_dir(src: &Path, plugins_root: &Path) -> Result<String, Str
     copy_dir_recursive(src, &dest)?;
     let manifest_path = dest.join(MANIFEST_FILE);
     if !manifest_path.exists() {
-        return Err(format!("installed plugin '{}' has no '{}'", plugin_name, MANIFEST_FILE));
+        return Err(format!(
+            "installed plugin '{}' has no '{}'",
+            plugin_name, MANIFEST_FILE
+        ));
     }
     Ok(plugin_name.to_string())
 }
@@ -240,7 +276,10 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         let file_type = entry.file_type().map_err(|e| format!("file_type: {e}"))?;
         let target = dst.join(entry.file_name());
         if file_type.is_symlink() {
-            return Err(format!("symbolic links not allowed in plugins: {}", entry.path().display()));
+            return Err(format!(
+                "symbolic links not allowed in plugins: {}",
+                entry.path().display()
+            ));
         } else if file_type.is_dir() {
             copy_dir_recursive(&entry.path(), &target)?;
         } else {
@@ -257,3 +296,4 @@ fn ensure_safe_name(name: &str) -> Result<(), String> {
     }
     Ok(())
 }
+

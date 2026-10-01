@@ -21,7 +21,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-stanchion = { path = "../../../../crates/tauri-plugin-stanchion" }
+tauri-plugin-stanchion = { workspace = true }
+mlua = { version = "0.12", default-features = false, features = ["lua54", "vendored", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

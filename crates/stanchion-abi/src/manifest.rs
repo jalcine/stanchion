@@ -17,11 +17,10 @@ fn default_entry() -> String {
 }
 
 /// Which runtime backend a plugin uses.
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum PluginType {
     /// A Lua plugin (the default), loaded via `mlua`.
-    #[default]
     Lua,
     /// A WASM plugin, loaded via `wasmtime`.
     Wasm,
@@ -53,7 +52,6 @@ pub struct Manifest {
     #[serde(default)]
     pub version: Option<Version>,
     /// Which runtime backend this plugin uses.
-    #[serde(default)]
     pub plugin_type: PluginType,
     /// File to evaluate, relative to the plugin directory.
     /// For Lua plugins this is a `.lua` file; for WASM plugins, a `.wasm` binary.

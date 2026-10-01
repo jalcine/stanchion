@@ -6385,11 +6385,13 @@ dependencies = [
 name = "stanchion-editor"
 version = "0.1.0"
 dependencies = [
+ "mlua",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "tauri-plugin-stanchion",
 ]
 
 [[package]]
@@ -6939,6 +6941,7 @@ name = "tauri-plugin-stanchion"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "fs-err",
  "semver",
  "serde",
  "serde_json",

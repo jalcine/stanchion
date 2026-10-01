@@ -25,6 +25,7 @@ stanchion-lua = { path = "crates/stanchion-lua", version = "0.1.0" }
 stanchion-macros = { path = "crates/stanchion-macros", version = "0.1.0" }
 stanchion-registry = { path = "crates/stanchion-registry", version = "0.1.0" }
 stanchion-remote = { path = "crates/stanchion-remote", version = "0.1.0" }
+tauri-plugin-stanchion = { path = "crates/tauri-plugin-stanchion", version = "0.1.0" }
 stanchion-sigstore = { path = "crates/stanchion-sigstore", version = "0.1.0" }
 stanchion-wasm = { path = "crates/stanchion-wasm", version = "0.1.0" }
 

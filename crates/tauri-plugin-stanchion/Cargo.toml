@@ -1,0 +1,24 @@
+[package]
+name = "tauri-plugin-stanchion"
+version = "0.1.0"
+edition = "2024"
+description = "Tauri plugin for automatic Stanchion plugin discovery and loading"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jalcine/stanchion"
+publish = false
+exclude = ["mise.toml"]
+author.workspace = true
+
+[dependencies]
+stanchion-abi = { workspace = true }
+stanchion-remote = { workspace = true }
+stanchion-lua = { workspace = true, features = ["lua54", "vendored"] }
+toml = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+semver = { workspace = true, features = ["serde"] }
+thiserror = "1.0"
+tokio = { workspace = true, features = ["full"] }
+
+[features]
+default = []

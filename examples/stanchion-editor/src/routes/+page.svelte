@@ -9,10 +9,7 @@
 
   async function refreshPlugins() {
     try {
-      const list = await invoke("list_plugins");
-      console.log(list);
-      pluginList = Array.isArray(list) ? list : [];
-      plugins = pluginList.map((p: any) => p.name);
+      plugins = await invoke("list_plugins");
     } catch (e) {
       console.error("plugin list error:", e);
     }
@@ -21,7 +18,10 @@
   async function greet(event: Event) {
     event.preventDefault();
     try {
-      const result = await invoke("greet", { name, plugin: pluginName });
+      const result = await invoke("greet", {
+        name,
+        plugin: pluginName ?? undefined,
+      });
       greetMsg = result as string;
     } catch (e) {
       greetMsg = String(e);

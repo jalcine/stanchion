@@ -1,7 +1,8 @@
--- Greeter-casual: casual, friendly
 local M = {}
-function M.greet(who)
-  local cfg = M.config or {}
-  return (cfg.prefix or "Hey") .. " " .. (who or "there") .. "! " .. (cfg.suffix or "Cheers!")
+function M.greet(self, who)
+	return "Hey, " .. (who or "there") .. ", Cheers!"
+end
+function M.new()
+	return M
 end
 return M

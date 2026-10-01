@@ -4,4 +4,5 @@ plugin_type = "lua"
 entry = "init.lua"
 
 [config]
-greeting = "Hello from Tauri + Stanchion!"
+prefix = "Hello"
+suffix = "from Lua!"

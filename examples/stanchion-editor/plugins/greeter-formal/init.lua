@@ -1,9 +1,8 @@
--- Greeter-formal: formal address style
 local M = {}
-function M.greet(who)
-  local cfg = M.config or {}
-  local prefix = cfg.prefix or "Esteemed"
-  local suffix = cfg.suffix or "Yours, sincerely"
-  return prefix .. " " .. (who or "friend") .. ", " .. suffix
+function M.greet(self, who)
+	return "Esteemed, " .. (who or "friend") .. ", I remain, respectfully, yours"
+end
+function M.new()
+	return M
 end
 return M

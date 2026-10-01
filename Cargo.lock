@@ -6385,13 +6385,15 @@ dependencies = [
 name = "stanchion-editor"
 version = "0.1.0"
 dependencies = [
- "mlua",
  "serde",
  "serde_json",
+ "stanchion-abi",
+ "stanchion-lua",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "tauri-plugin-stanchion",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]

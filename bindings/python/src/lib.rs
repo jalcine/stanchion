@@ -44,7 +44,19 @@ create_exception!(
     _stanchion,
     LuaError,
     StanchionError,
-    "A plugin's Lua raised."
+    "A plugin's Lua raised, or a value could not cross the boundary."
+);
+create_exception!(
+    _stanchion,
+    IOError,
+    StanchionError,
+    "The plugin root could not be read."
+);
+create_exception!(
+    _stanchion,
+    ManifestError,
+    StanchionError,
+    "A plugin's plugin.toml could not be parsed."
 );
 create_exception!(
     _stanchion,
@@ -66,15 +78,26 @@ create_exception!(
 );
 
 /// Maps a failure onto the exception class that names it.
+///
+/// The tags come from `Error::kind` in `stanchion-abi`. When a tag here stops matching
+/// one of those, the failure does not disappear — it silently falls through to the
+/// base `StanchionError`, and callers that caught a specific class stop catching it.
+/// That is what happened to `"lua"`: the ABI variant was renamed `Runtime` (tag
+/// `"runtime"`) when a second backend arrived, and every binding kept matching the old
+/// tag.
 fn raise(err: FfiError) -> PyErr {
     let message = err.to_string();
     match err.kind() {
         "unknown-plugin" => UnknownPluginError::new_err(message),
         "plugin" => PluginError::new_err(message),
-        "lua" => LuaError::new_err(message),
+        // `LuaError` keeps its name: the Python API is what callers `except` on, and
+        // Lua is still the runtime they get.
+        "runtime" => LuaError::new_err(message),
+        "io" => IOError::new_err(message),
         "config" => ConfigError::new_err(message),
         "capability" => CapabilityError::new_err(message),
         "reentrant" => ReentrantError::new_err(message),
+        "manifest" => ManifestError::new_err(message),
         _ => StanchionError::new_err(message),
     }
 }
@@ -660,6 +683,8 @@ fn _stanchion(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add("PluginError", module.py().get_type::<PluginError>())?;
     module.add("LuaError", module.py().get_type::<LuaError>())?;
+    module.add("IOError", module.py().get_type::<IOError>())?;
+    module.add("ManifestError", module.py().get_type::<ManifestError>())?;
     module.add("ConfigError", module.py().get_type::<ConfigError>())?;
     module.add("CapabilityError", module.py().get_type::<CapabilityError>())?;
     module.add("ReentrantError", module.py().get_type::<ReentrantError>())?;

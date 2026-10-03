@@ -126,19 +126,37 @@ pub enum StanchionError {
     Capability(String),
     #[error("{0}")]
     Reentrant(String),
+    #[error("{0}")]
+    Manifest(String),
+    /// A failure stanchion classified but this binding has no case for.
+    ///
+    /// The ABI's error enum is `#[non_exhaustive]`, so this is where a new variant
+    /// lands until it gets a case of its own.
+    #[error("{0}")]
+    Other(String),
 }
 
+/// The tags come from `Error::kind` in `stanchion-abi`.
+///
+/// Two things were wrong here. `"lua"` stopped matching when the ABI variant became
+/// `Runtime` when a second backend arrived, so every plugin runtime error took the
+/// fallthrough. And the fallthrough was `Config`, which claims *the host's own
+/// configuration is wrong* — so a plugin's unparseable manifest, or a WASM trap, was
+/// reported to Kotlin and Swift as the embedder's mistake. Unrecognised tags now land
+/// in `Other`, which says only what is true.
 impl From<FfiError> for StanchionError {
     fn from(err: FfiError) -> Self {
         let message = err.to_string();
         match err.kind() {
             "unknown-plugin" => StanchionError::UnknownPlugin(message),
             "plugin" => StanchionError::Plugin(message),
-            "lua" => StanchionError::Lua(message),
+            "runtime" | "wasm" => StanchionError::Lua(message),
             "io" => StanchionError::Io(message),
+            "config" => StanchionError::Config(message),
             "capability" => StanchionError::Capability(message),
             "reentrant" => StanchionError::Reentrant(message),
-            _ => StanchionError::Config(message),
+            "manifest" => StanchionError::Manifest(message),
+            _ => StanchionError::Other(message),
         }
     }
 }

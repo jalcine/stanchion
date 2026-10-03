@@ -158,7 +158,7 @@ fn interpret_decision(answer: &Variant) -> Decision {
 
 /// A registry of sandboxed Lua plugins, driven from GDScript.
 ///
-/// Register capabilities and a policy first, then [`open`](Stanchion::open) to build
+/// Register capabilities and a policy first, then `open` to build
 /// the sandbox; afterwards, load and call plugins. Capabilities and policy are fixed
 /// at `open` and cannot change on a live registry — a host that could widen a running
 /// plugin's reach would have given up the guarantee the capability system exists to

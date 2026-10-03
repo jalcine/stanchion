@@ -35,15 +35,23 @@ mod value;
 use value::{from_ruby, to_ruby};
 
 /// Maps a failure onto the exception class that names it.
+/// The tags come from `Error::kind` in `stanchion-abi`. A tag that stops matching one
+/// of those does not fail loudly — it falls through to `Stanchion::Error`, and code
+/// rescuing a specific class silently stops rescuing it. That is what happened to
+/// `"lua"`: the ABI variant became `Runtime` (tag `"runtime"`) when a second backend
+/// arrived, and this kept matching the old tag.
 fn raise(ruby: &Ruby, err: FfiError) -> Error {
     let name = match err.kind() {
         "unknown-plugin" => "Stanchion::UnknownPluginError",
         "plugin" => "Stanchion::PluginError",
-        "lua" => "Stanchion::LuaError",
+        // `LuaError` keeps its name: the Ruby API is what callers rescue, and Lua is
+        // still the runtime they get.
+        "runtime" => "Stanchion::LuaError",
         "io" => "Stanchion::IOError",
         "config" => "Stanchion::ConfigError",
         "capability" => "Stanchion::CapabilityError",
         "reentrant" => "Stanchion::ReentrantError",
+        "manifest" => "Stanchion::ManifestError",
         _ => "Stanchion::Error",
     };
     let class = ruby
@@ -499,6 +507,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_error("ConfigError", base)?;
     module.define_error("CapabilityError", base)?;
     module.define_error("ReentrantError", base)?;
+    module.define_error("ManifestError", base)?;
 
     let decision = module.define_class("Decision", ruby.class_object())?;
     decision.define_singleton_method("grant", function!(Decision::grant, 0))?;

@@ -14,23 +14,30 @@ use stanchion_ffi::{Builder, HostConfig, Stanchion, Value as FfiValue};
 const STANCHION_OK: i32 = 0;
 const STANCHION_ERR_UNKNOWN_PLUGIN: i32 = 1;
 const STANCHION_ERR_PLUGIN: i32 = 2;
-const STANCHION_ERR_LUA: i32 = 3;
+const STANCHION_ERR_RUNTIME: i32 = 3;
 const STANCHION_ERR_IO: i32 = 4;
 const STANCHION_ERR_CONFIG: i32 = 5;
 const STANCHION_ERR_CAPABILITY: i32 = 6;
 const STANCHION_ERR_REENTRANT: i32 = 7;
 const STANCHION_ERR_WASM: i32 = 8;
+const STANCHION_ERR_MANIFEST: i32 = 9;
+const STANCHION_ERR_OTHER: i32 = 127;
 
 fn to_ffi_error_code(err: &stanchion_ffi::Error) -> i32 {
     match err {
         stanchion_ffi::Error::UnknownPlugin(_) => STANCHION_ERR_UNKNOWN_PLUGIN,
         stanchion_ffi::Error::Plugin { .. } => STANCHION_ERR_PLUGIN,
-        stanchion_ffi::Error::Runtime(_) => STANCHION_ERR_LUA,
+        stanchion_ffi::Error::Runtime(_) => STANCHION_ERR_RUNTIME,
         stanchion_ffi::Error::Io(_) => STANCHION_ERR_IO,
         stanchion_ffi::Error::Config(_) => STANCHION_ERR_CONFIG,
         stanchion_ffi::Error::Capability { .. } => STANCHION_ERR_CAPABILITY,
         stanchion_ffi::Error::Reentrant => STANCHION_ERR_REENTRANT,
         stanchion_ffi::Error::Wasm(_) => STANCHION_ERR_WASM,
+        stanchion_ffi::Error::Manifest { .. } => STANCHION_ERR_MANIFEST,
+        // `Error` is `#[non_exhaustive]`. A C caller gets a code it can at least
+        // branch on, and the message carries the detail; a new variant must never
+        // be the reason this crate stops building.
+        _ => STANCHION_ERR_OTHER,
     }
 }
 
@@ -650,12 +657,14 @@ pub extern "C" fn stanchion_error_string(code: i32) -> *const std::ffi::c_char {
         STANCHION_OK => c"ok",
         STANCHION_ERR_UNKNOWN_PLUGIN => c"unknown plugin",
         STANCHION_ERR_PLUGIN => c"plugin error",
-        STANCHION_ERR_LUA => c"Lua error",
+        STANCHION_ERR_RUNTIME => c"runtime error",
         STANCHION_ERR_IO => c"I/O error",
         STANCHION_ERR_CONFIG => c"configuration error",
         STANCHION_ERR_CAPABILITY => c"capability error",
         STANCHION_ERR_REENTRANT => c"reentrant call detected (would deadlock)",
         STANCHION_ERR_WASM => c"WASM error",
+        STANCHION_ERR_MANIFEST => c"malformed plugin manifest",
+        STANCHION_ERR_OTHER => c"unclassified error (see the message)",
         _ => c"unknown error code",
     };
     message.as_ptr()

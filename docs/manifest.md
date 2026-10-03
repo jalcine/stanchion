@@ -147,16 +147,30 @@ end
 
 ### `[budget]`
 
-An optional per-plugin instruction cap, enforced at each call boundary for runtimes
-that support it (WASM, the Lua sandbox):
+An optional per-plugin ceiling a plugin declares for itself. It may only ever *lower*
+what the host allows, never raise it:
 
 ```toml
 [budget]
 max_instructions = 5_000_000
+memory_bytes = 33_554_432       # optional
 ```
 
-Like the rest of the manifest, the `[budget]` table rejects unknown keys, so
-`max_instructions` is the only field it accepts.
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `max_instructions` | integer | *required within `[budget]`* | Cap on VM instructions per call. |
+| `memory_bytes` | integer | host's ceiling | Cap on the plugin's memory. |
+
+Like the rest of the manifest, the `[budget]` table rejects unknown keys.
+
+**Which backends act on it.** `stanchion-wasm` narrows both of its ceilings by this
+table at load: `max_instructions` becomes the wasmtime fuel cap and `memory_bytes` the
+linear-memory cap. **The Lua backend currently ignores `[budget]` entirely** — its
+ceilings come from the host's `Sandbox` alone. A Lua plugin declaring a budget parses
+and gets no effect from it. The reason is that a Lua budget belongs to a *state*, and
+under per-group or shared isolation one state is shared by several plugins, so which
+manifest governs it is an open question rather than a settled one. See
+[isolation](isolation.md).
 
 ## Discovery and validation
 

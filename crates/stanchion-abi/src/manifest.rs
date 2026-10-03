@@ -19,10 +19,16 @@ fn default_entry() -> String {
 }
 
 /// Which runtime backend a plugin uses.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
+///
+/// `#[non_exhaustive]`: backends are selected by equality against this, so a new
+/// runtime is additive — but a host that *matches* on it should be made to say what
+/// it does with one it has never heard of.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum PluginType {
     /// A Lua plugin (the default), loaded via `mlua`.
+    #[default]
     Lua,
     /// A WASM plugin, loaded via `wasmtime`.
     Wasm,
@@ -54,6 +60,12 @@ pub struct Manifest {
     #[serde(default)]
     pub version: Option<Version>,
     /// Which runtime backend this plugin uses.
+    ///
+    /// Defaults to [`PluginType::Lua`], as `docs/manifest.md` documents: a manifest
+    /// that names no runtime is a Lua plugin. The `#[serde(default)]` was lost when
+    /// these types moved into `stanchion-abi`, which made `plugin_type` required and
+    /// failed every manifest in the wild that omitted it.
+    #[serde(default)]
     pub plugin_type: PluginType,
     /// File to evaluate, relative to the plugin directory.
     /// For Lua plugins this is a `.lua` file; for WASM plugins, a `.wasm` binary.
@@ -76,15 +88,20 @@ pub struct Manifest {
     pub rocks: std::collections::BTreeMap<String, String>,
     /// Passed to the plugin's constructor as a Lua table.
     ///
-    /// Also holds the optional `[budget]` table when the manifest carries one:
-    /// `budget.max_instructions` is enforced at each call boundary for
-    /// runtimes that support it (WASM, Lua sandbox).
+    /// Also holds the optional `[budget]` table when the manifest carries one.
+    /// See [`Manifest::budget`] for which backends act on it.
     #[serde(default)]
     pub config: toml::Table,
     /// Optional per-plugin instruction/memory budget.
     ///
-    /// Declared as `budget.max_instructions` in `plugin.toml`. Parsed into
-    /// [`Manifest::budget`] at load time and enforced at call boundaries.
+    /// Declared as `[budget]` in `plugin.toml` and allowed only to *lower* the
+    /// host's ceilings — see [`ResourceLimits::narrowed_by`](crate::ResourceLimits::narrowed_by).
+    ///
+    /// Acted on by `stanchion-wasm`, which narrows its fuel and linear-memory caps by
+    /// it at load. **The Lua backend currently ignores this**: its ceilings come from
+    /// the host's `Sandbox` alone, because a Lua budget belongs to a state and a state
+    /// may be shared by a whole dependency group, so whose manifest governs it is not
+    /// yet decided. A `[budget]` in a Lua plugin's manifest parses and has no effect.
     #[serde(default)]
     pub budget: Option<Budget>,
     /// Directory the manifest was read from. Filled in by discovery.
@@ -98,7 +115,11 @@ impl Manifest {
         let toml_path = path.join("plugin.toml");
         let manifest_body =
             fs_err::read_to_string(toml_path.as_path()).map_err(|e| Error::Io(e.to_string()))?;
-        let mut manifest: Manifest = toml::from_str(&manifest_body).map_err(Error::Toml)?;
+        let mut manifest: Manifest =
+            toml::from_str(&manifest_body).map_err(|e| Error::Manifest {
+                path: toml_path.to_string(),
+                reason: e.to_string(),
+            })?;
 
         manifest.dir = path.to_path_buf().into_std_path_buf();
 
@@ -112,6 +133,12 @@ impl Manifest {
 pub struct Budget {
     /// Hard cap on VM instructions per plugin call.
     pub max_instructions: u64,
+    /// Hard cap on the plugin's memory, in bytes.
+    ///
+    /// Optional, so manifests that declare only an instruction ceiling keep parsing.
+    /// Like `max_instructions`, a manifest may only *lower* what the host allows.
+    #[serde(default)]
+    pub memory_bytes: Option<usize>,
 }
 
 /// A dependency entry: either a bare requirement or the table form.

@@ -232,3 +232,83 @@ optional = true
     assert!(matches!(dep, DependencySpec::Detailed(d) if d.optional));
     Ok(())
 }
+
+/// A manifest may lower its memory ceiling, not just its instruction ceiling.
+///
+/// `Budget` carried only `max_instructions`, so `ResourceLimits::memory_bytes` had no
+/// manifest representation at all: a plugin could promise to stay inside a smaller
+/// memory footprint and nothing could express it.
+#[test]
+fn budget_accepts_a_memory_ceiling() -> Fallible<()> {
+    let manifest: Manifest = toml::from_str(
+        r#"
+name = "greeter"
+
+[budget]
+max_instructions = 10000000
+memory_bytes = 33554432
+"#,
+    )?;
+    let budget = manifest.budget.ok_or("expected a budget")?;
+    assert_eq!(budget.max_instructions, 10_000_000);
+    assert_eq!(budget.memory_bytes, Some(33_554_432));
+    Ok(())
+}
+
+/// `memory_bytes` stays optional: existing manifests declare instructions only.
+#[test]
+fn budget_memory_ceiling_is_optional() -> Fallible<()> {
+    let manifest: Manifest = toml::from_str(
+        r#"
+name = "greeter"
+
+[budget]
+max_instructions = 500
+"#,
+    )?;
+    let budget = manifest.budget.ok_or("expected a budget")?;
+    assert_eq!(budget.memory_bytes, None);
+    Ok(())
+}
+
+/// `narrowed_by` must narrow *both* ceilings, and only downwards.
+///
+/// It handled `max_instructions` and silently ignored memory, so a manifest's memory
+/// ceiling would have been dropped even once `Budget` could express one.
+#[test]
+fn narrowing_takes_the_lower_of_each_ceiling() -> Fallible<()> {
+    use stanchion_abi::ResourceLimits;
+
+    let host = ResourceLimits {
+        memory_bytes: Some(64 * 1024 * 1024),
+        max_instructions: Some(10_000_000),
+    };
+    let manifest: Manifest = toml::from_str(
+        r#"
+name = "greeter"
+
+[budget]
+max_instructions = 1000
+memory_bytes = 1048576
+"#,
+    )?;
+
+    let narrowed = host.narrowed_by(manifest.budget.as_ref());
+    assert_eq!(narrowed.max_instructions, Some(1_000));
+    assert_eq!(narrowed.memory_bytes, Some(1_048_576));
+
+    // A manifest asking for *more* than the host allows gets the host's number.
+    let greedy: Manifest = toml::from_str(
+        r#"
+name = "greedy"
+
+[budget]
+max_instructions = 999999999
+memory_bytes = 999999999
+"#,
+    )?;
+    let clamped = host.narrowed_by(greedy.budget.as_ref());
+    assert_eq!(clamped.max_instructions, Some(10_000_000));
+    assert_eq!(clamped.memory_bytes, Some(64 * 1024 * 1024));
+    Ok(())
+}

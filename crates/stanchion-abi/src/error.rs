@@ -1,8 +1,10 @@
 //! One error type, flat enough to survive any backend and any foreign type system.
 //!
-//! The Rust API distinguishes [`RegistryError`](stanchion_registry::RegistryError),
-//! [`LoadFailure`](stanchion_registry::LoadFailure) and runtime errors, each with
-//! structured variants worth matching on. Almost none of that structure survives a
+//! The Rust API distinguishes `stanchion_registry::RegistryError`,
+//! `stanchion_registry::LoadFailure` and runtime errors, each with
+//! structured variants worth matching on. (Named rather than linked: this crate is
+//! the layer *below* the registry and does not depend on it.) Almost none of that
+//! structure survives a
 //! binding generator or a WASM export: Kotlin sees a sealed class, Ruby sees an
 //! exception class, and a deeply nested enum turns into something nobody wants to
 //! `match` in any of them.
@@ -28,14 +30,16 @@ impl fmt::Display for RuntimeError {
     }
 }
 
-impl std::error::Error for RuntimeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
+impl std::error::Error for RuntimeError {}
 
 /// What went wrong.
+///
+/// `#[non_exhaustive]`: a new variant is added whenever a new class of failure
+/// becomes worth distinguishing, so downstream matches carry a wildcard arm. Without
+/// it, `Manifest` landing here broke `stanchion-ffi-c`'s build instead of falling
+/// through to its catch-all.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// No plugin by that name is loaded.
     UnknownPlugin(String),
@@ -57,13 +61,34 @@ pub enum Error {
         capability: String,
         reason: String,
     },
-    /// A capability provider called back into the registry that invoked it.
+    /// A capability provider called back into the host handle that invoked it.
     ///
-    /// The registry is locked for the duration of a call, so this would otherwise
-    /// deadlock in silence. See [`crate::PluginBackend`].
+    /// A plugin call holds its runtime's state lock for the duration, and that lock is
+    /// not reentrant, so re-entering would stop the process dead with no error and no
+    /// stack.
+    ///
+    /// **Reported by `stanchion-ffi` only.** Each `Stanchion` handle carries an id and
+    /// each thread records which handle it is inside, so the bindings — where a
+    /// long-lived host handle makes this an easy mistake — get this error instead of a
+    /// hang. `stanchion_registry::Registry` has no equivalent guard: a provider there
+    /// cannot borrow the registry that owns it, so reaching the deadlock takes
+    /// deliberate effort (routing the registry back to the provider through an `Arc`,
+    /// a `OnceLock` or a global). If you do that, you get the hang, not this error.
+    ///
+    /// This doc used to say flatly that "the registry is locked for the duration of a
+    /// call", which read as a guarantee the Rust API does not make.
     Reentrant,
-
-    Toml(toml::de::Error),
+    /// A plugin's `plugin.toml` could not be parsed.
+    ///
+    /// Carries the path and the parser's message rather than a `toml::de::Error`:
+    /// this enum crosses a C ABI and four binding generators, none of which can
+    /// render a foreign crate's error type. See `errors_carry_no_foreign_types`.
+    Manifest {
+        /// The manifest that failed to parse.
+        path: String,
+        /// What the TOML parser said.
+        reason: String,
+    },
 }
 
 impl Error {
@@ -83,7 +108,7 @@ impl Error {
             Error::Runtime(_) => "runtime",
             Error::Wasm(_) => "wasm",
             Error::Io(_) => "io",
-            Error::Toml(_) => "toml",
+            Error::Manifest { .. } => "manifest",
             Error::Config(_) => "config",
             Error::Capability { .. } => "capability",
             Error::Reentrant => "reentrant",
@@ -99,7 +124,9 @@ impl fmt::Display for Error {
             Error::Runtime(err) => write!(f, "{}", err),
             Error::Wasm(message) => write!(f, "{message}"),
             Error::Io(message) => write!(f, "{message}"),
-            Error::Toml(err) => write!(f, "{err}"),
+            Error::Manifest { path, reason } => {
+                write!(f, "manifest `{path}`: {reason}")
+            }
             Error::Config(message) => write!(f, "configuration: {message}"),
             Error::Capability { capability, reason } => {
                 write!(f, "capability `{capability}`: {reason}")
@@ -118,7 +145,17 @@ impl From<RuntimeError> for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    /// Links the one variant that wraps another error, so `anyhow`, `eyre` and
+    /// `tracing` can report the cause chain. The rest hold strings: returning them
+    /// as their own source would print every message twice.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Runtime(err) => Some(err),
+            _ => None,
+        }
+    }
+}
 
 /// The result of anything a foreign caller can ask for.
 pub type Result<T> = std::result::Result<T, Error>;

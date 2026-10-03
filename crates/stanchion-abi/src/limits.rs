@@ -1,8 +1,17 @@
-//! Backend-neutral resource ceilings for plugin execution.
+//! Resource ceilings expressed without naming a runtime.
 //!
-//! Every backend interprets these in its own native terms (`Sandbox` for
-//! Lua, fuel + linear-memory caps for WASM), so hosts and manifests can
-//! declare budgets without naming a runtime.
+//! A backend that takes its ceilings this way translates them into its own native
+//! terms — [`LuaBackend::shared_with_limits`][lua] and its grouped sibling turn them
+//! into a `Sandbox`. A backend is not obliged to: `stanchion-wasm` has its own
+//! `WasmLimits` (wasmtime fuel plus a `StoreLimits` memory cap) and never sees a
+//! [`ResourceLimits`], because its ceilings are set when the backend is built rather
+//! than per load. This module used to claim WASM interpreted these; it does not.
+//!
+//! What *is* shared across backends is the manifest side: both read
+//! [`Budget`](crate::manifest::Budget) and may only narrow a host's ceiling with it,
+//! never widen it.
+//!
+//! [lua]: https://docs.rs/stanchion-lua/latest/stanchion_lua/backend/struct.LuaBackend.html
 
 /// Resource ceilings a plugin runs under.
 ///
@@ -25,12 +34,21 @@ impl ResourceLimits {
 
     /// Combines host and manifest ceilings, taking the lower of each.
     ///
-    /// A manifest may narrow what the host allows but never widen it.
+    /// A manifest may narrow what the host allows but never widen it. Both ceilings
+    /// narrow: this handled `max_instructions` only, so a manifest's memory ceiling
+    /// was dropped on the floor.
     pub fn narrowed_by(mut self, manifest: Option<&crate::manifest::Budget>) -> Self {
-        if let Some(budget) = manifest {
-            self.max_instructions = Some(match self.max_instructions {
-                Some(host) => host.min(budget.max_instructions),
-                None => budget.max_instructions,
+        let Some(budget) = manifest else {
+            return self;
+        };
+        self.max_instructions = Some(match self.max_instructions {
+            Some(host) => host.min(budget.max_instructions),
+            None => budget.max_instructions,
+        });
+        if let Some(requested) = budget.memory_bytes {
+            self.memory_bytes = Some(match self.memory_bytes {
+                Some(host) => host.min(requested),
+                None => requested,
             });
         }
         self

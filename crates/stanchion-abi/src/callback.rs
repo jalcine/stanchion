@@ -34,10 +34,11 @@ pub trait CapabilityProvider: Send + Sync {
     /// An `Err` surfaces inside the plugin as a catchable runtime error,
     /// so refusing is a normal outcome rather than a fatal one.
     ///
-    /// **Do not call back into the registry that invoked this.** The
-    /// registry is locked for the duration of a plugin call, so
-    /// re-entering it would deadlock; the attempt is refused with
-    /// [`Error::Reentrant`](crate::Error::Reentrant) instead.
+    /// **Do not call back into the registry that invoked this.** A plugin call holds
+    /// its runtime's state lock for the duration and that lock is not reentrant, so
+    /// re-entering deadlocks. Through `stanchion-ffi` the attempt is refused with
+    /// [`Error::Reentrant`](crate::Error::Reentrant); through
+    /// `stanchion_registry::Registry` directly there is no guard and it hangs.
     fn invoke(&self, call: &CapabilityCall) -> std::result::Result<Value, String>;
 }
 

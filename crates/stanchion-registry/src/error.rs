@@ -15,7 +15,12 @@ use std::path::PathBuf;
 ///
 /// Problems with an individual plugin are reported as a [`LoadFailure`] instead, so one
 /// bad plugin never stops the others from loading.
+///
+/// `#[non_exhaustive]`: variants appear behind feature flags (`Rocks` only with
+/// `luarocks`), which already made this enum unmatchable exhaustively. The attribute
+/// states that rather than leaving it to a comment.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RegistryError {
     /// The plugin root could not be read.
     Io { path: PathBuf, source: io::Error },
@@ -277,7 +282,7 @@ impl From<RegistryError> for stanchion_abi::Error {
             }
             RegistryError::Reload(failure) => stanchion_abi::Error::from(*failure),
             RegistryError::Backend(message) => stanchion_abi::Error::Config(message),
-            // `RegistryError` is effectively `#[non_exhaustive]`: `Rocks` appears
+            // `RegistryError` is `#[non_exhaustive]`: `Rocks` appears
             // whenever *any* crate in the build turns on the registry's `luarocks`
             // feature, which this match cannot know about. Falling through keeps that
             // from being a build error.

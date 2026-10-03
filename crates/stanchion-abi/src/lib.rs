@@ -1,7 +1,5 @@
 //! Runtime-agnostic types shared by every plugin backend.
 //!
-//! Runtime-agnostic types shared by every plugin backend.
-//!
 //! Registries, hosts and backends (Lua, WASM, …) all speak these types,
 //! so a plugin can move between runtimes without the *caller* noticing.
 //! This crate is deliberately runtime-free: it links no Lua, no WASM

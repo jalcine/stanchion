@@ -49,8 +49,10 @@ typedef struct stanchion stanchion_t;
 #define STANCHION_ERR_UNKNOWN_PLUGIN 1
 /// One plugin failed to load, reload, or verify.
 #define STANCHION_ERR_PLUGIN 2
-/// A plugin's Lua raised, or a value could not cross the boundary.
-#define STANCHION_ERR_LUA 3
+/// A plugin's runtime raised, or a value could not cross the boundary.
+///
+/// Named `_LUA` before stanchion grew a second backend.
+#define STANCHION_ERR_RUNTIME 3
 /// The plugin root could not be read.
 #define STANCHION_ERR_IO 4
 /// The host's own configuration is wrong.
@@ -61,6 +63,13 @@ typedef struct stanchion stanchion_t;
 #define STANCHION_ERR_REENTRANT 7
 /// A WASM plugin failed to load, instantiate, run, or answer a call.
 #define STANCHION_ERR_WASM 8
+/// A plugin's `plugin.toml` could not be parsed.
+#define STANCHION_ERR_MANIFEST 9
+/// A failure stanchion has classified but this ABI version has no code for.
+///
+/// The Rust error enum is `#[non_exhaustive]`; rather than break the build or
+/// invent a code, a new variant arrives here with the detail in the message.
+#define STANCHION_ERR_OTHER 127
 
 // ---- lifecycle -----------------------------------------------------------
 

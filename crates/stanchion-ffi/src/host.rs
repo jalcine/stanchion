@@ -17,49 +17,11 @@ use tokio::sync::{Mutex, MutexGuard};
 use crate::error::{Error, Result};
 use crate::guard::{CallGuard, next_id};
 
-/// What one `load` call did.
-///
-/// One plugin failing never stops the others, so this reports both halves rather than
-/// returning at the first problem.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct LoadReport {
-    /// Names of plugins that loaded, in the order they were constructed.
-    pub loaded: Vec<String>,
-    /// Plugins that did not, and why.
-    pub failures: Vec<Failure>,
-}
-
-impl LoadReport {
-    /// True when every discovered plugin loaded.
-    pub fn is_clean(&self) -> bool {
-        self.failures.is_empty()
-    }
-}
-
-/// One plugin that did not load.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Failure {
-    pub plugin: String,
-    pub reason: String,
-}
-
-/// A loaded plugin, as a foreign caller sees it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PluginInfo {
-    pub name: String,
-    pub version: Option<String>,
-    pub granted: Vec<String>,
-    pub signer: String,
-    pub runtime: String,
-}
-
-/// What one plugin requests, established without executing any of its code.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AuditEntry {
-    pub plugin: String,
-    pub capabilities: Vec<String>,
-    pub signer: String,
-}
+// The caller-facing report shapes live in `stanchion-abi`, so this crate and
+// `stanchion-remote` cannot describe the same thing differently. They were defined
+// here and again there, and had already drifted: `PluginInfo::runtime` existed only
+// on this side.
+pub use stanchion_abi::report::{AuditEntry, Failure, LoadReport, PluginInfo};
 
 /// One plugin's result from a dispatch.
 #[derive(Clone, Debug, PartialEq)]

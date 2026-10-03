@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use http::{Method, StatusCode};
+use http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use sha2::{Digest, Sha256};
 use stanchion_dist::{CATALOG_PATH, INDEX_SCHEMA, IndexError, validate_name};
 use time::OffsetDateTime;
@@ -95,6 +95,37 @@ pub struct Served {
 }
 
 impl Served {
+    /// The response headers this answer carries, beyond the status and the body.
+    ///
+    /// `Content-Type` is always present; the rest appear when they mean something.
+    /// A `cache_control` or `etag` that is not a legal header value is dropped rather
+    /// than failing the response — the body is still correct, and a client that gets
+    /// no `ETag` revalidates instead of trusting a bad one.
+    ///
+    /// This exists so the adapters stop assembling it. Each of them built the same
+    /// four headers with the same three conditionals, which is 21 duplicated lines in
+    /// the one place the design says should be thin: `stanchion-index` is
+    /// framework-neutral precisely so an adapter only has to translate. A freshness
+    /// fix, or a header added here, reached one adapter and not the other.
+    pub fn headers(&self) -> Vec<(HeaderName, HeaderValue)> {
+        let mut headers = Vec::with_capacity(4);
+        if let Ok(value) = HeaderValue::from_str(self.content_type) {
+            headers.push((header::CONTENT_TYPE, value));
+        }
+        if let Ok(value) = HeaderValue::from_str(&self.cache_control) {
+            headers.push((header::CACHE_CONTROL, value));
+        }
+        if let Some(etag) = &self.etag
+            && let Ok(value) = HeaderValue::from_str(etag)
+        {
+            headers.push((header::ETAG, value));
+        }
+        if let Some(length) = self.content_length {
+            headers.push((header::CONTENT_LENGTH, HeaderValue::from(length)));
+        }
+        headers
+    }
+
     fn json(status: StatusCode, body: Vec<u8>) -> Self {
         Served {
             status,

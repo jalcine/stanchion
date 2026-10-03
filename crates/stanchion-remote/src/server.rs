@@ -311,6 +311,10 @@ fn handle(registry: &mut Registry, isolation: &str, request: Request) -> Result<
                     version: plugin.manifest().version.as_ref().map(ToString::to_string),
                     granted: plugin.granted_capabilities().map(str::to_string).collect(),
                     signer: signer_of(plugin),
+                    // The in-process path has always reported this; the wire shape
+                    // had no field for it, so a remote host could not say which
+                    // runtime produced a plugin. It can now.
+                    runtime: plugin.instance().runtime().to_string(),
                 })
                 .collect::<Vec<_>>(),
         ),

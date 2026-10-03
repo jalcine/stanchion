@@ -13,6 +13,7 @@ pub mod limits;
 pub mod load;
 pub mod panics;
 pub mod manifest;
+pub mod report;
 pub mod rocks;
 pub mod runtime;
 pub mod sanitize;
@@ -31,6 +32,7 @@ pub use manifest::{
     DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType, is_valid_name,
     validate_name,
 };
+pub use report::{AuditEntry, Failure, LoadReport, PluginInfo};
 pub use runtime::{Reloaded, Runtime};
 pub use sanitize::{MAX_LOG_MESSAGE, sanitize_log};
 pub use value::Value;

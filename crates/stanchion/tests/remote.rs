@@ -88,6 +88,13 @@ fn calls_a_plugin_in_another_process() -> TestResult {
     let echo = plugins.first().ok_or("expected one plugin")?;
     assert_eq!(echo.name, "echo");
     assert_eq!(echo.version.as_deref(), Some("1.0.0"));
+    // `PluginInfo` is one shape shared with `stanchion-ffi` now. It used to be
+    // declared in both crates, and the wire copy had no `runtime` field at all — so
+    // this travelled in-process and was dropped on the way out of a remote host.
+    assert_eq!(
+        echo.runtime, "lua",
+        "a remote host must report which runtime produced a plugin"
+    );
 
     let greeting: String = remote.call("echo", "greet", [json!("world")])?;
     assert_eq!(greeting, "> hello, world", "config reached the child");

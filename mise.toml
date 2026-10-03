@@ -73,7 +73,13 @@ ANDROID_API = "34"
 # the `stanchion/*` features, so anything behind a `stanchion-ffi` feature — the
 # signature-gated tests among them — compiled in the suite but was never linted.
 # A feature added to one of these tasks and not the other is the bug this prevents.
-STANCHION_FEATURES = "stanchion/full,stanchion/lua54,stanchion/vendored,stanchion-ffi/lua54,stanchion-ffi/vendored,stanchion-ffi/signatures,stanchion-ffi/async"
+#
+# `stanchion-index/tower` is here because nothing else turns it on: `stanchion`'s
+# `index-server` feature pulls in `stanchion-index` with default features, which do
+# not include `tower`. So `stanchion-index/src/tower.rs` — the adapter axum, tonic and
+# warp mount, and the larger of the two adapters — was compiled by no job at all, test
+# or lint.
+STANCHION_FEATURES = "stanchion/full,stanchion/lua54,stanchion/vendored,stanchion-ffi/lua54,stanchion-ffi/vendored,stanchion-ffi/signatures,stanchion-ffi/async,stanchion-index/tower"
 
 [tasks.test]
 description = "Run the Rust suite under nextest"

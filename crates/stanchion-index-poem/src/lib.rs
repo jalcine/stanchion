@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use poem::http::{HeaderValue, StatusCode, header};
+use poem::http::StatusCode;
 use poem::{Endpoint, Request, Response};
 use stanchion_index::{Body, IndexServer, IndexSource, Served, request_parts};
 
@@ -80,22 +80,12 @@ where
 /// Translates a [`Served`] into a Poem response.
 ///
 /// A document becomes bytes; a package becomes a stream, so serving a large one costs
-/// a buffer rather than its own size in memory.
+/// a buffer rather than its own size in memory. Which headers an answer carries is
+/// [`stanchion_index::Served::headers`]' business — only the body is Poem-specific.
 pub fn into_response(served: Served) -> Response {
-    let mut builder = Response::builder()
-        .status(served.status)
-        .header(header::CONTENT_TYPE, served.content_type);
-
-    if let Ok(value) = HeaderValue::from_str(&served.cache_control) {
-        builder = builder.header(header::CACHE_CONTROL, value);
-    }
-    if let Some(etag) = &served.etag
-        && let Ok(value) = HeaderValue::from_str(etag)
-    {
-        builder = builder.header(header::ETAG, value);
-    }
-    if let Some(length) = served.content_length {
-        builder = builder.header(header::CONTENT_LENGTH, length);
+    let mut builder = Response::builder().status(served.status);
+    for (name, value) in served.headers() {
+        builder = builder.header(name, value);
     }
 
     match served.body {

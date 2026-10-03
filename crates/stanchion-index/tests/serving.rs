@@ -409,3 +409,68 @@ fn the_ttl_is_clamped_to_something_a_client_can_use() -> TestResult {
     );
     Ok(())
 }
+
+/// The headers an answer carries are assembled here, once, for every adapter.
+///
+/// Both adapters used to build these themselves — the same four headers behind the
+/// same three conditionals, 21 duplicated lines in the layer the design keeps
+/// framework-neutral so adapters stay thin. Nothing tested the assembly, because it
+/// lived in two places that each needed a framework to exercise. It lives in
+/// `Served::headers` now and this is its test.
+#[test]
+fn served_carries_the_headers_an_adapter_needs() -> TestResult {
+    use http::header;
+
+    let root = index_root()?;
+    let server = IndexServer::new(DirectorySource::new(root.path()));
+
+    let served = server.serve(&Method::GET, "/v1/index.json", None);
+    let headers = served.headers();
+    let get = |name: &header::HeaderName| {
+        headers
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.to_str().unwrap_or_default().to_string())
+    };
+
+    assert_eq!(get(&header::CONTENT_TYPE).as_deref(), Some("application/json"));
+    assert!(
+        get(&header::CACHE_CONTROL).is_some(),
+        "a document answer must carry a freshness window"
+    );
+    assert!(
+        get(&header::ETAG).is_some(),
+        "a document answer must carry an ETag for revalidation"
+    );
+    assert_eq!(
+        get(&header::CONTENT_LENGTH),
+        Some(served.content_length.unwrap_or_default().to_string()),
+        "declared length must match the header"
+    );
+    Ok(())
+}
+
+/// A `304` answers with validators and no length, since there is no body.
+#[test]
+fn a_304_carries_no_content_length() -> TestResult {
+    use http::header;
+
+    let root = index_root()?;
+    let server = IndexServer::new(DirectorySource::new(root.path()));
+    let first = server.serve(&Method::GET, "/v1/index.json", None);
+    let etag = first.etag.clone().ok_or("no etag issued")?;
+
+    let repeat = server.serve(&Method::GET, "/v1/index.json", Some(&etag));
+    assert_eq!(repeat.status, StatusCode::NOT_MODIFIED);
+
+    let headers = repeat.headers();
+    assert!(
+        !headers.iter().any(|(name, _)| name == header::CONTENT_LENGTH),
+        "a 304 has no body, so it must not claim a length: {headers:?}"
+    );
+    assert!(
+        headers.iter().any(|(name, _)| name == header::ETAG),
+        "a 304 must still carry the ETag it matched"
+    );
+    Ok(())
+}

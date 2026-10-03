@@ -11,7 +11,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use http::{HeaderValue, Request, Response, StatusCode, header};
+use http::{Request, Response, StatusCode};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use tower_service::Service;
@@ -71,34 +71,32 @@ where
 }
 
 /// Translates a [`Served`] into an `http::Response`.
+///
+/// Which headers an answer carries is [`Served::headers`]' business, not this
+/// function's: only the body is Tower-specific.
 pub fn into_response(served: Served) -> Response<IndexBody> {
-    let mut builder = Response::builder()
-        .status(served.status)
-        .header(header::CONTENT_TYPE, served.content_type);
-
-    if let Ok(value) = HeaderValue::from_str(&served.cache_control) {
-        builder = builder.header(header::CACHE_CONTROL, value);
-    }
-    if let Some(etag) = &served.etag
-        && let Ok(value) = HeaderValue::from_str(etag)
-    {
-        builder = builder.header(header::ETAG, value);
-    }
-    if let Some(length) = served.content_length {
-        builder = builder.header(header::CONTENT_LENGTH, length);
+    let mut builder = Response::builder().status(served.status);
+    for (name, value) in served.headers() {
+        builder = builder.header(name, value);
     }
 
+    // `BodyExt::boxed` by name, not by method call: `futures_util::StreamExt` is in
+    // scope here for `.map`, it also has a `boxed`, and `StreamBody` satisfies both
+    // traits. Which one `.boxed()` resolves to then depends on whether something else
+    // in the build unified `futures-util`'s default features in — so the same source
+    // compiles alone and is ambiguous beside another crate that pulls them.
     let body = match served.body {
-        Body::Bytes(bytes) => Full::new(Bytes::from(bytes)).map_err(io_never).boxed(),
+        Body::Bytes(bytes) => BodyExt::boxed(Full::new(Bytes::from(bytes)).map_err(io_never)),
         // Read on a blocking worker, delivered through a bounded channel.
-        Body::Reader(reader) => StreamBody::new(
+        Body::Reader(reader) => BodyExt::boxed(StreamBody::new(
             crate::stream::chunks(reader).map(|chunk| chunk.map(http_body::Frame::data)),
-        )
-        .boxed(),
+        )),
     };
 
     builder.body(body).unwrap_or_else(|_| {
-        let mut fallback = Response::new(Full::new(Bytes::new()).map_err(io_never).boxed());
+        let mut fallback = Response::new(BodyExt::boxed(
+            Full::new(Bytes::new()).map_err(io_never),
+        ));
         *fallback.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         fallback
     })

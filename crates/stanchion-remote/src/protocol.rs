@@ -79,45 +79,15 @@ pub struct RevokeParams {
     pub capability: String,
 }
 
-/// Result of `plugins/load`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LoadResult {
-    /// Plugins that loaded, in order.
-    pub loaded: Vec<String>,
-    /// Plugins that did not, with the host's reason.
-    pub failures: Vec<Failure>,
-}
-
-impl LoadResult {
-    /// True when every discovered plugin loaded.
-    pub fn is_clean(&self) -> bool {
-        self.failures.is_empty()
-    }
-}
-
-/// One plugin that did not load.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Failure {
-    pub plugin: String,
-    pub reason: String,
-}
-
-/// A loaded plugin, as the application sees it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginInfo {
-    pub name: String,
-    pub version: Option<String>,
-    pub granted: Vec<String>,
-    pub signer: String,
-}
-
-/// What one plugin requests, established without executing it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditEntry {
-    pub plugin: String,
-    pub capabilities: Vec<String>,
-    pub signer: String,
-}
+// The caller-facing report shapes live in `stanchion-abi`, so this protocol and
+// `stanchion-ffi` cannot describe the same thing differently. They were defined here
+// and again there; `PluginInfo::runtime` existed only on that side, so a remote host
+// could not tell a caller which runtime produced a plugin.
+//
+// `LoadResult` keeps its name here — it is what the `plugins/load` response is called
+// in the protocol — as an alias for the shared shape.
+pub use stanchion_abi::report::{AuditEntry, Failure, PluginInfo};
+pub use stanchion_abi::report::LoadReport as LoadResult;
 
 /// One plugin's result from a dispatch.
 #[derive(Debug, Clone, Serialize, Deserialize)]

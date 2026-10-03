@@ -4,11 +4,29 @@ use stanchion_abi::backend::{BackendRegistry, PluginBackend};
 use stanchion_abi::manifest::{Manifest, PluginType};
 use std::path::Path;
 
-struct DummyBackend {
+/// A backend that answers for one [`PluginType`] and refuses to load anything.
+///
+/// There were three of these — `DummyBackend`, `LuaBackend`, `WasmBackend` — with the
+/// same `load` body differing only in the name inside the error nobody asserts on.
+struct StubBackend {
     ty: PluginType,
 }
 
-impl PluginBackend for DummyBackend {
+impl StubBackend {
+    fn lua() -> Self {
+        StubBackend {
+            ty: PluginType::Lua,
+        }
+    }
+
+    fn wasm() -> Self {
+        StubBackend {
+            ty: PluginType::Wasm,
+        }
+    }
+}
+
+impl PluginBackend for StubBackend {
     fn plugin_type(&self) -> PluginType {
         self.ty.clone()
     }
@@ -19,44 +37,7 @@ impl PluginBackend for DummyBackend {
         _dir: &Path,
     ) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
         Err(stanchion_abi::Error::Plugin {
-            plugin: "dummy".to_string(),
-            reason: "not implemented".to_string(),
-        })
-    }
-}
-
-struct LuaBackend;
-struct WasmBackend;
-
-impl PluginBackend for LuaBackend {
-    fn plugin_type(&self) -> PluginType {
-        PluginType::Lua
-    }
-
-    fn load(
-        &self,
-        _manifest: &Manifest,
-        _dir: &Path,
-    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        Err(stanchion_abi::Error::Plugin {
-            plugin: "lua".to_string(),
-            reason: "not implemented".to_string(),
-        })
-    }
-}
-
-impl PluginBackend for WasmBackend {
-    fn plugin_type(&self) -> PluginType {
-        PluginType::Wasm
-    }
-
-    fn load(
-        &self,
-        _manifest: &Manifest,
-        _dir: &Path,
-    ) -> stanchion_abi::Result<Box<dyn stanchion_abi::backend::PluginInstance>> {
-        Err(stanchion_abi::Error::Plugin {
-            plugin: "wasm".to_string(),
+            plugin: format!("{:?}", self.ty).to_lowercase(),
             reason: "not implemented".to_string(),
         })
     }
@@ -72,7 +53,7 @@ fn new_registry_is_empty() {
 #[test]
 fn register_adds_backend() {
     let mut registry = BackendRegistry::new();
-    registry.register(Box::new(LuaBackend));
+    registry.register(Box::new(StubBackend::lua()));
     assert_eq!(registry.len(), 1);
     assert!(!registry.is_empty());
 }
@@ -80,7 +61,7 @@ fn register_adds_backend() {
 #[test]
 fn get_returns_registered_backend() {
     let mut registry = BackendRegistry::new();
-    registry.register(Box::new(LuaBackend));
+    registry.register(Box::new(StubBackend::lua()));
     assert!(registry.get(&PluginType::Lua).is_some());
     assert!(registry.get(&PluginType::Wasm).is_none());
 }
@@ -88,21 +69,19 @@ fn get_returns_registered_backend() {
 #[test]
 fn register_replaces_previous_backend_for_same_type() {
     let mut registry = BackendRegistry::new();
-    registry.register(Box::new(LuaBackend));
+    registry.register(Box::new(StubBackend::lua()));
     assert_eq!(registry.len(), 1);
 
     // Register another Lua backend - replaces the first
-    registry.register(Box::new(DummyBackend {
-        ty: PluginType::Lua,
-    }));
+    registry.register(Box::new(StubBackend::lua()));
     assert_eq!(registry.len(), 1);
 }
 
 #[test]
 fn register_allows_multiple_types() {
     let mut registry = BackendRegistry::new();
-    registry.register(Box::new(LuaBackend));
-    registry.register(Box::new(WasmBackend));
+    registry.register(Box::new(StubBackend::lua()));
+    registry.register(Box::new(StubBackend::wasm()));
     assert_eq!(registry.len(), 2);
     assert!(registry.get(&PluginType::Lua).is_some());
     assert!(registry.get(&PluginType::Wasm).is_some());
@@ -111,8 +90,8 @@ fn register_allows_multiple_types() {
 #[test]
 fn iter_returns_all_backends() {
     let mut registry = BackendRegistry::new();
-    registry.register(Box::new(LuaBackend));
-    registry.register(Box::new(WasmBackend));
+    registry.register(Box::new(StubBackend::lua()));
+    registry.register(Box::new(StubBackend::wasm()));
 
     let types: Vec<PluginType> = registry.iter().map(|b| b.plugin_type()).collect();
     assert_eq!(types.len(), 2);
@@ -123,9 +102,9 @@ fn iter_returns_all_backends() {
 #[test]
 fn register_preserves_last_write_for_same_type() {
     let mut registry = BackendRegistry::new();
-    registry.register(Box::new(LuaBackend));
+    registry.register(Box::new(StubBackend::lua()));
     let second_ty = PluginType::Lua;
-    registry.register(Box::new(DummyBackend {
+    registry.register(Box::new(StubBackend {
         ty: second_ty.clone(),
     }));
     assert_eq!(registry.len(), 1);
@@ -142,9 +121,9 @@ fn get_returns_none_for_empty_registry() {
 fn len_reflects_registered_backends() {
     let mut registry = BackendRegistry::new();
     assert_eq!(registry.len(), 0);
-    registry.register(Box::new(LuaBackend));
+    registry.register(Box::new(StubBackend::lua()));
     assert_eq!(registry.len(), 1);
-    registry.register(Box::new(WasmBackend));
+    registry.register(Box::new(StubBackend::wasm()));
     assert_eq!(registry.len(), 2);
 }
 
@@ -164,14 +143,12 @@ fn load_returns_error_for_unimplemented_backends() {
     };
     let dir = Path::new("/tmp");
 
-    let lua = LuaBackend;
+    let lua = StubBackend::lua();
     assert!(lua.load(&manifest, dir).is_err());
 
-    let wasm = WasmBackend;
+    let wasm = StubBackend::wasm();
     assert!(wasm.load(&manifest, dir).is_err());
 
-    let dummy = DummyBackend {
-        ty: PluginType::Lua,
-    };
+    let dummy = StubBackend::lua();
     assert!(dummy.load(&manifest, dir).is_err());
 }

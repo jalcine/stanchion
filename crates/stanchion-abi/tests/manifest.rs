@@ -8,9 +8,13 @@ use stanchion_abi::manifest::{DependencySpec, DetailedDependency, Manifest, Plug
 type Boxed = Box<dyn std::error::Error + Send + Sync>;
 type Fallible<T> = std::result::Result<T, Boxed>;
 
-#[test]
-fn lua_plugin_defaults() {
-    let manifest = Manifest {
+/// A minimal valid Lua manifest, for tests that care about one field.
+///
+/// `Manifest` has no `Default` — deliberately: `name` has no sensible one — so every
+/// test that builds one listed all ten fields, which meant five near-identical
+/// literals here and a new field breaking all of them at once.
+fn lua_manifest() -> Manifest {
+    Manifest {
         name: "test".to_string(),
         version: None,
         plugin_type: PluginType::Lua,
@@ -21,7 +25,12 @@ fn lua_plugin_defaults() {
         config: Default::default(),
         budget: None,
         dir: std::path::PathBuf::from("/tmp/test"),
-    };
+    }
+}
+
+#[test]
+fn lua_plugin_defaults() {
+    let manifest = lua_manifest();
 
     assert_eq!(manifest.plugin_type, PluginType::Lua);
     assert!(manifest.validate().is_ok());
@@ -30,16 +39,9 @@ fn lua_plugin_defaults() {
 #[test]
 fn wasm_plugin_defaults() -> Fallible<()> {
     let mut manifest = Manifest {
-        name: "test".to_string(),
-        version: None,
         plugin_type: PluginType::Wasm,
         entry: "init.wasm".to_string(),
-        dependencies: Default::default(),
-        capabilities: Default::default(),
-        rocks: Default::default(),
-        config: Default::default(),
-        budget: None,
-        dir: std::path::PathBuf::from("/tmp/test"),
+        ..lua_manifest()
     };
 
     assert_eq!(manifest.plugin_type, PluginType::Wasm);
@@ -82,18 +84,7 @@ fn lua_wrong_entry_is_rejected() -> Fallible<()> {
 
 #[test]
 fn effective_version_defaults_to_zero() {
-    let manifest = Manifest {
-        name: "test".to_string(),
-        version: None,
-        plugin_type: PluginType::Lua,
-        entry: "init.lua".to_string(),
-        dependencies: Default::default(),
-        capabilities: Default::default(),
-        rocks: Default::default(),
-        config: Default::default(),
-        budget: None,
-        dir: std::path::PathBuf::from("/tmp/test"),
-    };
+    let manifest = lua_manifest();
 
     assert_eq!(manifest.effective_version(), semver::Version::new(0, 0, 0));
 }
@@ -101,16 +92,8 @@ fn effective_version_defaults_to_zero() {
 #[test]
 fn effective_version_uses_declared_version() {
     let manifest = Manifest {
-        name: "test".to_string(),
         version: Some(semver::Version::new(1, 2, 3)),
-        plugin_type: PluginType::Lua,
-        entry: "init.lua".to_string(),
-        dependencies: Default::default(),
-        capabilities: Default::default(),
-        rocks: Default::default(),
-        config: Default::default(),
-        budget: None,
-        dir: std::path::PathBuf::from("/tmp/test"),
+        ..lua_manifest()
     };
 
     assert_eq!(manifest.effective_version(), semver::Version::new(1, 2, 3));
@@ -118,18 +101,7 @@ fn effective_version_uses_declared_version() {
 
 #[test]
 fn entry_path_joins_dir_and_entry() {
-    let manifest = Manifest {
-        name: "test".to_string(),
-        version: None,
-        plugin_type: PluginType::Lua,
-        entry: "init.lua".to_string(),
-        dependencies: Default::default(),
-        capabilities: Default::default(),
-        rocks: Default::default(),
-        config: Default::default(),
-        budget: None,
-        dir: std::path::PathBuf::from("/tmp/test"),
-    };
+    let manifest = lua_manifest();
 
     assert_eq!(
         manifest.entry_path(),

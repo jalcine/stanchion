@@ -46,7 +46,7 @@ pub trait Runtime: PluginBackend {
     /// the new one did not take its place.
     ///
     /// Returns what policy granted along with the instance, exactly as
-    /// [`GroupOutcome::Loaded`](crate::load::GroupOutcome::Loaded) does. This used to
+    /// [`GroupOutcome::Loaded`] does. This used to
     /// return the instance alone, which left the host no way to learn the grants the
     /// backend had just computed — so `Registry::reload` recomputed them itself,
     /// consulting the policy a second time and deriving the same field by a different

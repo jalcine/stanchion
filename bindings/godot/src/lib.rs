@@ -38,6 +38,14 @@ fn describe(error: &FfiError) -> String {
     format!("{}: {}", error.kind(), error)
 }
 
+/// A host result, with its error already flattened for GDScript.
+///
+/// Lets a `Stanchion::with_host` body mix host calls with argument conversion, which
+/// fails with a bare message, and `?` both.
+fn described<T>(result: Result<T, FfiError>) -> Result<T, String> {
+    result.map_err(|error| describe(&error))
+}
+
 /// Sets a string-keyed entry on an untyped dictionary.
 fn dset(dictionary: &mut VarDictionary, key: &str, value: Variant) {
     let key = key.to_variant();
@@ -253,273 +261,156 @@ impl Stanchion {
     /// configuration named). Returns `{ loaded, failures, clean }`.
     #[func]
     fn load(&mut self, root: GString) -> VarDictionary {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return VarDictionary::new();
+        let root = optional_path(&root);
+        self.with_host(VarDictionary::new(), |host| {
+            let report = described(host.load(root.as_deref()))?;
+            let mut loaded = VarArray::new();
+            for name in &report.loaded {
+                loaded.push(&name.to_variant());
             }
-        };
-        match host.load(optional_path(&root).as_deref()) {
-            Ok(report) => {
-                let mut loaded = VarArray::new();
-                for name in &report.loaded {
-                    loaded.push(&name.to_variant());
-                }
-                let mut failures = VarArray::new();
-                for failure in &report.failures {
-                    let mut entry = VarDictionary::new();
-                    dset(&mut entry, "plugin", failure.plugin.to_variant());
-                    dset(&mut entry, "reason", failure.reason.to_variant());
-                    failures.push(&entry.to_variant());
-                }
-                let clean = report.is_clean();
-                let mut result = VarDictionary::new();
-                dset(&mut result, "loaded", loaded.to_variant());
-                dset(&mut result, "failures", failures.to_variant());
-                dset(&mut result, "clean", clean.to_variant());
-                result
+            let mut failures = VarArray::new();
+            for failure in &report.failures {
+                let mut entry = VarDictionary::new();
+                dset(&mut entry, "plugin", failure.plugin.to_variant());
+                dset(&mut entry, "reason", failure.reason.to_variant());
+                failures.push(&entry.to_variant());
             }
-            Err(error) => {
-                self.record(describe(&error));
-                VarDictionary::new()
-            }
-        }
+            let clean = report.is_clean();
+            let mut result = VarDictionary::new();
+            dset(&mut result, "loaded", loaded.to_variant());
+            dset(&mut result, "failures", failures.to_variant());
+            dset(&mut result, "clean", clean.to_variant());
+            Ok(result)
+        })
     }
 
     /// Reports what each plugin requests, without running any of its code. Returns an
     /// Array of `{ plugin, capabilities, signer }`.
     #[func]
     fn audit(&mut self, root: GString) -> VarArray {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return VarArray::new();
+        let root = optional_path(&root);
+        self.with_host(VarArray::new(), |host| {
+            let entries = described(host.audit(root.as_deref()))?;
+            let mut array = VarArray::new();
+            for entry in &entries {
+                let mut item = VarDictionary::new();
+                dset(&mut item, "plugin", entry.plugin.to_variant());
+                dset(
+                    &mut item,
+                    "capabilities",
+                    strings_to_array(&entry.capabilities),
+                );
+                dset(&mut item, "signer", entry.signer.to_variant());
+                array.push(&item.to_variant());
             }
-        };
-        match host.audit(optional_path(&root).as_deref()) {
-            Ok(entries) => {
-                let mut array = VarArray::new();
-                for entry in &entries {
-                    let mut item = VarDictionary::new();
-                    dset(&mut item, "plugin", entry.plugin.to_variant());
-                    dset(
-                        &mut item,
-                        "capabilities",
-                        strings_to_array(&entry.capabilities),
-                    );
-                    dset(&mut item, "signer", entry.signer.to_variant());
-                    array.push(&item.to_variant());
-                }
-                array
-            }
-            Err(error) => {
-                self.record(describe(&error));
-                VarArray::new()
-            }
-        }
+            Ok(array)
+        })
     }
 
     /// The loaded plugins, as an Array of `{ name, version, granted, signer }`.
     #[func]
     fn list(&mut self) -> VarArray {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return VarArray::new();
-            }
-        };
-        match host.list() {
-            Ok(plugins) => {
-                let mut array = VarArray::new();
-                for plugin in &plugins {
-                    let mut item = VarDictionary::new();
-                    dset(&mut item, "name", plugin.name.to_variant());
-                    match &plugin.version {
-                        Some(version) => dset(&mut item, "version", version.to_variant()),
-                        None => dset(&mut item, "version", Variant::nil()),
-                    }
-                    dset(&mut item, "granted", strings_to_array(&plugin.granted));
-                    dset(&mut item, "signer", plugin.signer.to_variant());
-                    array.push(&item.to_variant());
+        self.with_host(VarArray::new(), |host| {
+            let plugins = described(host.list())?;
+            let mut array = VarArray::new();
+            for plugin in &plugins {
+                let mut item = VarDictionary::new();
+                dset(&mut item, "name", plugin.name.to_variant());
+                match &plugin.version {
+                    Some(version) => dset(&mut item, "version", version.to_variant()),
+                    None => dset(&mut item, "version", Variant::nil()),
                 }
-                array
+                dset(&mut item, "granted", strings_to_array(&plugin.granted));
+                dset(&mut item, "signer", plugin.signer.to_variant());
+                array.push(&item.to_variant());
             }
-            Err(error) => {
-                self.record(describe(&error));
-                VarArray::new()
-            }
-        }
+            Ok(array)
+        })
     }
 
     /// The loaded plugins' names.
     #[func]
     fn names(&mut self) -> PackedStringArray {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return PackedStringArray::new();
-            }
-        };
-        match host.names() {
-            Ok(names) => names
+        self.with_host(PackedStringArray::new(), |host| {
+            Ok(described(host.names())?
                 .iter()
                 .map(|name| GString::from(name.as_str()))
-                .collect(),
-            Err(error) => {
-                self.record(describe(&error));
-                PackedStringArray::new()
-            }
-        }
+                .collect())
+        })
     }
 
     /// Calls one method on one plugin. Returns the plugin's result, or `null` on error
     /// (see `get_last_error`).
     #[func]
     fn call(&mut self, plugin: GString, method: GString, args: VarArray) -> Variant {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return Variant::nil();
-            }
-        };
-        let arguments = match collect_args(&args) {
-            Ok(arguments) => arguments,
-            Err(message) => {
-                self.record(message);
-                return Variant::nil();
-            }
-        };
-        match host.call(&plugin.to_string(), &method.to_string(), &arguments) {
-            Ok(value) => to_variant(&value),
-            Err(error) => {
-                self.record(describe(&error));
-                Variant::nil()
-            }
-        }
+        self.with_host(Variant::nil(), |host| {
+            // Inside, so an unopened host is still reported as such rather than being
+            // pre-empted by whatever `collect_args` makes of the arguments.
+            let arguments = collect_args(&args)?;
+            let value =
+                described(host.call(&plugin.to_string(), &method.to_string(), &arguments))?;
+            Ok(to_variant(&value))
+        })
     }
 
     /// Calls the same method on every plugin, collecting one result each. Returns an
     /// Array of `{ plugin, value, error }`; one plugin failing never affects the rest.
     #[func]
     fn dispatch(&mut self, method: GString, args: VarArray) -> VarArray {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return VarArray::new();
-            }
-        };
-        let arguments = match collect_args(&args) {
-            Ok(arguments) => arguments,
-            Err(message) => {
-                self.record(message);
-                return VarArray::new();
-            }
-        };
-        match host.dispatch(&method.to_string(), &arguments) {
-            Ok(outcomes) => {
-                let mut array = VarArray::new();
-                for outcome in &outcomes {
-                    let mut item = VarDictionary::new();
-                    dset(&mut item, "plugin", outcome.plugin.to_variant());
-                    match &outcome.value {
-                        Some(value) => dset(&mut item, "value", to_variant(value)),
-                        None => dset(&mut item, "value", Variant::nil()),
-                    }
-                    match &outcome.error {
-                        Some(error) => dset(&mut item, "error", error.to_variant()),
-                        None => dset(&mut item, "error", Variant::nil()),
-                    }
-                    array.push(&item.to_variant());
+        self.with_host(VarArray::new(), |host| {
+            let arguments = collect_args(&args)?;
+            let outcomes = described(host.dispatch(&method.to_string(), &arguments))?;
+            let mut array = VarArray::new();
+            for outcome in &outcomes {
+                let mut item = VarDictionary::new();
+                dset(&mut item, "plugin", outcome.plugin.to_variant());
+                match &outcome.value {
+                    Some(value) => dset(&mut item, "value", to_variant(value)),
+                    None => dset(&mut item, "value", Variant::nil()),
                 }
-                array
+                match &outcome.error {
+                    Some(error) => dset(&mut item, "error", error.to_variant()),
+                    None => dset(&mut item, "error", Variant::nil()),
+                }
+                array.push(&item.to_variant());
             }
-            Err(error) => {
-                self.record(describe(&error));
-                VarArray::new()
-            }
-        }
+            Ok(array)
+        })
     }
 
     /// Re-reads one plugin from disk. Returns whether it reloaded.
     #[func]
     fn reload(&mut self, plugin: GString) -> bool {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return false;
-            }
-        };
-        match host.reload(&plugin.to_string()) {
-            Ok(()) => true,
-            Err(error) => {
-                self.record(describe(&error));
-                false
-            }
-        }
+        self.with_host(false, |host| {
+            described(host.reload(&plugin.to_string()))?;
+            Ok(true)
+        })
     }
 
     /// Unbinds a granted capability from a live plugin. Returns whether anything was
     /// revoked.
     #[func]
     fn revoke(&mut self, plugin: GString, capability: GString) -> bool {
-        let host = match self.opened() {
-            Ok(host) => host,
-            Err(message) => {
-                self.record(message);
-                return false;
-            }
-        };
-        match host.revoke(&plugin.to_string(), &capability.to_string()) {
-            Ok(revoked) => revoked,
-            Err(error) => {
-                self.record(describe(&error));
-                false
-            }
-        }
+        self.with_host(false, |host| {
+            described(host.revoke(&plugin.to_string(), &capability.to_string()))
+        })
     }
 
     /// Whether plugins share one Lua state: `"shared"` or `"per-plugin"`; empty on
     /// error.
     #[func]
     fn isolation(&mut self) -> GString {
-        match self.opened() {
-            Ok(host) => match host.isolation() {
-                Ok(mode) => GString::from(mode),
-                Err(error) => {
-                    self.record(describe(&error));
-                    GString::new()
-                }
-            },
-            Err(message) => {
-                self.record(message);
-                GString::new()
-            }
-        }
+        self.with_host(GString::new(), |host| {
+            Ok(GString::from(described(host.isolation())?))
+        })
     }
 
     /// How many plugins are loaded; `0` before `open` or on error.
     #[func]
     fn count(&mut self) -> i64 {
-        match self.opened() {
-            Ok(host) => match host.len() {
-                Ok(count) => i64::try_from(count).unwrap_or(i64::MAX),
-                Err(error) => {
-                    self.record(describe(&error));
-                    0
-                }
-            },
-            Err(message) => {
-                self.record(message);
-                0
-            }
-        }
+        self.with_host(0, |host| {
+            Ok(i64::try_from(described(host.len())?).unwrap_or(i64::MAX))
+        })
     }
 
     /// Whether `open` has been called and the sandbox built.
@@ -548,6 +439,34 @@ impl Stanchion {
     fn record(&mut self, message: String) {
         godot_error!("stanchion: {message}");
         self.last_error = message;
+    }
+
+    /// Runs `op` against the opened host, answering `fallback` if anything fails.
+    ///
+    /// GDScript has no `Result`, so every `#[func]` here has to turn a failure into a
+    /// recorded error plus an empty value of the right type. That shape — open the
+    /// host or record and bail, run the call or record and bail — was written out ten
+    /// times. The risk in ten copies is not the volume: it is the one that forgets to
+    /// `record`, which drops the error silently and leaves `get_last_error` holding
+    /// something stale from an unrelated call.
+    /// `op` reports failure as the message GDScript will read, so a host error and an
+    /// argument-conversion error — which is a plain `String`, not an `FfiError` — go
+    /// down the same path. Wrap the former with [`described`].
+    fn with_host<T>(&mut self, fallback: T, op: impl FnOnce(&Host) -> Result<T, String>) -> T {
+        let host = match self.opened() {
+            Ok(host) => host,
+            Err(message) => {
+                self.record(message);
+                return fallback;
+            }
+        };
+        match op(&host) {
+            Ok(value) => value,
+            Err(message) => {
+                self.record(message);
+                fallback
+            }
+        }
     }
 }
 

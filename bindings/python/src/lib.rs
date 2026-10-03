@@ -77,6 +77,37 @@ create_exception!(
     "A capability provider called back into the registry that invoked it."
 );
 
+/// Builds a host from a config plus the capabilities and policy Python supplied.
+///
+/// Both constructors — `Registry(...)` and `Registry.from_config_file(...)` — differ
+/// only in where the `HostConfig` comes from and then did this identically: 22 lines
+/// wiring each `PyProvider`, then the policy, then the build. Only the config part is
+/// actually their own.
+fn build_host(
+    config: stanchion_ffi::HostConfig,
+    capabilities: Option<&Bound<'_, PyDict>>,
+    policy: Option<Py<PyAny>>,
+) -> PyResult<Stanchion> {
+    let mut builder = Host::builder().config(config);
+    if let Some(capabilities) = capabilities {
+        for (name, provider) in capabilities.iter() {
+            let name: String = name.extract()?;
+            builder = builder.capability(
+                name,
+                Arc::new(PyProvider {
+                    callable: provider.unbind(),
+                }) as Arc<dyn CapabilityProvider>,
+            );
+        }
+    }
+    if let Some(policy) = policy {
+        builder = builder.policy(Arc::new(PyPolicy { callable: policy }) as Arc<dyn FfiPolicy>);
+    }
+    Ok(Stanchion {
+        inner: Arc::new(builder.build().map_err(raise)?),
+    })
+}
+
 /// Maps a failure onto the exception class that names it.
 ///
 /// The tags come from `Error::kind` in `stanchion-abi`. When a tag here stops matching
@@ -455,25 +486,8 @@ impl Stanchion {
             config.capabilities.allow = allow;
         }
 
-        let mut builder = Host::builder().config(config);
-        if let Some(capabilities) = capabilities {
-            for (name, provider) in capabilities.iter() {
-                let name: String = name.extract()?;
-                builder = builder.capability(
-                    name,
-                    Arc::new(PyProvider {
-                        callable: provider.unbind(),
-                    }) as Arc<dyn CapabilityProvider>,
-                );
-            }
-        }
-        if let Some(policy) = policy {
-            builder = builder.policy(Arc::new(PyPolicy { callable: policy }) as Arc<dyn FfiPolicy>);
-        }
 
-        Ok(Stanchion {
-            inner: Arc::new(builder.build().map_err(raise)?),
-        })
+        build_host(config, capabilities, policy)
     }
 
     /// Reads a registry's configuration from a TOML file.
@@ -491,24 +505,7 @@ impl Stanchion {
         let config = stanchion_ffi::load_config(&path)
             .map_err(|err| ConfigError::new_err(err.to_string()))?;
 
-        let mut builder = Host::builder().config(config);
-        if let Some(capabilities) = capabilities {
-            for (name, provider) in capabilities.iter() {
-                let name: String = name.extract()?;
-                builder = builder.capability(
-                    name,
-                    Arc::new(PyProvider {
-                        callable: provider.unbind(),
-                    }) as Arc<dyn CapabilityProvider>,
-                );
-            }
-        }
-        if let Some(policy) = policy {
-            builder = builder.policy(Arc::new(PyPolicy { callable: policy }) as Arc<dyn FfiPolicy>);
-        }
-        Ok(Stanchion {
-            inner: Arc::new(builder.build().map_err(raise)?),
-        })
+        build_host(config, capabilities, policy)
     }
 
     /// Discovers and loads every plugin under a root.

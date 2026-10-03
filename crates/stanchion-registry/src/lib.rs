@@ -940,17 +940,24 @@ impl Registry {
         method: &str,
         args: &[Value],
     ) -> stanchion_abi::Result<Value> {
-        let entry = self
-            .index
-            .get(plugin)
-            .and_then(|position| self.plugins.get(*position))
-            .ok_or_else(|| stanchion_abi::Error::UnknownPlugin(plugin.to_string()))?;
+        let entry = self.entry(plugin)?;
         stanchion_abi::panics::guard(|| entry.instance.call(method, args)).map_err(|panicked| {
             stanchion_abi::Error::Runtime(stanchion_abi::RuntimeError {
                 runtime_name: entry.instance.runtime().to_string(),
                 error: panicked.to_string(),
             })
         })?
+    }
+
+    /// The loaded plugin by name, or [`Error::UnknownPlugin`].
+    ///
+    /// Shared by [`call`](Self::call) and [`call_async`](Self::call_async), which held
+    /// a copy each.
+    fn entry(&self, plugin: &str) -> stanchion_abi::Result<&LoadedPlugin> {
+        self.index
+            .get(plugin)
+            .and_then(|position| self.plugins.get(*position))
+            .ok_or_else(|| stanchion_abi::Error::UnknownPlugin(plugin.to_string()))
     }
 
     /// Awaits one method on one plugin.
@@ -964,11 +971,7 @@ impl Registry {
         method: &str,
         args: &[Value],
     ) -> stanchion_abi::Result<Value> {
-        let entry = self
-            .index
-            .get(plugin)
-            .and_then(|position| self.plugins.get(*position))
-            .ok_or_else(|| stanchion_abi::Error::UnknownPlugin(plugin.to_string()))?;
+        let entry = self.entry(plugin)?;
         stanchion_abi::panics::guard_future(entry.instance.call_async(method, args))
             .await
             .map_err(|panicked| {

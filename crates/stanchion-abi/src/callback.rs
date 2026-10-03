@@ -88,50 +88,6 @@ impl Policy for AllowList {
     }
 }
 
-/// Evaluates policy for one plugin's declared capabilities.
-///
-/// Returns the granted names. Used by backends that check grants without
-/// binding (and by hosts auditing what a manifest would receive): a
-/// capability with no provider is skipped, a denied required capability
-/// fails the whole plugin, and a denied optional one is skipped.
-pub fn evaluate_grants(
-    setup: &HostSetup,
-    policy: &dyn Policy,
-    plugin: &str,
-    capabilities: &BTreeMap<String, toml::Table>,
-    signer: &str,
-) -> std::result::Result<Vec<String>, String> {
-    let mut granted = Vec::new();
-    for (name, declared) in capabilities {
-        let (params, optional) = split_optional(declared);
-        let request = CapabilityRequest {
-            plugin: plugin.to_string(),
-            capability: name.clone(),
-            params,
-            optional,
-            signer: signer.to_string(),
-        };
-        let Some(_) = setup.provider(name) else {
-            if optional {
-                continue;
-            }
-            return Err(format!(
-                "requests capability `{name}`, which the host does not offer"
-            ));
-        };
-        match policy.decide(&request) {
-            Decision::Grant | Decision::GrantWith(_) => granted.push(name.clone()),
-            Decision::Deny(reason) => {
-                if optional {
-                    continue;
-                }
-                return Err(format!("capability `{name}` denied: {reason}"));
-            }
-        }
-    }
-    Ok(granted)
-}
-
 /// What a plugin asked for, as a policy sees it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CapabilityRequest {
@@ -264,6 +220,80 @@ pub struct CapabilityCall {
     pub grant: Value,
     /// Arguments the plugin passed.
     pub args: Vec<Value>,
+}
+
+/// One capability the policy approved, with the parameters it approved.
+#[derive(Clone, Debug)]
+pub struct Approval {
+    /// Capability name, as declared in the manifest.
+    pub name: String,
+    /// The grant to hand the provider on every call.
+    pub grant: Grant,
+}
+
+/// Runs `policy` over a manifest's declared capabilities.
+///
+/// This is the single implementation of that decision. It used to exist twice: once
+/// in the Lua backend, which ran it to decide what to *bind*, and once as
+/// `Registry::evaluate_policy`, which ran it again to decide what to *record*. The
+/// two agreed on the happy path and not on the edges — a missing provider and a
+/// `Decision::Deny` were a hard failure for one and a silent skip for the other — so
+/// an audit could pass a plugin that loading would refuse outright. `Registry::reload`
+/// also called both, consulting the policy twice per capability and discarding the
+/// grants the backend had just computed.
+///
+/// A capability is refused outright, rather than skipped, when it is not declared
+/// `optional`: a plugin that asked for authority it did not get should not run as if
+/// it had. `optional` is what a plugin uses to say it can cope without.
+///
+/// `GrantWith` carrying anything but a [`Value::Map`] is an error, not a narrowing:
+/// the provider reads its bounds out of the grant by key.
+pub fn approve_capabilities(
+    manifest: &crate::manifest::Manifest,
+    signer: &str,
+    setup: &HostSetup,
+    policy: &dyn Policy,
+) -> std::result::Result<Vec<Approval>, String> {
+    let mut approved = Vec::new();
+    for (name, declared) in &manifest.capabilities {
+        let (params, optional) = split_optional(declared);
+        let request = CapabilityRequest {
+            plugin: manifest.name.clone(),
+            capability: name.clone(),
+            params,
+            optional,
+            signer: signer.to_string(),
+        };
+        if setup.provider(name).is_none() {
+            if optional {
+                continue;
+            }
+            return Err(format!(
+                "requests capability `{name}`, which the host does not offer"
+            ));
+        }
+        // Deny by default: offering a capability is not granting it.
+        let params = match policy.decide(&request) {
+            Decision::Grant => request.params.clone(),
+            Decision::GrantWith(params) => {
+                if !matches!(params, Value::Map(_)) {
+                    return Err(format!("policy granted `{name}` with a non-table value"));
+                }
+                params
+            }
+            Decision::Deny(reason) => {
+                if optional {
+                    continue;
+                }
+                return Err(format!("capability `{name}` denied: {reason}"));
+            }
+        };
+        approved.push(Approval {
+            name: name.clone(),
+            grant: Grant::new(manifest.name.clone(), name.clone(), params),
+        });
+    }
+    Ok(approved)
 }
 
 /// A grant, as seen by the runtime when installing a capability.

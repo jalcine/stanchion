@@ -530,30 +530,14 @@ impl RocksConfig {
 /// (paths and URLs), and a leading `.` (`../…`). Names ending in `.rock`/`.rockspec`
 /// are refused as well, since LuaRocks reads those as a file to install and build.
 fn validate_rock_name(name: &str) -> Result<(), RocksError> {
-    let refuse = |reason: &str| RocksError::InvalidName {
-        value: name.to_string(),
-        reason: reason.to_string(),
-    };
-    match name.chars().next() {
-        None => return Err(refuse("a rock name may not be empty")),
-        Some(first) if !first.is_ascii_alphanumeric() => {
-            return Err(refuse("must start with an ASCII letter or digit"));
-        }
-        Some(_) => {}
-    }
-    if let Some(bad) = name
-        .chars()
-        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
-    {
-        return Err(refuse(&format!(
-            "contains `{bad}`; only ASCII letters, digits, '.', '_' and '-' are allowed"
-        )));
-    }
+    validate_bare_argument(name, "a rock name")?;
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".rock") || lower.ends_with(".rockspec") {
-        return Err(refuse(
-            "a `.rock`/`.rockspec` suffix is read as a file to build, not a rock name",
-        ));
+        return Err(RocksError::InvalidName {
+            value: name.to_string(),
+            reason: "a `.rock`/`.rockspec` suffix is read as a file to build, not a rock name"
+                .to_string(),
+        });
     }
     Ok(())
 }
@@ -561,22 +545,39 @@ fn validate_rock_name(name: &str) -> Result<(), RocksError> {
 /// Confirms a pinned version is a bare LuaRocks version string, by the same reasoning
 /// as [`validate_rock_name`]: it becomes a positional argument to `luarocks install`.
 fn validate_rock_version(version: &str) -> Result<(), RocksError> {
-    let refuse = |reason: &str| RocksError::InvalidName {
-        value: version.to_string(),
-        reason: reason.to_string(),
+    validate_bare_argument(version, "a version")
+}
+
+/// The grammar both of the above share: a value `luarocks` will read as a plain
+/// positional argument and nothing else.
+///
+/// Begins with an ASCII letter or digit, and every character is an ASCII letter,
+/// digit, `.`, `_` or `-`. That rejects a leading `-` (an option), `/` and `:` (paths
+/// and URLs), a leading `.` (`../…`), and whitespace or shell metacharacters.
+///
+/// This was written out twice, once per caller, with only the empty-value wording
+/// differing. Two copies of a grammar whose whole job is to stop argument injection
+/// into a command that runs a rockspec's arbitrary build steps; `subject` names the
+/// thing being checked so the messages stay specific.
+fn validate_bare_argument(value: &str, subject: &str) -> Result<(), RocksError> {
+    let refuse = |reason: String| RocksError::InvalidName {
+        value: value.to_string(),
+        reason,
     };
-    match version.chars().next() {
-        None => return Err(refuse("a version may not be empty")),
+    match value.chars().next() {
+        None => return Err(refuse(format!("{subject} may not be empty"))),
         Some(first) if !first.is_ascii_alphanumeric() => {
-            return Err(refuse("must start with an ASCII letter or digit"));
+            return Err(refuse(
+                "must start with an ASCII letter or digit".to_string(),
+            ));
         }
         Some(_) => {}
     }
-    if let Some(bad) = version
+    if let Some(bad) = value
         .chars()
         .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
     {
-        return Err(refuse(&format!(
+        return Err(refuse(format!(
             "contains `{bad}`; only ASCII letters, digits, '.', '_' and '-' are allowed"
         )));
     }
@@ -704,6 +705,66 @@ mod tests {
                     Err(RocksError::InvalidName { .. })
                 ),
                 "`{name}` must be refused"
+            );
+        }
+    }
+
+    /// Both validators exist to stop a value being read by `luarocks install` as an
+    /// option, a path or a URL. They shared 17 near-identical lines and were each
+    /// tested against their own corpus, so one could gain a case the other lacked and
+    /// nothing would say so. One shared corpus, run through both.
+    #[test]
+    fn both_validators_refuse_the_same_argument_injections() {
+        for value in [
+            "--server=https://attacker.example",
+            "--only-server=x",
+            "-Wl,evil",
+            "-1",
+            "https://attacker.example/evil-1.0-1.rockspec",
+            "../../somewhere/evil",
+            "1.0/../x",
+            "a/b",
+            "a:b",
+            "a b",
+            "a;b",
+            "a$b",
+            "a\0b",
+            ".hidden",
+            "",
+        ] {
+            assert!(
+                matches!(
+                    validate_rock_name(value),
+                    Err(RocksError::InvalidName { .. })
+                ),
+                "`{value}` must be refused as a rock name"
+            );
+            assert!(
+                matches!(
+                    validate_rock_version(value),
+                    Err(RocksError::InvalidName { .. })
+                ),
+                "`{value}` must be refused as a version"
+            );
+        }
+    }
+
+    /// The one documented difference: a `.rock`/`.rockspec` suffix is a file
+    /// `luarocks` would build, which matters for a name and is meaningless for a
+    /// version.
+    #[test]
+    fn only_names_reject_a_rockspec_suffix() {
+        for value in ["evil.rock", "payload.rockspec", "MiXeD.RoCkSpEc"] {
+            assert!(
+                matches!(
+                    validate_rock_name(value),
+                    Err(RocksError::InvalidName { .. })
+                ),
+                "`{value}` must be refused as a rock name"
+            );
+            assert!(
+                validate_rock_version(value).is_ok(),
+                "`{value}` is a legal version string"
             );
         }
     }

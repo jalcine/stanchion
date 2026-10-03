@@ -325,3 +325,130 @@ fn audit_lists_ambient_globals_alongside_declarations() -> TestResult {
     assert_eq!(audit.ambient, ["HOST_VERSION"]);
     Ok(())
 }
+
+/// Reload must consult the policy once per declared capability, not twice.
+///
+/// The decision was implemented in two places: the backend's `grant_capabilities`,
+/// which runs it to decide what to *bind*, and `Registry::evaluate_policy`, which ran
+/// it again to decide what to *record*. `reload` called `reload_plugin` (the first)
+/// and then `evaluate_policy` (the second), discarding the grants the backend had
+/// just computed. So `granted` was derived one way on `load_dir` and another on
+/// `reload`, and a policy holding a counter, a clock or an audit log saw every
+/// reloaded capability twice.
+///
+/// The two also disagreed on the edges — a missing provider and a `Deny` were a hard
+/// failure for the backend and a silent skip for the registry — which is latent while
+/// `reload` only reaches the second after the first has succeeded, and stops being
+/// latent the moment anything else calls it. Its own documentation offers it for
+/// auditing.
+#[test]
+fn reload_consults_the_policy_once_per_capability() -> TestResult {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let decisions = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&decisions);
+
+    let root = single(
+        "name = \"probe\"\n\n[capabilities.log]\n",
+        r#"return log(input)"#,
+    )?;
+    let mut registry = offering().with_policy(move |request: &CapabilityRequest| {
+        counted.fetch_add(1, Ordering::Relaxed);
+        if request.capability == "log" {
+            Decision::Grant
+        } else {
+            Decision::Deny("not offered".to_string())
+        }
+    });
+
+    registry.load_dir(root.path())?;
+    let after_load = decisions.load(Ordering::Relaxed);
+    assert_eq!(
+        after_load, 1,
+        "one declared capability should mean one decision at load"
+    );
+
+    registry.reload("probe")?;
+    let during_reload = decisions.load(Ordering::Relaxed) - after_load;
+    assert_eq!(
+        during_reload, 1,
+        "reload should ask the policy once, not once to bind and again to record"
+    );
+
+    // And the recorded list must still be right.
+    let plugin = registry.get("probe").ok_or("probe should be loaded")?;
+    assert_eq!(
+        plugin.granted_capabilities().collect::<Vec<_>>(),
+        vec!["log"]
+    );
+    assert_eq!(run(&registry, "hi")?, "logged: hi");
+    Ok(())
+}
+
+/// `evaluate_policy` must refuse what loading would refuse.
+///
+/// It was a second implementation of the decision and disagreed with the backend's
+/// on every edge: a capability the host does not offer, and a non-optional `Deny`,
+/// were a hard refusal when loading and a silent skip here. So the call its own
+/// documentation recommends making *before* `load` would report a plugin as fine and
+/// then `load` would reject it outright. Both now run
+/// `stanchion_abi::approve_capabilities`.
+#[test]
+fn evaluate_policy_agrees_with_loading() -> TestResult {
+    use stanchion::abi::Manifest;
+    use stanchion::abi::signature::Signer;
+
+    // A capability the host does not offer at all.
+    let unoffered: Manifest = toml::from_str("name = \"probe\"\n\n[capabilities.telepathy]\n")?;
+    // One it offers but policy denies.
+    let denied: Manifest = toml::from_str("name = \"probe\"\n\n[capabilities.log]\n")?;
+    // One it offers and policy grants.
+    let granted: Manifest = toml::from_str("name = \"probe\"\n\n[capabilities.log]\n")?;
+
+    let deny_all = offering().with_policy(Rules::deny_all());
+    let allow_log = offering().with_policy(Rules::deny_all().allow("log"));
+
+    assert!(
+        deny_all.evaluate_policy(&unoffered, &Signer::Unsigned).is_err(),
+        "a capability the host does not offer must be refused, not skipped"
+    );
+    assert!(
+        deny_all.evaluate_policy(&denied, &Signer::Unsigned).is_err(),
+        "a non-optional denial must be refused, not skipped"
+    );
+    assert_eq!(
+        allow_log.evaluate_policy(&granted, &Signer::Unsigned)?,
+        vec!["log".to_string()]
+    );
+
+    // And the same three manifests, through a real load, reach the same verdicts.
+    let root = single(
+        "name = \"probe\"\n\n[capabilities.telepathy]\n",
+        r#"return "unreachable""#,
+    )?;
+    let mut registry = offering().with_policy(Rules::deny_all());
+    let report = registry.load_dir(root.path())?;
+    assert!(
+        !report.is_clean(),
+        "loading a plugin asking for an unoffered capability must fail"
+    );
+    Ok(())
+}
+
+/// An `optional` capability is the one case where a refusal is a skip, in both.
+#[test]
+fn an_optional_capability_is_skipped_not_refused() -> TestResult {
+    use stanchion::abi::Manifest;
+    use stanchion::abi::signature::Signer;
+
+    let manifest: Manifest = toml::from_str(
+        "name = \"probe\"\n\n[capabilities.telepathy]\noptional = true\n",
+    )?;
+    let registry = offering().with_policy(Rules::deny_all());
+    assert_eq!(
+        registry.evaluate_policy(&manifest, &Signer::Unsigned)?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}

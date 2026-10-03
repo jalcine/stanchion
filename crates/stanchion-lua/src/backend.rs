@@ -19,9 +19,9 @@ use std::sync::{Arc, Mutex};
 
 use mlua::{Lua, LuaSerdeExt, MultiValue, ObjectLike, Table, Value as LuaValue};
 use stanchion_abi::{
-    CapabilityCall, CapabilityRequest, Decision, Grant, HostSetup, Manifest, PluginBackend,
+    CapabilityCall, Grant, HostSetup, Manifest, PluginBackend,
     PluginInstance, PluginType, ResourceLimits, Result as AbiResult, Runtime, Value,
-    Error as AbiError, GroupOutcome, LoadContext, LoadItem, RuntimeError,
+    Error as AbiError, GroupOutcome, LoadContext, LoadItem, Reloaded, RuntimeError,
 };
 use stanchion_abi::{rocks::RockPaths, signature::DirectoryDigest};
 
@@ -505,43 +505,18 @@ impl LuaBackend {
         signer: &stanchion_abi::signature::Signer,
         ctx: &LoadContext,
     ) -> std::result::Result<Vec<String>, String> {
-        let mut granted = Vec::new();
-        for (name, declared) in &manifest.capabilities {
-            let (params, optional) = stanchion_abi::callback::split_optional(declared);
-            let request = CapabilityRequest {
-                plugin: manifest.name.clone(),
-                capability: name.clone(),
-                params,
-                optional,
-                signer: signer.to_string(),
-            };
-            let Some(provider) = ctx.setup.provider(name) else {
-                if optional {
-                    continue;
-                }
-                return Err(format!(
-                    "requests capability `{name}`, which the host does not offer"
-                ));
-            };
-            // Deny by default: offering a capability is not granting it.
-            let approved = match ctx.policy.decide(&request) {
-                Decision::Grant => request.params.clone(),
-                Decision::GrantWith(params) => {
-                    if !matches!(params, Value::Map(_)) {
-                        return Err(format!(
-                            "policy granted `{name}` with a non-table value"
-                        ));
-                    }
-                    params
-                }
-                Decision::Deny(reason) => {
-                    if optional {
-                        continue;
-                    }
-                    return Err(format!("capability `{name}` denied: {reason}"));
-                }
-            };
-            let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
+        // The decision itself lives in `stanchion-abi`, so this backend and
+        // `Registry::evaluate_policy` cannot answer it differently. All that is left
+        // here is the Lua-specific half: turning each approval into a callable.
+        let approved =
+            stanchion_abi::approve_capabilities(manifest, &signer.to_string(), ctx.setup, ctx.policy)?;
+
+        let mut granted = Vec::with_capacity(approved.len());
+        for approval in approved {
+            let provider = ctx
+                .setup
+                .provider(&approval.name)
+                .ok_or_else(|| format!("capability `{}` vanished mid-load", approval.name))?;
             // A capability is bound as a *callable* that carries its approved grant,
             // per the `CapabilityProvider` contract: "the backend wraps them into
             // whatever callable the plugin's runtime needs, capturing the approved
@@ -554,11 +529,11 @@ impl LuaBackend {
             // whether or not the plugin ever called it, and the params the policy had
             // just approved were thrown away — so `Decision::GrantWith` narrowed
             // nothing.
-            let bound = mlua_err(bind_provider(lua, provider, &grant))?;
+            let bound = mlua_err(bind_provider(lua, provider, &approval.grant))?;
             environment
-                .set(name.as_str(), bound)
+                .set(approval.name.as_str(), bound)
                 .map_err(|e| e.to_string())?;
-            granted.push(name.clone());
+            granted.push(approval.name);
         }
         Ok(granted)
     }
@@ -936,11 +911,7 @@ impl Runtime for LuaBackend {
         outcomes
     }
 
-    fn reload_plugin(
-        &self,
-        item: &LoadItem,
-        ctx: &LoadContext,
-    ) -> AbiResult<Box<dyn PluginInstance>> {
+    fn reload_plugin(&self, item: &LoadItem, ctx: &LoadContext) -> AbiResult<Reloaded> {
         let name = &item.manifest.name;
         let fail = |reason: String| stanchion_abi::Error::Plugin {
             plugin: name.clone(),
@@ -976,7 +947,10 @@ impl Runtime for LuaBackend {
             format!("{}/?/init.lua", item.manifest.dir.display()),
         ];
         templates.extend(ctx.rock_paths.iter().cloned());
-        let (instance, _) = self
+        // `load_one` has already run policy and bound what it approved, so these are
+        // the grants this plugin actually holds. They used to be discarded here and
+        // recomputed by the caller.
+        let (instance, granted) = self
             .load_one(&state, item, ctx, &templates, dependencies)
             .map_err(fail)?;
 
@@ -1006,7 +980,10 @@ impl Runtime for LuaBackend {
         if let Ok(mut pool) = self.states.lock() {
             pool.insert(name.clone(), state);
         }
-        Ok(Box::new(instance))
+        Ok(Reloaded {
+            instance: Box::new(instance),
+            granted,
+        })
     }
 
     fn unload(&self, name: &str) {

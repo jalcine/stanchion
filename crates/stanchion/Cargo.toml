@@ -79,6 +79,7 @@ full = ["async", "registry", "luarocks", "signatures", "remote", "distribution"]
 [dev-dependencies]
 stanchion-lua = { workspace = true }
 serde_json.workspace = true
+toml.workspace = true
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 trybuild = "1"
 tempfile = "3"

@@ -21,8 +21,8 @@ pub mod value;
 
 pub use backend::{BackendRegistry, PluginBackend, PluginInstance};
 pub use callback::{
-    AllowList, CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Grant, HostSetup,
-    Policy, Rules, OPTIONAL_KEY,
+    AllowList, Approval, CapabilityCall, CapabilityProvider, CapabilityRequest, Decision, Grant,
+    HostSetup, Policy, Rules, OPTIONAL_KEY, approve_capabilities,
 };
 pub use error::{Error, Result, RuntimeError};
 pub use limits::ResourceLimits;
@@ -31,6 +31,6 @@ pub use manifest::{
     DependencySpec, DetailedDependency, MANIFEST_FILE, Manifest, PluginType, is_valid_name,
     validate_name,
 };
-pub use runtime::Runtime;
+pub use runtime::{Reloaded, Runtime};
 pub use sanitize::{MAX_LOG_MESSAGE, sanitize_log};
 pub use value::Value;

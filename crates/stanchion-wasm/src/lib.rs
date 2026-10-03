@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use stanchion_abi::{
     Error, GroupOutcome, LoadContext, LoadItem, Manifest, PluginBackend, PluginInstance,
-    PluginType, Result, Runtime, Value,
+    PluginType, Reloaded, Result, Runtime, Value,
 };
 
 /// A WASM plugin backend, registered on a registry with `with_runtime`.
@@ -159,13 +159,7 @@ impl Runtime for WasmBackend {
                     dir: item.manifest.dir.clone(),
                     reason,
                 };
-                let granted = match stanchion_abi::callback::evaluate_grants(
-                    ctx.setup,
-                    ctx.policy,
-                    &item.manifest.name,
-                    &item.manifest.capabilities,
-                    &item.signer.to_string(),
-                ) {
+                let granted = match granted_names(item, ctx) {
                     Ok(granted) => granted,
                     Err(reason) => return fail(reason),
                 };
@@ -181,15 +175,40 @@ impl Runtime for WasmBackend {
             .collect()
     }
 
-    fn reload_plugin(
-        &self,
-        item: &LoadItem,
-        _ctx: &LoadContext,
-    ) -> Result<Box<dyn PluginInstance>> {
-        self.compile(item.manifest, &item.entry_bytes)
+    fn reload_plugin(&self, item: &LoadItem, ctx: &LoadContext) -> Result<Reloaded> {
+        // Policy runs on reload too. This ignored `ctx` entirely and returned the
+        // instance alone, which was invisible only because `Registry::reload` threw
+        // the backend's answer away and recomputed the grants itself. Taking the
+        // backend at its word means the backend has to actually answer.
+        let granted = granted_names(item, ctx).map_err(|reason| Error::Plugin {
+            plugin: item.manifest.name.clone(),
+            reason,
+        })?;
+        Ok(Reloaded {
+            instance: self.compile(item.manifest, &item.entry_bytes)?,
+            granted,
+        })
     }
 
     fn unload(&self, _name: &str) {}
+}
+
+/// The capabilities policy grants this plugin, by name.
+///
+/// WASM binds nothing into the guest — a plugin reaches the host through imports, not
+/// through a bound callable — so only the names are needed. The decision is
+/// [`stanchion_abi::approve_capabilities`], the same one the Lua backend runs when it
+/// binds and `Registry::evaluate_policy` runs when it audits. It used to be
+/// `callback::evaluate_grants`, a third implementation of the same rules that skipped
+/// the check rejecting a `GrantWith` carrying something other than a table.
+fn granted_names(item: &LoadItem, ctx: &LoadContext) -> std::result::Result<Vec<String>, String> {
+    let approved = stanchion_abi::approve_capabilities(
+        item.manifest,
+        &item.signer.to_string(),
+        ctx.setup,
+        ctx.policy,
+    )?;
+    Ok(approved.into_iter().map(|a| a.name).collect())
 }
 
 impl PluginInstance for WasmPluginInstance {

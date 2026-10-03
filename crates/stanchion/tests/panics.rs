@@ -174,7 +174,7 @@ mod foreign_backend {
     use stanchion::abi::backend::{PluginBackend, PluginInstance};
     use stanchion::abi::load::{GroupOutcome, LoadContext, LoadItem};
     use stanchion::abi::manifest::{Manifest, PluginType};
-    use stanchion::abi::runtime::Runtime;
+    use stanchion::abi::runtime::{Reloaded, Runtime};
     use stanchion::abi::{Result as AbiResult, Value};
 
     /// Panics on every call, the way a buggy third-party backend would.
@@ -243,12 +243,11 @@ mod foreign_backend {
                 .collect()
         }
 
-        fn reload_plugin(
-            &self,
-            _item: &LoadItem,
-            _ctx: &LoadContext,
-        ) -> AbiResult<Box<dyn PluginInstance>> {
-            Ok(Box::new(Exploding))
+        fn reload_plugin(&self, _item: &LoadItem, _ctx: &LoadContext) -> AbiResult<Reloaded> {
+            Ok(Reloaded {
+                instance: Box::new(Exploding),
+                granted: Vec::new(),
+            })
         }
 
         fn unload(&self, _name: &str) {}

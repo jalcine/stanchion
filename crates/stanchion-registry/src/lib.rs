@@ -827,15 +827,16 @@ impl Registry {
             rocks: None,
             constructor: &self.constructor,
         };
-        let instance = match backend.reload_plugin(&item, &ctx) {
-            Ok(instance) => instance,
+        // The backend returns the grants it bound, so a changed manifest gets fresh
+        // grants without the policy being consulted a second time. This used to take
+        // the instance alone and recompute the list through `evaluate_policy`, which
+        // asked every decision twice and derived this field by a different route than
+        // `load_dir` does.
+        let stanchion_abi::Reloaded { instance, granted } = match backend.reload_plugin(&item, &ctx)
+        {
+            Ok(reloaded) => reloaded,
             Err(err) => return Err(fail(FailureReason::Runtime(err.to_string()))),
         };
-        // Re-evaluate policy so a changed manifest gets fresh grants.
-        #[cfg(feature = "signatures")]
-        let granted = self.evaluate_policy(&manifest, &item.signer);
-        #[cfg(not(feature = "signatures"))]
-        let granted = self.evaluate_policy(&manifest);
         let slot = self
             .plugins
             .get_mut(position)
@@ -1223,41 +1224,39 @@ impl Registry {
         Ok((signer, digest))
     }
 
-    /// Applies policy to a manifest's declared capabilities.
+    /// Applies policy to a manifest's declared capabilities, without loading it.
     ///
-    /// Returns the names actually granted. Backends run the same decision
-    /// when binding; this is the host-visible half for auditing and for
-    /// backends that check grants at call time.
+    /// Returns the names that would be granted, or the reason the plugin would be
+    /// refused. This is the host-visible half, for auditing and for backends that
+    /// check grants at call time; the decision itself is
+    /// [`stanchion_abi::approve_capabilities`], which is also what a backend runs when
+    /// binding, so the two cannot answer differently.
+    ///
+    /// It used to be a second, independent implementation of that decision, and the
+    /// two disagreed: a missing provider and a `Decision::Deny` were a hard refusal
+    /// for the backend and a silent skip here, and a `GrantWith` carrying a non-table
+    /// was an error there and a grant here. So this could report a plugin as fine
+    /// when loading it would refuse it outright — which is the opposite of useful for
+    /// the call its own documentation recommends making *before* `load`.
+    ///
+    /// Returning `Result` rather than a bare `Vec` is part of that: a refusal is no
+    /// longer indistinguishable from "granted nothing".
     pub fn evaluate_policy(
         &self,
         manifest: &Manifest,
         #[cfg(feature = "signatures")] signer: &Signer,
-    ) -> Vec<String> {
+    ) -> Result<Vec<String>, String> {
         #[cfg(feature = "signatures")]
         let signer = signer.to_string();
         #[cfg(not(feature = "signatures"))]
         let signer = "unsigned".to_string();
-        let mut granted = Vec::new();
-        for (name, declared) in &manifest.capabilities {
-            let (params, optional) = stanchion_abi::callback::split_optional(declared);
-            let request = CapabilityRequest {
-                plugin: manifest.name.clone(),
-                capability: name.clone(),
-                params,
-                optional,
-                signer: signer.clone(),
-            };
-            let Some(_) = self.host_setup.provider(name) else {
-                continue;
-            };
-            if matches!(
-                self.policy.decide(&request),
-                Decision::Grant | Decision::GrantWith(_)
-            ) {
-                granted.push(name.clone());
-            }
-        }
-        granted
+        let approved = stanchion_abi::approve_capabilities(
+            manifest,
+            &signer,
+            &self.host_setup,
+            &*self.policy,
+        )?;
+        Ok(approved.into_iter().map(|a| a.name).collect())
     }
 }
 

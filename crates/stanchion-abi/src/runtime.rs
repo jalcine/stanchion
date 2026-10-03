@@ -44,15 +44,26 @@ pub trait Runtime: PluginBackend {
     ///
     /// On failure the old instance keeps serving; the error describes why
     /// the new one did not take its place.
-    fn reload_plugin(
-        &self,
-        item: &LoadItem,
-        ctx: &LoadContext,
-    ) -> Result<Box<dyn crate::backend::PluginInstance>>;
+    ///
+    /// Returns what policy granted along with the instance, exactly as
+    /// [`GroupOutcome::Loaded`](crate::load::GroupOutcome::Loaded) does. This used to
+    /// return the instance alone, which left the host no way to learn the grants the
+    /// backend had just computed — so `Registry::reload` recomputed them itself,
+    /// consulting the policy a second time and deriving the same field by a different
+    /// route than `load_dir` uses.
+    fn reload_plugin(&self, item: &LoadItem, ctx: &LoadContext) -> Result<Reloaded>;
 
     /// Forgets everything retained for `name`: states, proxies, budgets.
     ///
     /// Called after a plugin is removed so a later plugin reusing the name
     /// starts clean instead of resurrecting the old state.
     fn unload(&self, name: &str);
+}
+
+/// A reloaded plugin: the fresh instance and what policy granted it.
+pub struct Reloaded {
+    /// The instance that replaces the old one.
+    pub instance: Box<dyn crate::backend::PluginInstance>,
+    /// Capabilities actually granted, after policy ran.
+    pub granted: Vec<String>,
 }

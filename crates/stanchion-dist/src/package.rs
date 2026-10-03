@@ -2,7 +2,7 @@
 //!
 //! # Why the archive is not the pin
 //!
-//! A pin is a [`DirectoryDigest`](stanchion_registry::DirectoryDigest) over the
+//! A pin is a [`stanchion_registry::DirectoryDigest`] over the
 //! *unpacked directory* — paths and file contents, nothing else — not a hash of the
 //! archive bytes. Repacking a plugin with different mtimes, a different entry order or
 //! a different gzip level produces different bytes and the same pin.

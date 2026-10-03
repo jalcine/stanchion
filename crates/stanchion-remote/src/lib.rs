@@ -23,7 +23,10 @@ mod frame;
 pub mod protocol;
 mod server;
 
-pub use client::{RemoteError, RemoteOptions, RemoteRegistry};
+// `DEFAULT_CALL_TIMEOUT` is `pub` in a private module, so it was documented as the
+// default that `RemoteOptions::call_timeout` falls back to while being unnameable
+// from outside the crate.
+pub use client::{DEFAULT_CALL_TIMEOUT, RemoteError, RemoteOptions, RemoteRegistry};
 pub use protocol::{
     AuditEntry, CallbackCall, Failure, HostInfo, LoadResult, Outcome, PluginInfo, method,
 };

@@ -2,7 +2,7 @@
 //!
 //! Poem has its own `Endpoint` trait rather than being built on Tower, so it needs an
 //! adapter of its own. All this does is translate one type: a
-//! [`Served`](stanchion_index::Served) into a `poem::Response`. Everything worth
+//! [`stanchion_index::Served`] into a `poem::Response`. Everything worth
 //! testing — routing, freshness, conditional requests — lives in
 //! [`stanchion_index`] and is tested without binding a port.
 //!

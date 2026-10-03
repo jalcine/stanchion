@@ -24,8 +24,17 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Every platform's answer is wanted, not just the first failure's.
+      fail-fast: false
+      matrix:
+        # Linux is where the suite was already run. macOS and Windows are here
+        # because this workspace ships a C ABI (`stanchion-ffi-c`), a Tauri desktop
+        # app and UniFFI bindings targeting Kotlin and Swift — none of which are
+        # Linux-only, and all of which were being tested on Linux alone.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -33,8 +42,8 @@ jobs:
       # drift — the reason mise.toml pins them in the first place.
       #
       # `install_args` installs only the Rust tools up front; the Python, Ruby,
-      # Java, Kotlin and Node entries exist for `bindings/*`, which the smoke tasks
-      # cover separately. mise's `auto_install` is on by default, so anything a task
+      # Java, Kotlin and Node entries exist for `bindings/*`, which the `bindings`
+      # job below runs. mise's `auto_install` is on by default, so anything a task
       # turns out to need is fetched rather than failing the job — this is a cost
       # optimisation, not a guarantee about what ends up installed.
       - uses: jdx/mise-action@v2
@@ -43,7 +52,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: test
+          key: test-${{ matrix.os }}
 
       # The `ci` nextest profile: no fail-fast, retries confined to the two suites
       # that touch an external tool or a real child process, and JUnit output.
@@ -109,3 +118,117 @@ jobs:
       # workspace members but not default members.
       - name: Clippy
         run: mise run lint
+
+      # rustdoc warnings are build failures here: a broken intra-doc link is how the
+      # docs quietly stop describing the code. Nothing checked these before.
+      - name: Docs
+        run: mise run lint:docs
+
+  # The bindings were lint-only in CI. `mise.toml` has had `smoke`, `test:python`
+  # and `test:ruby` all along and no job ran any of them, so a binding could break
+  # against the Rust it wraps and CI would stay green.
+  bindings:
+    name: Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The full toolchain set this time: Python, Ruby, Java, Kotlin and ktlint are
+      # what `bindings/*` actually needs.
+      - uses: jdx/mise-action@v2
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bindings
+
+      - name: Every binding, end to end
+        run: mise run smoke
+
+  # A project whose subject is provenance — signatures, digests, sigstore, lockfile
+  # pinning — had no check on the provenance of its own dependency graph.
+  supply-chain:
+    name: Supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: rust cargo:cargo-deny
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: supply-chain
+
+      - name: cargo-deny
+        run: mise run lint:deps
+
+  # `unsafe` under miri. There are ~65 `unsafe` blocks here, most of them in the
+  # hand-written C ABI, and every one carried a `# Safety` comment that nothing
+  # checked. miri does not support the FFI boundary itself, so this covers the crates
+  # whose `unsafe` is ordinary Rust — see the mise task for what is excluded and why.
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: miri
+
+      # Isolation off because the registry's tests read manifests off disk and miri
+      # blocks `statx` under isolation. It permits real file access and does not
+      # weaken the UB checking. Kept in step with the `miri` task in mise.toml.
+      - name: Miri
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo miri test -p stanchion-abi -p stanchion-registry
+
+  # The two places untrusted bytes enter: a downloaded archive and a plugin manifest.
+  # A short run on every push is a smoke test that the targets still build and that
+  # no committed corpus input regressed — not a substitute for a long campaign.
+  fuzz:
+    name: Fuzz (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Run directly rather than through `mise run fuzz`: mise pins a stable
+      # toolchain and shims `cargo`, which fights with the `+nightly` cargo-fuzz
+      # needs. The commands are kept in step with that task deliberately.
+      #
+      # Seeded from `fuzz/seeds/`; see that task for why seeding matters more for
+      # `unpack` than it looks.
+      # libFuzzer writes findings to the first corpus directory and only reads the
+      # rest, so the writable (gitignored) one goes first and the committed seeds
+      # stay untouched. It errors rather than creating a missing directory.
+      - name: Corpus directories
+        run: mkdir -p fuzz/corpus/unpack fuzz/corpus/manifest
+
+      - name: unpack
+        run: cargo fuzz run unpack fuzz/corpus/unpack fuzz/seeds/unpack -- -max_total_time=60 -rss_limit_mb=4096
+
+      - name: manifest
+        run: cargo fuzz run manifest fuzz/corpus/manifest fuzz/seeds/manifest -- -max_total_time=60 -rss_limit_mb=4096
+
+      - name: Upload any crash found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

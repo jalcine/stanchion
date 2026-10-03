@@ -1,0 +1,38 @@
+[package]
+name = "stanchion-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+stanchion-abi = { path = "../crates/stanchion-abi" }
+stanchion-dist = { path = "../crates/stanchion-dist", features = ["package"] }
+tempfile = "3"
+toml = "1.1.6"
+
+# `cargo fuzz` builds these itself; keeping them out of the workspace stops a plain
+# `cargo build` from needing a nightly toolchain and libFuzzer.
+[workspace]
+
+[[bin]]
+name = "unpack"
+path = "fuzz_targets/unpack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

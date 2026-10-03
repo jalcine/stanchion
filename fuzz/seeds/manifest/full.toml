@@ -1,0 +1,11 @@
+name = "greeter"
+version = "1.2.0"
+plugin_type = "lua"
+entry = "init.lua"
+
+[dependencies]
+formatter = "^1.0"
+
+[budget]
+max_instructions = 1000
+memory_bytes = 1048576

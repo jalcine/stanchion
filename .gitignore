@@ -8,3 +8,12 @@ target/
 
 # Local git worktrees.
 .worktrees/
+
+# What a fuzz run accumulates. `fuzz/seeds/` is the committed, curated starting
+# corpus; `fuzz/corpus/` is whatever libFuzzer grew from it (thousands of files, no
+# review value) and `fuzz/artifacts/` is where it drops a crashing input. A crash
+# worth keeping becomes a seed or a regression test, not a committed artifact.
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/target/
+fuzz/Cargo.lock

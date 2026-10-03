@@ -1,7 +1,7 @@
 //! Secure distribution of stanchion plugins: packages, an index anyone can run, and
 //! installs that are pinned before they are trusted.
 //!
-//! [Signatures](stanchion_registry::signature) answer "who produced these bytes?".
+//! Signatures (`stanchion_registry::signature`) answer "who produced these bytes?".
 //! Distribution has to answer three more questions that a signature does not touch:
 //!
 //! | Question | Answered by |

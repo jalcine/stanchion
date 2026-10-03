@@ -3,12 +3,17 @@
 //! The channel is symmetric: the application calls the host to load and invoke
 //! plugins, and the host calls the application when a plugin uses a capability the
 //! application provides. That is precisely JSON-RPC's shape, so this speaks the real
-//! thing rather than a bespoke framing — a host can be written in any language that
-//! can read `Content-Length`-framed JSON on a pipe.
+//! thing rather than a bespoke encoding — a host can be written in any language that
+//! can read newline-delimited JSON on a pipe.
 //!
-//! [`lsp_server`] supplies the message types, framing and pending-request bookkeeping.
-//! Nothing here is LSP-specific; that crate is simply the maintained, synchronous,
-//! dependency-light JSON-RPC implementation for exactly this transport.
+//! `jsonrpsee-types` supplies the parts where conformance matters (request ids, the
+//! `"2.0"` marker, the standard error codes); the framing and the envelopes live in
+//! this crate's private `frame` module. jsonrpsee's own transports are HTTP and
+//! WebSocket only, which is why the framing is ours.
+//!
+//! This used to credit `lsp_server` and `Content-Length` framing. Neither is accurate:
+//! `lsp_server` is not a dependency of this crate, and frames are one JSON object per
+//! line.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;

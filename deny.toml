@@ -1,0 +1,86 @@
+# cargo-deny configuration.
+#
+# A project whose premise is plugin provenance — signatures, digests, sigstore, a
+# lockfile — had no check on the provenance of its own dependencies. This closes that.
+#
+#   cargo deny check
+#
+# Run in CI by the `supply-chain` job.
+
+[graph]
+# Checked for the platforms CI builds on; a dependency that only appears on, say,
+# illumos is not worth failing a build over here.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+version = 2
+# Every entry needs a reason the advisory does not apply *here* and a condition for
+# removing the entry. An advisory with an available fix gets the fix instead: the
+# three wasmtime advisories this check first turned up (RUSTSEC-2026-0325/0326/0327,
+# GC heap corruption and a native stack buffer overflow, in the engine that runs
+# untrusted plugins) were closed by moving to wasmtime 49, not listed here.
+ignore = [
+  { id = "RUSTSEC-2023-0071", reason = """
+Marvin Attack timing sidechannel in `rsa` 0.9. No fixed version exists upstream.
+
+Reached only as sigstore -> openidconnect -> rsa, i.e. the OIDC login path for
+*obtaining* a signing identity. stanchion only ever verifies: `stanchion-sigstore`
+checks bundles against Fulcio/Rekor and never performs an RSA private-key operation,
+which is what the attack recovers. The crate is also behind the non-default
+`sigstore-verify` feature.
+
+Remove when `rsa` ships a constant-time release and sigstore picks it up.
+""" },
+  { id = "RUSTSEC-2024-0370", reason = """
+`proc-macro-error` is unmaintained. Not a vulnerability; no fixed version exists
+because the crate is abandoned.
+
+A build-time proc-macro dependency only, reached as tauri -> gtk -> glib-macros ->
+proc-macro-error. It contributes no code to a shipped artifact and nothing to the
+plugin sandbox. Only `tauri-plugin-stanchion` is affected, which is `publish = false`.
+
+Remove when the gtk/glib stack moves to `proc-macro-error2` or `syn 2`.
+""" },
+]
+
+[licenses]
+version = 2
+# stanchion is MIT OR Apache-2.0. These are the licences compatible with shipping it
+# that way; anything else needs a deliberate decision rather than a silent build.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[[licenses.clarify]]
+# Ring vendors its own licence file layout; this is the standard clarification.
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# A plugin host linking two copies of a VM or a crypto stack is a real hazard, not a
+# size complaint: two `mlua`s mean two Lua runtimes with separate sandbox state.
+deny = []
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

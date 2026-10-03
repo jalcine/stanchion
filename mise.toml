@@ -98,6 +98,62 @@ run = [
   "cargo clippy -p stanchion-python -p stanchion-uniffi -p stanchion-ruby --all-targets -- -D warnings",
 ]
 
+[tasks."lint:docs"]
+description = "rustdoc with warnings as errors — catches broken intra-doc links"
+env = { RUSTDOCFLAGS = "-D warnings" }
+# A wider feature set than `$STANCHION_FEATURES`: the facade's own docs link every
+# re-export it lists, and `sigstore-verify` and `index-server` are outside `full`, so
+# documenting without them reports those links as broken rather than gated.
+# `--all-features` is not an option — mlua's lua54/lua53/luajit/luau are mutually
+# exclusive and enabling them together fails to build.
+run = """
+cargo doc --workspace --no-deps \
+  --features $STANCHION_FEATURES,stanchion/sigstore-verify,stanchion/index-server
+"""
+
+[tasks."lint:deps"]
+description = "Advisories, licences and sources over the dependency graph (deny.toml)"
+run = "cargo deny --all-features check"
+
+[tasks."lint:msrv"]
+description = "Build against the declared MSRV rather than the pinned toolchain"
+# `rust-version` in Cargo.toml is a claim; this is the check. It needs the MSRV
+# toolchain present, which is why it is not part of `lint`.
+run = "cargo +1.97.0 check --workspace --features $STANCHION_FEATURES"
+
+[tasks.miri]
+description = "Run the crates whose `unsafe` is ordinary Rust under miri"
+# Excluded: `stanchion-ffi-c` (its `unsafe` *is* the C ABI, which miri cannot model —
+# there is no foreign caller to model), `stanchion-lua` and `stanchion-wasm` (both
+# link a C VM through FFI), and `bindings/*` for the same reason. What is left is the
+# `unsafe` miri can actually say something about.
+#
+# `-Zmiri-disable-isolation` because the registry's own tests read manifests off the
+# filesystem, and miri blocks `statx` under isolation. It permits real file access; it
+# does not weaken the UB checking, which is the point of running this at all.
+env = { MIRIFLAGS = "-Zmiri-disable-isolation" }
+run = "cargo +nightly miri test -p stanchion-abi -p stanchion-registry"
+
+[tasks.fuzz]
+description = "Short fuzz run over the two untrusted-input front doors"
+# Seeded from `fuzz/seeds/`, which matters more than it looks: random bytes almost
+# never form a valid gzip member, so an unseeded `unpack` run spends its whole budget
+# being rejected at the gzip magic and never reaches the tar path checks that are the
+# actual subject. The seeds carry a real package, an empty archive, and manifests with
+# a traversal entry and a traversal name.
+#
+# A real campaign runs for hours with no `-max_total_time`. This is CI's smoke length.
+#
+# libFuzzer writes new findings to the *first* corpus directory and only reads the
+# rest, so `fuzz/corpus/` goes first and the committed seeds stay untouched.
+# `fuzz/corpus/` is gitignored and so absent on a fresh checkout, which libFuzzer
+# treats as a hard error rather than creating it.
+run = [
+  "mkdir -p fuzz/corpus/unpack fuzz/corpus/manifest",
+  "cargo +nightly fuzz run unpack fuzz/corpus/unpack fuzz/seeds/unpack -- -max_total_time=60 -rss_limit_mb=4096",
+  "cargo +nightly fuzz run manifest fuzz/corpus/manifest fuzz/seeds/manifest -- -max_total_time=60 -rss_limit_mb=4096",
+]
+
 [tasks."test:python"]
 description = "Build the Python extension and run its suite"
 dir = "bindings/python"

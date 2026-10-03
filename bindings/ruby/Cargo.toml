@@ -3,11 +3,18 @@ name = "stanchion-ruby"
 description = "Ruby bindings for stanchion: Lua plugins with sandboxing, capabilities and signatures"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
 
 [lib]
+# Ruby requires the extension's shared object to match the module it defines, so this
+# lib has to be called `stanchion` — which collides with the `stanchion` facade crate
+# when rustdoc writes them both to the same path, breaking `cargo doc --workspace`.
+# There is no Rust API here worth rustdoc anyway: the surface is the Ruby one in
+# `lib/stanchion.rb`.
+doc = false
 name = "stanchion"
 crate-type = ["cdylib", "rlib"]
 

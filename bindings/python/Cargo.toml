@@ -3,6 +3,7 @@ name = "stanchion-python"
 description = "Python bindings for stanchion: Lua plugins with sandboxing, capabilities and signatures"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false

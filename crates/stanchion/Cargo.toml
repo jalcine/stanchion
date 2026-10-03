@@ -3,6 +3,7 @@ name = "stanchion"
 description = "Lua plugins for Rust applications: typed contracts, sandboxing, capabilities, signatures"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
@@ -50,6 +51,7 @@ required-features = ["luarocks"]
 [dependencies]
 stanchion-dist = { workspace = true, optional = true }
 stanchion-index = { workspace = true, optional = true }
+stanchion-abi = { workspace = true }
 stanchion-lua = { workspace = true, optional = true }
 stanchion-registry = { workspace = true, optional = true }
 stanchion-remote = { workspace = true, optional = true }
@@ -75,7 +77,6 @@ index-server = ["distribution", "dep:stanchion-index"]
 full = ["async", "registry", "luarocks", "signatures", "remote", "distribution"]
 
 [dev-dependencies]
-stanchion-abi = { workspace = true }
 stanchion-lua = { workspace = true }
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt", "macros", "time"] }

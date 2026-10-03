@@ -1,9 +1,14 @@
 [package]
 name = "stanchion-editor"
-version = "0.1.0"
+version.workspace = true
 description = "A Tauri App demonstrating how to use Stanchion to handle plugins"
 authors = ["Jacky Alcine <yo@jacky.wtf>"]
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+# Same terms as the rest of the workspace. Absent before, which `cargo deny` reports
+# as `unlicensed` — a licence nobody stated is not a licence a reader can rely on.
+license.workspace = true
+repository.workspace = true
 publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -28,10 +33,14 @@ stanchion-lua = { workspace = true, features = ["lua54", "vendored"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
-panic = "abort"
-strip = true
+# Tauri's size guidance (https://tauri.app/concept/size/#cargo-configuration) suggests
+# a `[profile.release]` here with `panic = "abort"`. It is deliberately absent.
+#
+# This crate is a workspace member, so cargo ignores a profile set at this level and
+# warns about it. The obvious response — moving it to the workspace root — would apply
+# `panic = "abort"` to every crate in the workspace, and stanchion's panic isolation
+# (`stanchion_abi::panics::guard`, which turns a panicking plugin or capability
+# provider into a failed call) is built on `catch_unwind`. Aborting would turn each of
+# those into a dead process instead, silently removing the guarantee the tests in
+# `crates/stanchion/tests/panics.rs` exist to hold. If this example ever needs the
+# smaller binary, it has to leave the workspace first.

@@ -3,6 +3,7 @@ name = "stanchion-dist"
 description = "Secure plugin distribution for stanchion: packages, a signed index, and pinned installs"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true

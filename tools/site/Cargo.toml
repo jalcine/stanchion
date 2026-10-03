@@ -3,6 +3,7 @@ name = "stanchion-site"
 description = "Generates the stanchion project site from the repository's own documentation"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false

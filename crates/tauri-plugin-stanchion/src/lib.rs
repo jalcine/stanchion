@@ -1,32 +1,41 @@
-//! Tauri plugin library for Stanchion plugin management.
+//! Plugin discovery for Tauri applications using stanchion.
 //!
 //! This crate provides:
 //! - In-process plugin discovery from a configured root directory
 //! - Out-of-process mode using `stanchion-remote::RemoteRegistry` (matches desktop's `livtet-plugin-host` pattern)
 //! - Plugin-dir lifecycle: create, sync built-ins, write `host.toml`, reject symlinks
-//! - Command interface: list_plugins, call_plugin, reload_plugin, install_plugin, remove_plugin
 //! - Decoupled from Lua: call_plugin returns deferred JSON; app decides backend
+//!
+//! # Not yet a Tauri plugin
+//!
+//! Despite the crate name, [`init`] is **not** a `tauri::plugin::TauriPlugin` and
+//! cannot be passed to `tauri::Builder::plugin`. It takes no `App`, performs discovery
+//! as a side effect and returns the plugin names it found. The command interface
+//! (`list_plugins`, `call_plugin`, `reload_plugin`, `install_plugin`,
+//! `remove_plugin`) is not implemented here either; `examples/stanchion-editor`
+//! declares its own `#[tauri::command]`s over [`discover_plugins`]. Wiring this up as
+//! a real plugin is open work.
 //!
 //! # Example
 //!
 //! ```no_run
-//! // In Tauri setup:
-//! tauri_plugin_stanchion::init(app, Some(PluginOptions {
-//!     plugin_root: Some(app.path().data_dir().unwrap().join("plugins")),
-//!     host_binary: Some("/path/to/plugin-host"),
-//!     host_config: Some("/path/to/host.toml"),
+//! use tauri_plugin_stanchion::{init, PluginOptions};
+//!
+//! let discovered = init(Some(PluginOptions {
+//!     plugin_root: Some(std::path::PathBuf::from("/path/to/plugins")),
+//!     host_binary: None,
+//!     host_config: None,
 //!     auto_discover: true,
 //! }));
+//! println!("found {} plugin(s)", discovered.len());
 //! ```
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
-use async_trait::async_trait;
 use serde::Deserialize;
 
-use stanchion_abi::manifest::{self, MANIFEST_FILE};
+use stanchion_abi::manifest::MANIFEST_FILE;
 use stanchion_abi::Manifest;
 
 /// Metadata loaded from each `plugin.toml` discovered on disk.
@@ -78,14 +87,32 @@ impl Default for PluginRegistry {
 }
 
 impl PluginRegistry {
+    /// The named plugin, or `None` if it is absent or the lock is poisoned.
+    ///
+    /// A poisoned lock means some other caller panicked mid-update. The map holds
+    /// plugin metadata read from disk, so recovering the inner value is safe and
+    /// reporting "no such plugin" beats taking the whole app down with it.
     pub fn get(&self, name: &str) -> Option<DiscoveredPlugin> {
-        self.plugins.lock().unwrap().get(name).cloned()
+        let plugins = self
+            .plugins
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        plugins.get(name).cloned()
     }
+
+    /// Every discovered plugin. Empty if the lock is poisoned — see [`Self::get`].
     pub fn list(&self) -> Vec<DiscoveredPlugin> {
-        self.plugins.lock().unwrap().values().cloned().collect()
+        let plugins = self
+            .plugins
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        plugins.values().cloned().collect()
     }
-    pub fn discover(&self, root: &Path) -> Vec<String> {
-        // ...could call discover_plugins
+    /// Not implemented: always returns an empty list, whatever `_root` holds.
+    ///
+    /// Left as a stub rather than wired to [`discover_plugins`] so that callers are
+    /// not silently told there are no plugins under a root that has them.
+    pub fn discover(&self, _root: &Path) -> Vec<String> {
         Vec::new()
     }
 }

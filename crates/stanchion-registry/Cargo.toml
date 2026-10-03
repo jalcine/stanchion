@@ -3,6 +3,7 @@ name = "stanchion-registry"
 description = "Plugin registry for stanchion: manifests, sandboxing, capabilities, reload"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true

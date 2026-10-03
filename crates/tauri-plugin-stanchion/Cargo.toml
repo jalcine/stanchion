@@ -1,13 +1,13 @@
 [package]
 name = "tauri-plugin-stanchion"
-version = "0.1.0"
-edition = "2024"
-description = "Tauri plugin for automatic Stanchion plugin discovery and loading"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/jalcine/stanchion"
-publish = false
-exclude = ["mise.toml"]
-author.workspace = true
+description = "Plugin discovery for Tauri applications using stanchion"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+exclude.workspace = true
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -24,3 +24,7 @@ fs-err = "3.3.1"
 
 [features]
 default = []
+
+# The workspace panic policy applies here too; this crate was exempt from it.
+[lints]
+workspace = true

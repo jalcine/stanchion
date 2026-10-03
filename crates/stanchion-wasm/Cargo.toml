@@ -1,12 +1,16 @@
 [package]
 name = "stanchion-wasm"
-version = "0.1.0"
-edition = "2024"
+description = "A WASM runtime backend for stanchion, built on wasmtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 publish.workspace = true
 exclude.workspace = true
 
 [dependencies]
-wasmtime = "48.0"
+wasmtime = "49.0.2"
 stanchion-abi = { workspace = true }
 
 [lints]

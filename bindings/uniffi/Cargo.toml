@@ -3,6 +3,7 @@ name = "stanchion-uniffi"
 description = "Kotlin and Swift bindings for stanchion, generated with UniFFI"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false

@@ -3,6 +3,7 @@ name = "stanchion-index"
 description = "Serve a stanchion plugin index over HTTP, independent of any web framework"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true

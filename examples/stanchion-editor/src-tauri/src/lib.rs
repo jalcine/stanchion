@@ -2,7 +2,6 @@
 use std::path::PathBuf;
 use tauri_plugin_stanchion::PluginOptions;
 
-use stanchion_abi::callback::Policy;
 use stanchion_abi::{
     HostSetup, Runtime,
     load::{LoadContext, LoadItem},
@@ -71,7 +70,6 @@ fn greet(name: &str, plugin: Option<String>) -> String {
 
 #[tauri::command]
 fn list_plugins() -> Vec<String> {
-    use std::path::Path;
     tauri_plugin_stanchion::discover_plugins(plugin_dir())
         .keys()
         .cloned()
@@ -80,12 +78,18 @@ fn list_plugins() -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let plugins = tauri_plugin_stanchion::init(Some(PluginOptions {
+    // `tauri_plugin_stanchion::init` is not (yet) a Tauri plugin: despite the crate
+    // name it returns the names of the plugins it discovered, not something
+    // `Builder::plugin` accepts. So it is called for its discovery side effect and
+    // its result is reported, rather than assigned to a local and dropped.
+    let discovered = tauri_plugin_stanchion::init(Some(PluginOptions {
         auto_discover: true,
         host_binary: None,
         host_config: None,
         plugin_root: Some(plugin_dir()),
     }));
+    println!("stanchion discovered {} plugin(s): {discovered:?}", discovered.len());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![greet, list_plugins])

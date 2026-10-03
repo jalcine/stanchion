@@ -83,8 +83,9 @@ WASM plugins run in their own sandboxed instance via [wasmtime], under host-set
 resource limits ([`WasmLimits`]): a per-call fuel ceiling, so an infinite loop traps
 instead of hanging the calling thread, and a linear-memory ceiling enforced by a
 store limiter. The limits are the host's — registered on the backend with
-[`WasmBackend::with_limits`] — and a plugin manifest's `budget.max_instructions` may
-only *lower* the fuel ceiling, never raise it. `WasmBackend::new()` uses secure
+[`WasmBackend::with_limits`] — and a plugin manifest's `[budget]` may only *lower*
+them, never raise them: `max_instructions` narrows the fuel ceiling and
+`memory_bytes` the linear-memory one. `WasmBackend::new()` uses secure
 defaults (1e9 fuel, 64 MiB). Plugins cannot reach the host filesystem unless WASI
 capabilities are explicitly granted through the capability system.
 

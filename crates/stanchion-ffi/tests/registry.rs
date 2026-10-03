@@ -15,9 +15,6 @@ impl PluginInstance for MockPluginInstance {
         "mock"
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 struct MockBackend;

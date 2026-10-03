@@ -2,7 +2,8 @@
 //!
 //! Note that mlua's `StdLib::ALL_SAFE` means *memory*-safe, not sandboxed — it still
 //! includes `io` and `os`, so a plugin could read files or spawn processes. The
-//! defaults here are deliberately tighter; see [`Sandbox::restricted`].
+//! defaults here are deliberately tighter; see
+//! [`Sandbox::restricted`](crate::sandbox::Sandbox::restricted).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,7 +19,8 @@ use mlua::{Lua, LuaOptions, StdLib, Table, Value};
 /// `string.dump` serialises a function to Lua bytecode. On its own that is harmless,
 /// but paired with a `load` that accepts bytecode it is half of a VM-corruption
 /// primitive, so it is removed here and [`Sandbox::restricted`] also forces `load` to
-/// text-only mode (see [`harden_load`]).
+/// text-only mode (via the private `harden_load`, which replaces `load` with a
+/// wrapper that always passes mode `"t"`).
 pub const RESTRICTED_DENY_LIST: &[&str] = &["dofile", "loadfile", "package.loadlib", "string.dump"];
 
 /// Libraries present in every supported Lua version, minus `io`, `os` and `debug`.
@@ -56,8 +58,11 @@ impl Budget {
 
     /// Instructions charged against the allowance since the last [`Budget::reset`].
     ///
-    /// Counted per *state*, so under [`crate::Isolation::PerGroup`] every member of a
-    /// dependency group reads the same number: the group is the accounting unit.
+    /// Counted per *state*, so under
+    /// [`IsolationMode::PerGroup`](crate::backend::IsolationMode::PerGroup) every
+    /// member of a dependency group reads the same number: the group is the
+    /// accounting unit. Only the outermost in-flight call on a state resets it, so a
+    /// second call joining an accounting period does not restart it.
     pub fn used(&self) -> u64 {
         self.used.load(Ordering::Relaxed)
     }
@@ -225,7 +230,13 @@ impl Sandbox {
         let tracked = budget.clone();
 
         let triggers = HookTriggers::new().every_nth_instruction(step.try_into().unwrap_or(1_000));
-        lua.set_hook(triggers, move |_, _| tracked.consume(step))?;
+        // `set_global_hook`, not `set_hook`: a Lua debug hook belongs to one
+        // `lua_State`, and every coroutine is its own `lua_State`. `set_hook`
+        // installs on the current thread only, so a method driven through
+        // `call_async` — which mlua runs inside a coroutine it creates — inherited no
+        // hook and was charged nothing. The ceiling existed only on the synchronous
+        // path. `set_global_hook` applies to every thread mlua creates afterwards.
+        lua.set_global_hook(triggers, move |_, _| tracked.consume(step))?;
         Ok(Some(budget))
     }
 
@@ -286,6 +297,7 @@ fn remove_global(lua: &Lua, path: &str) -> mlua::Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

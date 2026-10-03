@@ -7,7 +7,7 @@
 //! `impl Fn(&Lua, &Grant)` to give. Both need the same thing instead: a description
 //! of the policy in data, read from somewhere the plugins cannot write.
 //!
-//! This module is that description. [`HostConfig`] is what `plugin-host` reads from
+//! This module is that description. [`HostConfig`](crate::config::HostConfig) is what `plugin-host` reads from
 //! its TOML file and what a binding builds from its own arguments, so the two
 //! transports are configured in one vocabulary rather than two that drift.
 

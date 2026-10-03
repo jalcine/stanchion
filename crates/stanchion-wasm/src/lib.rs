@@ -9,16 +9,17 @@ use stanchion_abi::{
     PluginType, Result, Runtime, Value,
 };
 
-/// A WASM plugin backend registered with a [`Builder`].
+/// A WASM plugin backend, registered on a registry with `with_runtime`.
 ///
 /// Loads plugins from `.wasm` binaries specified in the manifest's
-/// `entry` field. Each plugin calls its default entry-point export (see
-/// [`choose_entry`]) with the arguments passed to [`PluginInstance::call`].
+/// `entry` field. Each plugin calls its default entry-point export, chosen from the
+/// module's exports, with the arguments passed to [`PluginInstance::call`].
 ///
 /// Every instance runs under [`WasmLimits`]: a fuel ceiling (so an infinite loop
 /// traps rather than hangs) and a linear-memory ceiling. The limits are the host's,
-/// set when the backend is registered; a plugin manifest's `budget.max_instructions`
-/// may only *lower* the fuel ceiling, never raise it. See #34.
+/// set when the backend is registered; a plugin manifest's `[budget]` may only
+/// *lower* them, never raise them — both `max_instructions` (fuel) and
+/// `memory_bytes`. See #34.
 pub struct WasmBackend {
     limits: WasmLimits,
 }
@@ -43,14 +44,24 @@ impl WasmBackend {
     }
 
     /// The limits to load a given plugin under: the host's, with the manifest allowed
-    /// only to lower the fuel ceiling.
+    /// only to lower them.
     fn limits_for(&self, manifest: &Manifest) -> WasmLimits {
         let mut limits = self.limits;
-        if let Some(budget) = &manifest.budget {
-            let requested = budget.max_instructions;
-            limits.max_fuel = Some(match limits.max_fuel {
-                Some(host) => host.min(requested),
-                None => requested,
+        let Some(budget) = &manifest.budget else {
+            return limits;
+        };
+        let requested = budget.max_instructions;
+        limits.max_fuel = Some(match limits.max_fuel {
+            Some(host) => host.min(requested),
+            None => requested,
+        });
+        // `Budget::memory_bytes` narrows the linear-memory cap the same way fuel is
+        // narrowed. Only fuel was read before, so a manifest promising a smaller
+        // footprint got the host's ceiling regardless.
+        if let Some(bytes) = budget.memory_bytes {
+            limits.memory_limit = Some(match limits.memory_limit {
+                Some(host) => host.min(bytes),
+                None => bytes,
             });
         }
         limits
@@ -178,20 +189,12 @@ impl Runtime for WasmBackend {
         self.compile(item.manifest, &item.entry_bytes)
     }
 
-    fn revoke_capability(&self, _instance: &dyn PluginInstance, _capability: &str) -> bool {
-        // WASM instances hold no bound environment: the registry's recorded
-        // grant list is the enforcement point.
-        false
-    }
-
     fn unload(&self, _name: &str) {}
 }
 
 impl PluginInstance for WasmPluginInstance {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
+    // `revoke_capability` is left to the trait default (`false`): a WASM plugin holds
+    // no host capability bindings to unbind, so claiming success would be a lie.
     fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
         let mut runtime = self
             .runtime

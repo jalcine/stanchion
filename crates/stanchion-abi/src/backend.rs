@@ -38,8 +38,26 @@ pub trait PluginInstance: Send + Sync {
     /// A human-readable label for the runtime that produced this instance.
     fn runtime(&self) -> &str;
 
-    /// Backend-local downcasting (revocation, reload settling).
-    fn as_any(&self) -> &dyn std::any::Any;
+    /// Unbinds a granted capability from this instance, reporting whether it held it.
+    ///
+    /// Code inside the plugin that already captured the value in a local keeps it, so
+    /// this defangs a misbehaving plugin without rewinding it.
+    ///
+    /// The default refuses: an instance that cannot revoke must say so rather than
+    /// claim success, because the host strikes the capability off its granted list
+    /// either way.
+    ///
+    /// This replaces an `as_any` downcasting hatch. Revocation used to go through a
+    /// `Runtime::revoke_capability`, which handed the backend a `&dyn PluginInstance`
+    /// for it to downcast back to
+    /// its own concrete type. That worked for the backend that defined the type and
+    /// silently returned `false` for every other, which is a bad failure mode for a
+    /// security operation. The instance knows how to revoke its own capability, so it
+    /// is the one asked.
+    fn revoke_capability(&self, capability: &str) -> bool {
+        let _ = capability;
+        false
+    }
 }
 
 /// A factory for one kind of plugin runtime.

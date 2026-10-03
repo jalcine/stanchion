@@ -369,3 +369,176 @@ fn grouped_isolation_is_reported_as_such() -> TestResult {
     assert_eq!(backend.isolation_name(), "per-group");
     Ok(())
 }
+
+/// `with_limits(sandbox, limits, shared = true)` built its state from
+/// `Sandbox::restricted()` and threw away both the sandbox it was handed and the
+/// limits it was asked to apply. A host that asked for a ceiling got none, silently.
+/// `shared_with_limits` is the replacement.
+#[cfg(not(feature = "luau"))]
+#[test]
+fn shared_mode_still_enforces_the_instruction_limit() -> TestResult {
+    use stanchion::abi::ResourceLimits;
+
+    // Work that finishes well inside `Sandbox::restricted()`'s default 50M ceiling
+    // but blows through the 100k asked for here. `while true do end` would trip the
+    // default and pass whether or not the requested limit was applied, so it cannot
+    // tell the two apart.
+    let root = single_plugin(r#"local n = 0 for i = 1, 400000 do n = n + i end return "done""#)?;
+    let limits = ResourceLimits {
+        memory_bytes: None,
+        max_instructions: Some(100_000),
+    };
+    let backend = LuaBackend::shared_with_limits(Sandbox::restricted(), limits);
+    let mut registry = Registry::new().with_runtime(Box::new(backend));
+    registry.load_dir(root.path())?;
+
+    let Err(error) = registry.call("probe", "run", &[Value::Str(String::new())]) else {
+        return Err(
+            "a shared state asked for a 100k instruction limit should enforce it, \
+             not fall back to the restricted default"
+                .into(),
+        );
+    };
+    assert!(
+        error.to_string().contains("instruction limit"),
+        "expected an instruction-limit error, got: {error}"
+    );
+    Ok(())
+}
+
+/// The permissive sandbox handed to `shared_with_limits` must survive into the state
+/// too — the same discard dropped the standard-library selection.
+#[test]
+fn shared_mode_honours_the_sandbox_it_was_given() -> TestResult {
+    use stanchion::abi::ResourceLimits;
+
+    let root = single_plugin(r#"return type(os)"#)?;
+    let backend = LuaBackend::shared_with_limits(Sandbox::permissive(), ResourceLimits::inherit());
+    let mut registry = Registry::new().with_runtime(Box::new(backend));
+    registry.load_dir(root.path())?;
+
+    assert_eq!(run(&registry, "")?, "table");
+    Ok(())
+}
+
+/// The instruction ceiling must apply to `call_async`, not just `call`.
+///
+/// Lua debug hooks are per-`lua_State`, and a `lua_State` is per coroutine.
+/// `Sandbox::install_limit` used `Lua::set_hook`, which installs on the *current*
+/// thread only, while `call_async` drives the plugin method inside a coroutine mlua
+/// creates for it. That coroutine inherited no hook, so every plugin method reached
+/// through the async API ran with no instruction accounting whatsoever: the same body
+/// that `call` refuses ran to completion under `call_async`.
+#[cfg(all(feature = "async", not(feature = "luau")))]
+#[tokio::test]
+async fn the_instruction_limit_applies_to_async_calls() -> TestResult {
+    let root = single_plugin(r#"local n = 0 for i = 1, 800000 do n = n + i end return "done""#)?;
+    let mut registry = isolated(Sandbox::restricted().instruction_limit(1_000_000));
+    registry.load_dir(root.path())?;
+
+    // The synchronous path already refuses this body; the async path must agree.
+    let args = [Value::Str(String::new())];
+    assert!(
+        registry.call("probe", "run", &args).is_err(),
+        "the synchronous path should already refuse this burn"
+    );
+
+    let Err(error) = registry.call_async("probe", "run", &args).await else {
+        return Err("an async call must be charged against the instruction limit".into());
+    };
+    assert!(
+        error.to_string().contains("instruction limit"),
+        "expected an instruction-limit error, got: {error}"
+    );
+    Ok(())
+}
+
+/// Two `call_async`s on one grouped state must not refill each other's allowance.
+///
+/// `SharedState.budget` is an `Arc<AtomicU64>` shared by every member of a dependency
+/// group, and each call began by calling `reset_budget()` on it. The async path then
+/// dropped the state lock across the await, so a sibling's call could land while a
+/// long one was suspended at a `coroutine.yield()`, zero the counter, and hand the
+/// suspended call a fresh allowance. The instruction ceiling — the whole
+/// runaway-plugin defence — became bypassable by any plugin with a sibling in its
+/// group.
+#[cfg(all(feature = "async", not(feature = "luau")))]
+#[tokio::test]
+async fn a_sibling_call_cannot_refill_a_suspended_calls_budget() -> TestResult {
+    const LIMIT: u64 = 1_000_000;
+
+    // Calibrated against this sandbox: 400k iterations of this loop fit inside a
+    // 1M-instruction ceiling, 800k do not. So each side of the yield is legal on its
+    // own and the pair is not — the call can only succeed if something reset the
+    // counter while it was suspended.
+    let burner = r#"
+local P = {}
+P.__index = P
+function P.new(config, deps)
+  return setmetatable({ deps = deps, exports = { value = "burner" } }, P)
+end
+function P:run(input)
+  local n = 0
+  for i = 1, 400000 do n = n + i end
+  coroutine.yield()
+  for i = 1, 400000 do n = n + i end
+  return "burned"
+end
+return P
+"#;
+    // A sibling in the same group, wired to `burner` so the dependency chain puts
+    // them in one state. Its own call is trivial.
+    let poker = r#"
+local P = {}
+P.__index = P
+function P.new(config, deps)
+  return setmetatable({ deps = deps }, P)
+end
+function P:run(input)
+  coroutine.yield()
+  return "poked"
+end
+return P
+"#;
+
+    let root = tempfile::tempdir()?;
+    write_plugin(root.path(), "burner", "name = \"burner\"\n", burner)?;
+    write_plugin(
+        root.path(),
+        "poker",
+        "name = \"poker\"\n\n[dependencies]\nburner = \"*\"\n",
+        poker,
+    )?;
+
+    let mut registry = grouped(Sandbox::restricted().instruction_limit(LIMIT));
+    assert!(
+        registry.load_dir(root.path())?.is_clean(),
+        "both plugins should load into one group"
+    );
+
+    // Alone, the burn exceeds the ceiling.
+    let solo = registry
+        .call_async("burner", "run", &[Value::Str(String::new())])
+        .await;
+    let Err(error) = solo else {
+        return Err("the burn alone should exceed the instruction limit".into());
+    };
+    assert!(
+        error.to_string().contains("instruction limit"),
+        "expected an instruction-limit error, got: {error}"
+    );
+
+    // Concurrently with a sibling, it must still exceed it.
+    let args = [Value::Str(String::new())];
+    let (burned, poked) = tokio::join!(
+        registry.call_async("burner", "run", &args),
+        registry.call_async("poker", "run", &args),
+    );
+    assert!(
+        burned.is_err(),
+        "a sibling's call refilled the suspended call's budget: {burned:?}"
+    );
+    // The sibling itself is a legitimate call and should answer.
+    assert!(poked.is_ok(), "the sibling's own call should succeed: {poked:?}");
+    Ok(())
+}

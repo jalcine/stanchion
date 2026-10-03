@@ -98,6 +98,13 @@ fn lua_string_to_string(lua_string: LuaString) -> String {
 /// Converts a table, preserving array shape: integer keys exactly `1..=n`
 /// become a [`Value::List`]; anything else becomes a [`Value::Map`] of the
 /// string-keyed entries, with other keys dropped as documented there.
+///
+/// An **empty** table becomes an empty [`Value::List`]. Lua gives a table no marker
+/// saying whether it is a sequence, so an empty one is genuinely both and something
+/// has to be picked. A list is picked because it is what a host that sent an empty
+/// list gets back — previously this fell through to [`Value::Map`], making an empty
+/// list the one value whose *type* changed by crossing the boundary. The cost is that
+/// an empty map arrives as an empty list; both cases are asserted in the tests below.
 fn lua_table_to_value(lua: &Lua, lua_table: &Table) -> Value {
     let mut seq: Vec<(i64, Value)> = Vec::new();
     let mut map = BTreeMap::new();
@@ -115,12 +122,23 @@ fn lua_table_to_value(lua: &Lua, lua_table: &Table) -> Value {
             }
         }
     }
+    if only_integers && seq.is_empty() {
+        // Nothing to disambiguate: see the note on this function.
+        return Value::List(Vec::new());
+    }
     if only_integers && !seq.is_empty() {
         seq.sort_by_key(|(index, _)| *index);
         let mut values = Vec::with_capacity(seq.len());
         let mut dense = true;
         for (position, (index, value)) in seq.into_iter().enumerate() {
-            if dense && index == position as i64 + 1 {
+            // Lua lists are 1-based. `position` is an `enumerate` index, so the
+            // conversion and the increment cannot realistically overflow, but the
+            // workspace denies unchecked arithmetic rather than relying on that:
+            // a `usize` that does not fit an `i64` simply never matches a Lua key.
+            let expected = i64::try_from(position)
+                .ok()
+                .and_then(|p| p.checked_add(1));
+            if dense && Some(index) == expected {
                 values.push(value);
             } else {
                 // A sparse integer-keyed table is not a list; render the
@@ -136,8 +154,82 @@ fn lua_table_to_value(lua: &Lua, lua_table: &Table) -> Value {
             return Value::List(values);
         }
         for (position, value) in values.into_iter().enumerate() {
-            map.insert((position as i64 + 1).to_string(), value);
+            map.insert(position.saturating_add(1).to_string(), value);
         }
     }
     Value::Map(map)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+    /// Round-trips a value through a real Lua state.
+    fn round_trip(value: &Value) -> Fallible<Value> {
+        let lua = Lua::new();
+        let bound = abi_to_lua(value, &lua)?;
+        Ok(lua_to_abi(&lua, &bound))
+    }
+
+    /// An empty [`Value::List`] came back as an empty [`Value::Map`].
+    ///
+    /// A Lua table carries no "this is a sequence" marker, so an empty one is
+    /// genuinely ambiguous — but something has to be chosen, and `lua_table_to_value`
+    /// fell through to `Map` because its list branch is guarded on a non-empty
+    /// sequence. A host that sends a plugin an empty list gets a map back, which is
+    /// the one case where a round-trip changes a value's *type*.
+    #[test]
+    fn an_empty_list_round_trips_as_a_list() -> Fallible<()> {
+        assert_eq!(round_trip(&Value::List(Vec::new()))?, Value::List(Vec::new()));
+        Ok(())
+    }
+
+    #[test]
+    fn a_populated_list_round_trips() -> Fallible<()> {
+        let value = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        assert_eq!(round_trip(&value)?, value);
+        Ok(())
+    }
+
+    #[test]
+    fn a_populated_map_round_trips() -> Fallible<()> {
+        let mut map = BTreeMap::new();
+        map.insert("k".to_string(), Value::Bool(false));
+        let value = Value::Map(map);
+        assert_eq!(round_trip(&value)?, value);
+        Ok(())
+    }
+
+    /// The flip side of the choice above: an empty map also arrives as an empty list,
+    /// because by then the two are the same Lua table. Asserted so the trade is
+    /// recorded rather than discovered.
+    #[test]
+    fn an_empty_map_round_trips_as_a_list() -> Fallible<()> {
+        assert_eq!(
+            round_trip(&Value::Map(BTreeMap::new()))?,
+            Value::List(Vec::new())
+        );
+        Ok(())
+    }
+
+    /// A sparse integer-keyed table is not a list; keys are kept as strings.
+    #[test]
+    fn a_sparse_integer_table_becomes_a_map() -> Fallible<()> {
+        let lua = Lua::new();
+        let table = lua.create_table()?;
+        table.set(1, "a")?;
+        table.set(3, "c")?;
+        let value = lua_to_abi(&lua, &LuaValue::Table(table));
+        match value {
+            Value::Map(map) => {
+                assert_eq!(map.get("1"), Some(&Value::Str("a".to_string())));
+                assert_eq!(map.get("3"), Some(&Value::Str("c".to_string())));
+            }
+            other => return Err(format!("expected a map, got {other:?}").into()),
+        }
+        Ok(())
+    }
 }

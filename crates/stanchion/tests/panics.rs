@@ -159,3 +159,142 @@ async fn a_panic_in_an_awaited_call_fails_the_call() -> TestResult {
     );
     Ok(())
 }
+
+/// A third-party backend that panics in `call` must not unwind into the caller.
+///
+/// The workspace's panic policy says every fallible path returns an error instead of
+/// unwinding, and `Registry::dispatch` and `Registry::call_async` both wrapped their
+/// calls in `panics::guard`. `Registry::call` did not — it was safe only because the
+/// *Lua* backend happens to guard inside its own `PluginInstance::call`. Since
+/// `PluginBackend` is public API, that put the guarantee on the wrong side of the
+/// trait boundary: any backend a host writes itself would unwind straight through.
+mod foreign_backend {
+    use std::path::Path;
+
+    use stanchion::abi::backend::{PluginBackend, PluginInstance};
+    use stanchion::abi::load::{GroupOutcome, LoadContext, LoadItem};
+    use stanchion::abi::manifest::{Manifest, PluginType};
+    use stanchion::abi::runtime::Runtime;
+    use stanchion::abi::{Result as AbiResult, Value};
+
+    /// Panics on every call, the way a buggy third-party backend would.
+    pub struct Exploding;
+
+    /// Records whether the host asked it to drop a capability.
+    pub struct Revocable(pub std::sync::Mutex<Vec<String>>);
+
+    impl PluginInstance for Revocable {
+        fn call(&self, _method: &str, _args: &[Value]) -> AbiResult<Value> {
+            Ok(Value::Str("ok".to_string()))
+        }
+
+        fn runtime(&self) -> &str {
+            "revocable"
+        }
+
+        fn revoke_capability(&self, capability: &str) -> bool {
+            match self.0.lock() {
+                Ok(mut seen) => {
+                    seen.push(capability.to_string());
+                    true
+                }
+                Err(_) => false,
+            }
+        }
+    }
+
+    impl PluginInstance for Exploding {
+        #[expect(
+            clippy::panic,
+            reason = "the panic is the subject under test"
+        )]
+        fn call(&self, _method: &str, _args: &[Value]) -> AbiResult<Value> {
+            panic!("the backend gave up")
+        }
+
+        fn runtime(&self) -> &str {
+            "exploding"
+        }
+    }
+
+    impl PluginBackend for Exploding {
+        fn plugin_type(&self) -> PluginType {
+            PluginType::Lua
+        }
+
+        fn load(&self, _m: &Manifest, _d: &Path) -> AbiResult<Box<dyn PluginInstance>> {
+            Ok(Box::new(Exploding))
+        }
+    }
+
+    impl Runtime for Exploding {
+        fn runtime_name(&self) -> &'static str {
+            "exploding"
+        }
+
+        fn load_group(&self, items: &[LoadItem], _ctx: &LoadContext) -> Vec<GroupOutcome> {
+            items
+                .iter()
+                .map(|item| GroupOutcome::Loaded {
+                    name: item.manifest.name.clone(),
+                    instance: Box::new(Exploding),
+                    granted: Vec::new(),
+                })
+                .collect()
+        }
+
+        fn reload_plugin(
+            &self,
+            _item: &LoadItem,
+            _ctx: &LoadContext,
+        ) -> AbiResult<Box<dyn PluginInstance>> {
+            Ok(Box::new(Exploding))
+        }
+
+        fn unload(&self, _name: &str) {}
+    }
+}
+
+#[test]
+fn a_panicking_backend_fails_the_call_not_the_caller() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let dir = root.path().join("probe");
+    fs::create_dir_all(&dir)?;
+    fs::write(dir.join("plugin.toml"), "name = \"probe\"\n")?;
+    fs::write(dir.join("init.lua"), "return {}\n")?;
+
+    let mut registry = Registry::new().with_runtime(Box::new(foreign_backend::Exploding));
+    registry.load_dir(root.path())?;
+
+    let Err(error) = registry.call("probe", "run", &[Value::Str(String::new())]) else {
+        return Err("a panicking backend should surface as an error".into());
+    };
+    assert!(
+        error.to_string().contains("panic"),
+        "expected the panic to be reported, got: {error}"
+    );
+    Ok(())
+}
+
+/// A non-Lua backend's instance must be able to honour revocation.
+///
+/// `Runtime::revoke_capability` took a `&dyn PluginInstance` and each backend
+/// downcast it back to its own concrete type through `PluginInstance::as_any`. For the
+/// Lua backend that worked; for anything else the downcast failed and revocation
+/// quietly returned `false` while the registry still struck the capability off the
+/// plugin's granted list. Revoking is a security operation, so "silently did nothing"
+/// is the wrong failure. Asking the instance directly removes both the downcast and
+/// the whole `as_any` escape hatch.
+#[test]
+fn revocation_reaches_a_foreign_backends_instance() -> TestResult {
+    use stanchion::abi::backend::PluginInstance;
+
+    let instance = foreign_backend::Revocable(std::sync::Mutex::new(Vec::new()));
+    assert!(
+        PluginInstance::revoke_capability(&instance, "kv"),
+        "the instance should report that it held the capability"
+    );
+    let seen = instance.0.lock().map_err(|_| "poisoned")?.clone();
+    assert_eq!(seen, vec!["kv".to_string()]);
+    Ok(())
+}

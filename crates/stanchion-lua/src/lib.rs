@@ -1,9 +1,11 @@
 //! Lua plugin backend for stanchion.
 //!
-//! This crate owns every `mlua` type in the workspace: states ([`Sandbox`]),
-//! loading and calling ([`backend`]), value conversion ([`convert`]) and the
-//! Lua trait stack (`LuaClass`, `LuaObject`, `LuaHandle`, `load_class`).
-//! Hosts talk to [`LuaBackend`] through [`stanchion_abi::Runtime`] and pass
+//! This crate owns every `mlua` type in the workspace: states
+//! ([`Sandbox`](sandbox::Sandbox)), loading and calling ([`backend`]), value
+//! conversion ([`convert`]) and the Lua trait stack (`LuaClass`, `LuaObject`,
+//! `LuaHandle`, `load_class`).
+//! Hosts talk to [`LuaBackend`](backend::LuaBackend) through
+//! [`stanchion_abi::Runtime`] and pass
 //! [`stanchion_abi::Value`]s; nothing outside this crate names an `mlua` type.
 
 use std::future::Future;

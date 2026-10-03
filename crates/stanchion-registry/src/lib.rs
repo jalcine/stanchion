@@ -927,6 +927,12 @@ impl Registry {
     }
 
     /// Calls one method on one plugin.
+    ///
+    /// A panic inside the backend is caught and reported as an error, matching
+    /// [`dispatch`](Self::dispatch) and [`call_async`](Self::call_async). The guard
+    /// belongs here rather than in each backend: `PluginBackend` is public, so a
+    /// backend a host writes itself would otherwise unwind into the caller even
+    /// though the workspace's panic policy says nothing does.
     pub fn call(
         &self,
         plugin: &str,
@@ -938,7 +944,12 @@ impl Registry {
             .get(plugin)
             .and_then(|position| self.plugins.get(*position))
             .ok_or_else(|| stanchion_abi::Error::UnknownPlugin(plugin.to_string()))?;
-        entry.instance.call(method, args)
+        stanchion_abi::panics::guard(|| entry.instance.call(method, args)).map_err(|panicked| {
+            stanchion_abi::Error::Runtime(stanchion_abi::RuntimeError {
+                runtime_name: entry.instance.runtime().to_string(),
+                error: panicked.to_string(),
+            })
+        })?
     }
 
     /// Awaits one method on one plugin.
@@ -1040,7 +1051,7 @@ impl Registry {
             .index
             .get(plugin)
             .ok_or_else(|| RegistryError::UnknownPlugin(plugin.to_string()))?;
-        let (ty, granted) = {
+        let granted = {
             let entry = self
                 .plugins
                 .get(position)
@@ -1048,16 +1059,18 @@ impl Registry {
             let Some(index) = entry.granted.iter().position(|name| name == capability) else {
                 return Ok(false);
             };
-            (entry.manifest.plugin_type.clone(), index)
+            index
         };
+        // Asked of the instance, which is what holds the binding. This used to look up
+        // the runtime by plugin type and hand it the instance to downcast back to its
+        // own concrete type, so revocation silently failed for any backend other than
+        // the one that defined the instance.
         let held = {
             let entry = self
                 .plugins
                 .get(position)
                 .ok_or_else(|| RegistryError::UnknownPlugin(plugin.to_string()))?;
-            self.runtime_for(&ty)
-                .map(|backend| backend.revoke_capability(&*entry.instance, capability))
-                .unwrap_or(false)
+            entry.instance.revoke_capability(capability)
         };
         self.plugins
             .get_mut(position)

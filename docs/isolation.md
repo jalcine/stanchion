@@ -132,6 +132,20 @@ constructor gets the full allowance — so a plugin is bounded per call rather t
 slowly starving over its lifetime. It rides on Lua's debug hook, so under `luau`
 (which has no instruction counter) the limit counts interrupt callbacks instead.
 
+More precisely, the *outermost* call on a state starts a fresh allowance. A call that
+arrives while another is still running on the same state — a sibling in the same
+dependency group, or a synchronous call landing while an `async` one is suspended at a
+`coroutine.yield()` — joins the accounting period that is already open rather than
+restarting it. Without that, a plugin with any sibling in its group could escape the
+ceiling entirely: each new call zeroed the shared counter, refilling the suspended
+one's budget.
+
+The hook is installed with mlua's `set_global_hook` rather than `set_hook`. A Lua
+debug hook belongs to a single `lua_State`, and every coroutine is its own
+`lua_State`; `set_hook` reaches only the current thread, which meant a method driven
+through `call_async` — run inside a coroutine mlua creates for it — inherited no hook
+and was charged nothing at all. The ceiling existed only on the synchronous path.
+
 ## Reaching an isolated plugin
 
 A freshly created state has nothing of yours in it. Host functions get there through

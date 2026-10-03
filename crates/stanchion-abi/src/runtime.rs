@@ -1,11 +1,15 @@
 //! Runtime-agnostic interface for plugin execution.
 //!
-//! [`PluginBackend`](crate::backend::PluginBackend) loads one plugin.
+//! [`PluginBackend`] loads one plugin.
 //! [`Runtime`] loads and manages *groups* of plugins: dependency wiring,
-//! shared states, reload and capability revocation all need visibility
+//! shared states and reload all need visibility
 //! beyond a single instance, so they live here. Hosts (e.g.
 //! `stanchion-registry`) program against this trait and never touch a
 //! backend's native types.
+//!
+//! Capability revocation is the exception: it belongs to the instance holding the
+//! binding, so it lives on
+//! [`PluginInstance::revoke_capability`](crate::backend::PluginInstance::revoke_capability).
 //!
 //! Per-call budgets are enforced inside
 //! [`PluginInstance::call`](crate::backend::PluginInstance::call), not
@@ -20,6 +24,11 @@ use crate::load::{GroupOutcome, LoadContext, LoadItem};
 ///
 /// One plugin failing never stops the others: group loads report per-plugin
 /// outcomes, and reload leaves the old instance in place on failure.
+///
+/// Revocation is **not** here: it lives on
+/// [`PluginInstance::revoke_capability`](crate::backend::PluginInstance::revoke_capability),
+/// because the instance is what holds the binding. Routing it through the runtime
+/// meant handing a backend a `&dyn PluginInstance` to downcast back to its own type.
 pub trait Runtime: PluginBackend {
     /// Human-readable runtime name (e.g. `"lua"`, `"wasm"`).
     fn runtime_name(&self) -> &'static str;
@@ -40,14 +49,6 @@ pub trait Runtime: PluginBackend {
         item: &LoadItem,
         ctx: &LoadContext,
     ) -> Result<Box<dyn crate::backend::PluginInstance>>;
-
-    /// Unbinds a granted capability from a live instance.
-    ///
-    /// Returns whether the instance held it. Code that already captured the
-    /// value keeps it, so this defangs a misbehaving plugin without
-    /// rewinding it.
-    fn revoke_capability(&self, instance: &dyn crate::backend::PluginInstance, capability: &str)
-    -> bool;
 
     /// Forgets everything retained for `name`: states, proxies, budgets.
     ///

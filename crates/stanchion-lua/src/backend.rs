@@ -1,14 +1,16 @@
 //! The Lua backend: states, loading, calling, reload and revocation.
 //!
 //! Everything in this module speaks `mlua` so nothing else has to. Hosts
-//! hold a [`LuaBackend`] behind [`stanchion_abi::Runtime`] and pass
+//! hold a [`LuaBackend`](crate::backend::LuaBackend) behind
+//! [`stanchion_abi::Runtime`] and pass
 //! [`stanchion_abi::Value`]s; conversion happens at this boundary.
 //!
 //! # States
 //!
-//! A [`SharedState`] is one `Lua` plus its instruction budget. Plugins that
+//! A `SharedState` (private) is one `Lua` plus its instruction budget. Plugins that
 //! must exchange Lua values (a dependency chain) share one; everything else
-//! is kept apart according to the backend's [`IsolationMode`]. The pool maps
+//! is kept apart according to the backend's
+//! [`IsolationMode`](crate::backend::IsolationMode). The pool maps
 //! plugin names to their state, so reload reuses the state a plugin already
 //! runs in.
 
@@ -34,8 +36,13 @@ use crate::sandbox::{Budget, Sandbox};
 /// group — not the plugin — is the accounting unit wherever states are shared.
 #[derive(Debug, Clone)]
 pub enum IsolationMode {
-    /// Every plugin runs in one shared state.
-    Shared,
+    /// Every plugin runs in one shared state, built under a [`Sandbox`] policy.
+    ///
+    /// The policy still applies — it just applies to the whole host rather than to
+    /// one plugin, because a limit is a property of a state. This carried no
+    /// `Sandbox` before, and the state was built from `Sandbox::restricted()`
+    /// regardless of what the caller asked for.
+    Shared(Sandbox),
     /// Every plugin gets its own state built under a [`Sandbox`] policy.
     ///
     /// Values cannot cross states, so a `[dependencies]` entry fails to load.
@@ -67,9 +74,51 @@ const MAX_MODULE_BYTES: u64 = 8 * 1024 * 1024;
 struct SharedState {
     lua: Mutex<Lua>,
     budget: Option<Budget>,
+    /// How many calls are currently executing against this state.
+    ///
+    /// The instruction allowance is reset by the *outermost* call only. It used to be
+    /// reset by whichever call arrived, which let a second call zero the counter
+    /// while a first was still running — on the async path, while the first was
+    /// suspended at a `coroutine.yield()` with the state lock released. A plugin
+    /// could escape its ceiling by having any sibling in its dependency group make a
+    /// call. The group stays the accounting unit, as documented; what changes is that
+    /// joining an in-flight accounting period no longer restarts it.
+    in_flight: std::sync::atomic::AtomicUsize,
+    /// Serializes async calls on this state.
+    ///
+    /// The async path cannot hold `lua` across its await: a `std::sync::MutexGuard`
+    /// is not `Send`, and `PluginInstance::call_async` must return a `Send` future.
+    /// This gate can be held across it, so two async calls on one state run one
+    /// after another instead of interleaving their coroutine resumptions.
+    #[cfg(feature = "async")]
+    gate: tokio::sync::Mutex<()>,
+}
+
+/// Marks a call as in flight for as long as it lives, resetting the instruction
+/// allowance only when it is the outermost one.
+struct InFlight<'a>(&'a SharedState);
+
+impl<'a> InFlight<'a> {
+    fn enter(state: &'a SharedState) -> Self {
+        use std::sync::atomic::Ordering;
+        let depth = state.in_flight.fetch_add(1, Ordering::AcqRel);
+        if let (0, Some(budget)) = (depth, &state.budget) {
+            budget.reset();
+        }
+        InFlight(state)
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0
+            .in_flight
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 impl SharedState {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn reset_budget(&self) {
         if let Some(budget) = &self.budget {
             budget.reset();
@@ -87,11 +136,13 @@ pub struct LuaInstance {
 impl LuaInstance {
     /// Drives a method that may yield, resuming its coroutine to completion.
     ///
-    /// The state lock is never held across an await (its guard is not
-    /// `Send`): arguments convert under a short lock, the coroutine runs
-    /// unlocked, and the result converts under a second one. Hosts
-    /// serialize concurrent calls on shared states themselves — the FFI
-    /// host holds its registry lock for the whole dispatch.
+    /// The `Lua` lock is still taken only in short sections — a
+    /// `std::sync::MutexGuard` is not `Send`, and this future must be — but the
+    /// state's `gate` is held for the whole call, so two async calls on one state
+    /// run in turn rather than interleaving their resumptions. Callers no longer
+    /// have to arrange that themselves: they could not see the requirement, and
+    /// `Registry::call_async` took `&self`, so `join!`ing two calls was the
+    /// natural thing to write and silently wrong.
     #[cfg(feature = "async")]
     async fn call_async_inner(&self, method: &str, args: &[Value]) -> AbiResult<Value> {
         let poisoned = || {
@@ -100,9 +151,10 @@ impl LuaInstance {
                 error: "the Lua state is poisoned".to_string(),
             })
         };
+        let _gate = self.state.gate.lock().await;
+        let _in_flight = InFlight::enter(&self.state);
         let converted = {
             let lua = self.state.lua.lock().map_err(|_| poisoned())?;
-            self.state.reset_budget();
             let mut converted = MultiValue::new();
             for arg in args {
                 converted.push_back(abi_to_lua(arg, &lua).map_err(|e| {
@@ -143,8 +195,11 @@ impl LuaInstance {
                 error: "the Lua state is poisoned".to_string(),
             })
         })?;
-        // The limit applies per call rather than per plugin lifetime.
-        self.state.reset_budget();
+        // The limit applies per call rather than per plugin lifetime — but only the
+        // outermost call on this state starts a fresh allowance. A synchronous call
+        // landing while an async one is suspended shares what is left of it instead
+        // of handing the suspended call a new one.
+        let _in_flight = InFlight::enter(&self.state);
         let result = self.call_locked(&lua, method, args).map_err(|e| {
             AbiError::Runtime(RuntimeError {
                 runtime_name: "lua".to_string(),
@@ -187,8 +242,9 @@ impl PluginInstance for LuaInstance {
         "lua"
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn revoke_capability(&self, capability: &str) -> bool {
+        // Nils the binding in the plugin's own environment table.
+        self.env.set(capability, LuaValue::Nil).is_ok()
     }
 
     fn call_async(
@@ -224,7 +280,7 @@ impl LuaBackend {
     /// for code you did not write.
     pub fn shared() -> Self {
         LuaBackend {
-            mode: IsolationMode::Shared,
+            mode: IsolationMode::Shared(Sandbox::restricted()),
             constructor: DEFAULT_CONSTRUCTOR.to_string(),
             states: Mutex::new(HashMap::new()),
             surfaces: Mutex::new(HashMap::new()),
@@ -257,12 +313,12 @@ impl LuaBackend {
         self
     }
 
-    /// Applies backend-neutral [`ResourceLimits`] as an isolation policy.
+    /// Narrows a [`Sandbox`] by backend-neutral [`ResourceLimits`].
     ///
-    /// Limits are properties of a Lua state, so they need one state per
-    /// plugin (or group) to mean anything; `shared` mode keeps a single
-    /// state and the limits apply to the whole host.
-    pub fn with_limits(sandbox: Sandbox, limits: ResourceLimits, shared: bool) -> Self {
+    /// Limits are properties of a Lua state, so what they govern depends on how
+    /// states are allocated: see [`shared_with_limits`](Self::shared_with_limits) and
+    /// [`grouped_with_limits`](Self::grouped_with_limits).
+    fn narrow(sandbox: Sandbox, limits: ResourceLimits) -> Sandbox {
         let mut sandbox = sandbox;
         if let Some(bytes) = limits.memory_bytes {
             sandbox = sandbox.memory_limit(bytes);
@@ -270,22 +326,37 @@ impl LuaBackend {
         if let Some(instructions) = limits.max_instructions {
             sandbox = sandbox.instruction_limit(instructions);
         }
-        if shared {
-            LuaBackend {
-                mode: IsolationMode::Shared,
-                constructor: DEFAULT_CONSTRUCTOR.to_string(),
-                states: Mutex::new(HashMap::new()),
-                surfaces: Mutex::new(HashMap::new()),
-            }
-        } else {
-            LuaBackend::grouped(sandbox)
+        sandbox
+    }
+
+    /// One state for every plugin, under `sandbox` narrowed by `limits`.
+    ///
+    /// The ceiling is host-wide: every plugin's work counts against the same budget.
+    /// Prefer [`grouped_with_limits`](Self::grouped_with_limits) when the limits are
+    /// meant to be per plugin.
+    ///
+    /// This and its grouped sibling replace a single `with_limits(sandbox, limits,
+    /// shared: bool)`. The bool was not just awkward — passing `true` discarded both
+    /// the sandbox and the limits and silently built `Sandbox::restricted()`, so a
+    /// host that asked for a ceiling got the default one.
+    pub fn shared_with_limits(sandbox: Sandbox, limits: ResourceLimits) -> Self {
+        LuaBackend {
+            mode: IsolationMode::Shared(Self::narrow(sandbox, limits)),
+            constructor: DEFAULT_CONSTRUCTOR.to_string(),
+            states: Mutex::new(HashMap::new()),
+            surfaces: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// One state per dependency group, under `sandbox` narrowed by `limits`.
+    pub fn grouped_with_limits(sandbox: Sandbox, limits: ResourceLimits) -> Self {
+        LuaBackend::grouped(Self::narrow(sandbox, limits))
     }
 
     /// How states are allocated, for hosts that attest their posture.
     pub fn isolation_name(&self) -> &'static str {
         match self.mode {
-            IsolationMode::Shared => "shared",
+            IsolationMode::Shared(_) => "shared",
             IsolationMode::PerPlugin(_) => "per-plugin",
             IsolationMode::PerGroup(_) => "per-group",
         }
@@ -293,16 +364,13 @@ impl LuaBackend {
 
     /// Creates the state for one isolation unit, binding ambient values.
     fn create_state(&self, setup: &HostSetup, rock_paths: Option<&RockPaths>) -> mlua::Result<SharedState> {
+        // Every mode carries its own `Sandbox`, so the policy the caller chose is
+        // the policy the state gets. The shared state is created once and reused;
+        // ambient values are bound at creation below.
         let (lua, budget) = match &self.mode {
-            IsolationMode::Shared => {
-                // The shared state is created once and reused; ambient
-                // values are bound at creation below.
-                let (lua, budget) = Sandbox::restricted().build()?;
-                (lua, budget)
-            }
-            IsolationMode::PerPlugin(sandbox) | IsolationMode::PerGroup(sandbox) => {
-                sandbox.build()?
-            }
+            IsolationMode::Shared(sandbox)
+            | IsolationMode::PerPlugin(sandbox)
+            | IsolationMode::PerGroup(sandbox) => sandbox.build()?,
         };
         // Ambient authority reaches every state, gated by nothing.
         for (label, value) in setup.ambient_values() {
@@ -315,6 +383,9 @@ impl LuaBackend {
         Ok(SharedState {
             lua: Mutex::new(lua),
             budget,
+            in_flight: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(feature = "async")]
+            gate: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -333,7 +404,7 @@ impl LuaBackend {
             return Ok(state);
         }
         let key = match self.mode {
-            IsolationMode::Shared => 0,
+            IsolationMode::Shared(_) => 0,
             IsolationMode::PerPlugin(_) => {
                 // Fresh states are recorded per plugin below; the transient
                 // map is unused in this mode.
@@ -470,18 +541,22 @@ impl LuaBackend {
                     return Err(format!("capability `{name}` denied: {reason}"));
                 }
             };
-            let grant = Grant::new(manifest.name.clone(), name.clone(), approved.clone());
-            // Option A: bind module directly, bypassing function-cache
-            let call = CapabilityCall {
-                plugin: grant.plugin().to_string(),
-                capability: grant.name().to_string(),
-                grant: stanchion_abi::Value::Str(format!("{}:{}", grant.plugin(), grant.name())),
-                args: Vec::new(),
-            };
-            let answer = provider.invoke(&call).map_err(|e| format!("capability `{name}` invoke error: {e}"))?;
-            let value = mlua_err(crate::convert::abi_to_lua(&answer, lua))?;
+            let grant = Grant::new(manifest.name.clone(), name.clone(), approved);
+            // A capability is bound as a *callable* that carries its approved grant,
+            // per the `CapabilityProvider` contract: "the backend wraps them into
+            // whatever callable the plugin's runtime needs, capturing the approved
+            // Grant so every call carries its own bounds."
+            //
+            // This used to invoke the provider once here, with empty args and a
+            // `Value::Str("plugin:capability")` in place of the grant, and bind the
+            // answer. Three things were wrong with that: the plugin saw whatever the
+            // probe returned instead of a function, every provider ran at load time
+            // whether or not the plugin ever called it, and the params the policy had
+            // just approved were thrown away — so `Decision::GrantWith` narrowed
+            // nothing.
+            let bound = mlua_err(bind_provider(lua, provider, &grant))?;
             environment
-                .set(name.as_str(), value)
+                .set(name.as_str(), bound)
                 .map_err(|e| e.to_string())?;
             granted.push(name.clone());
         }
@@ -934,17 +1009,6 @@ impl Runtime for LuaBackend {
         Ok(Box::new(instance))
     }
 
-    fn revoke_capability(
-        &self,
-        instance: &dyn PluginInstance,
-        capability: &str,
-    ) -> bool {
-        let Some(ours) = instance_to_lua(instance) else {
-            return false;
-        };
-        ours.env.set(capability, LuaValue::Nil).is_ok()
-    }
-
     fn unload(&self, name: &str) {
         if let Ok(mut pool) = self.states.lock() {
             pool.remove(name);
@@ -953,11 +1017,6 @@ impl Runtime for LuaBackend {
             surfaces.remove(name);
         }
     }
-}
-
-fn instance_to_lua(instance: &dyn PluginInstance) -> Option<&LuaInstance> {
-    // LuaInstance is the only Lua-backed instance this backend produces.
-    instance.as_any().downcast_ref::<LuaInstance>()
 }
 
 impl LuaBackend {

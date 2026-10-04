@@ -179,7 +179,7 @@ rather than a silent omission.
 | Method | Returns |
 | --- | --- |
 | `load(root)` | `LoadResult { loaded, failures }` |
-| `list()` | `Vec<PluginInfo>` — name, version, granted capabilities, signer |
+| `list()` | `Vec<PluginInfo>` — name, version, granted capabilities, signer, runtime |
 | `audit(root)` | `Vec<AuditEntry>` — requests and signer, nothing executed |
 | `call(plugin, method, args)` | any `DeserializeOwned` |
 | `dispatch(method, args)` | `Vec<Outcome>` — one per plugin |

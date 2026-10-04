@@ -107,6 +107,12 @@ reconciles those — the read runs on a blocking worker and 64 KiB chunks arrive
 a channel four deep, so a response holds a few hundred KiB in flight regardless of the
 package's size. Both adapters use it, so chunking is decided in one place.
 
+Headers are decided in one place for the same reason. `Served::headers` assembles
+`Content-Type`, `Cache-Control`, `ETag` and `Content-Length` — each when it means
+something — and an adapter sets what it is handed rather than working out which
+headers an answer deserves. Both adapters used to assemble them independently, which
+is how a freshness fix reaches one framework and not the other.
+
 Two consequences worth knowing:
 
 - **A `HEAD` never reads the package.** The length comes from the source, so a `HEAD`

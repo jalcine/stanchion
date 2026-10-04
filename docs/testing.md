@@ -6,11 +6,25 @@ which suits this workspace: several tests spawn child processes, shell out to
 wedged test cannot take the others with it.
 
 ```sh
-cargo nextest run --workspace --features lua54,vendored,full
+mise run test
 ```
 
-The `full` feature matters. Integration tests are gated per feature, so a run without
-it compiles most of the suite away and still reports success — 22 tests instead of 103.
+**Run it through `mise`, not `cargo` directly.** The feature set is the part that is
+easy to get wrong, so it lives once in `$STANCHION_FEATURES` in
+[`mise.toml`](../mise.toml) and every task — the suite, the linter, the doc build —
+reads it from there. A hand-written `--features` list is how this goes wrong twice: it
+drifts from what CI checks, and the drift is invisible because a narrower run still
+reports success.
+
+Which is the real hazard. Integration tests are gated per feature, so a run missing
+them compiles most of the suite away and passes:
+
+```sh
+cargo nextest run --workspace --features lua54,vendored   # 173 tests, all green
+mise run test                                             # 292 tests, all green
+```
+
+Both of those say "0 failed". Only one of them tested the thing you changed.
 
 Three profiles are configured in [`.config/nextest.toml`](../.config/nextest.toml):
 
@@ -21,8 +35,12 @@ Three profiles are configured in [`.config/nextest.toml`](../.config/nextest.tom
 | `ci` | retries the two suites that depend on an external tool or a real child process, and writes `junit.xml` |
 
 ```sh
-cargo nextest run -P quick --workspace --features lua54,vendored,full
+mise exec -- cargo nextest run -P quick --workspace --features "$STANCHION_FEATURES"
 ```
+
+(`$STANCHION_FEATURES` is set by `mise.toml`, so reaching for `cargo` directly means
+going through `mise exec` — or having mise activated in the shell — rather than
+writing the feature list out again.)
 
 A `slow-timeout` is deliberate rather than decorative: several tests prove that a
 runaway plugin gets stopped — an endless loop, an allocation storm, a process that
@@ -32,7 +50,7 @@ so nextest reports it slow and then terminates it.
 **nextest does not run doctests.** Run those separately:
 
 ```sh
-cargo test --doc --workspace --features lua54,vendored,full
+mise run test:doc
 ```
 
 The `luarocks` tests build a rock offline with `luarocks make` from a local rockspec,
@@ -58,11 +76,36 @@ compile as part of an ordinary build, so they cannot rot into documentation that
 longer works:
 
 ```sh
-cargo build -p stanchion --features lua54,vendored,full --examples
+mise exec -- cargo build --workspace --features "$STANCHION_FEATURES" --examples
 ```
 
+`--workspace` rather than `-p stanchion`, because `$STANCHION_FEATURES` names features
+of `stanchion-ffi` and `stanchion-index` too, and a package-scoped build rejects
+features that are not that package's own.
+
 Each declares `required-features`, so a build with a narrower feature set skips
-the ones it cannot compile rather than failing.
+the ones it cannot compile rather than failing — quietly, which is the same hazard as
+above.
+
+## The rest of the gates
+
+Each of these is a CI job and a single command locally:
+
+| Command | What it holds |
+| --- | --- |
+| `mise run test` | the suite, under nextest |
+| `mise run test:doc` | doctests, which nextest does not run |
+| `mise run lint` | clippy over the workspace and the binding crates, warnings denied |
+| `mise run lint:docs` | rustdoc with warnings denied — catches a broken intra-doc link, which is how documentation quietly stops describing the code |
+| `mise run lint:deps` | [cargo-deny](https://embarkstudios.github.io/cargo-deny/): advisories, licences and sources over the dependency graph. See [`deny.toml`](../deny.toml), where every ignored advisory carries why it does not apply here and when to drop the entry |
+| `mise run lint:msrv` | builds against the declared MSRV rather than whatever is installed |
+| `mise run miri` | [Miri](https://github.com/rust-lang/miri) over the crates whose `unsafe` is ordinary Rust. The FFI crates are excluded: their `unsafe` *is* a foreign boundary, which Miri cannot model |
+| `mise run fuzz` | short [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) runs over the two places untrusted bytes enter — a downloaded `tar.gz` and a `plugin.toml`. Seeded from `fuzz/seeds/`, which matters: random bytes almost never form a valid gzip member, so an unseeded run never reaches the archive checks it exists to test |
+| `mise run smoke` | every language binding, end to end — Python, Ruby, Kotlin and the UniFFI boundary |
+
+`fuzz` and `miri` need a nightly toolchain and `cargo-fuzz` installed; the rest run on
+the pinned stable. A real fuzzing campaign is the same command without
+`-max_total_time`, for hours rather than a minute.
 
 ## Coverage
 

@@ -17,3 +17,7 @@ fuzz/corpus/
 fuzz/artifacts/
 fuzz/target/
 fuzz/Cargo.lock
+
+# `mise run site` output. The generated site is published to the `gh-pages` branch,
+# never committed here.
+site-out/

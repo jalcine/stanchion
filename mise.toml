@@ -127,6 +127,12 @@ description = "Build against the declared MSRV rather than the pinned toolchain"
 # toolchain present, which is why it is not part of `lint`.
 run = "cargo +1.97.0 check --workspace --features $STANCHION_FEATURES"
 
+[tasks.site]
+description = "Generate the project site from docs/ into site-out/"
+# The guides are rendered from `docs/*.md` rather than written twice. One command here
+# so a local preview and the workflow that publishes cannot generate differently.
+run = "cargo run -q -p stanchion-site -- --out site-out"
+
 [tasks.miri]
 description = "Run the crates whose `unsafe` is ordinary Rust under miri"
 # Excluded: `stanchion-ffi-c` (its `unsafe` *is* the C ABI, which miri cannot model —

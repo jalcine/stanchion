@@ -86,7 +86,11 @@ assert_eq!(greeter.greet("world".to_string())?, "hello, world");
 | [LuaRocks](docs/luarocks.md)              | declaring external Lua libraries, C-module hazards                        |
 | [Out-of-process hosting](docs/remote.md)  | the `plugin-host` binary, JSON-RPC protocol, callbacks, crash containment |
 | [Language bindings](docs/bindings.md)     | Python, Kotlin, Swift, Ruby and JavaScript over the dynamic surface       |
-| [Testing](docs/testing.md)                | running the suite under nextest, profiles, doctests, UI tests             |
+| [Testing](docs/testing.md)                | running the suite under nextest, profiles, doctests, UI tests, and every gate CI runs |
+
+These guides are also the project site at [stanchion.jacky.wtf](https://stanchion.jacky.wtf),
+rendered from this directory rather than written twice. `mise run site` builds it
+locally; pushing a change to `docs/` publishes it.
 
 ## Examples
 

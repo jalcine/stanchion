@@ -116,6 +116,11 @@ problem, but writing it to a socket is. One bridge in <code>stanchion-index::chu
 reconciles those — the read runs on a blocking worker and 64 KiB chunks arrive through
 a channel four deep, so a response holds a few hundred KiB in flight regardless of the
 package’s size. Both adapters use it, so chunking is decided in one place.</p>
+<p>Headers are decided in one place for the same reason. <code>Served::headers</code> assembles
+<code>Content-Type</code>, <code>Cache-Control</code>, <code>ETag</code> and <code>Content-Length</code> — each when it means
+something — and an adapter sets what it is handed rather than working out which
+headers an answer deserves. Both adapters used to assemble them independently, which
+is how a freshness fix reaches one framework and not the other.</p>
 <p>Two consequences worth knowing:</p>
 <ul>
 <li><strong>A <code>HEAD</code> never reads the package.</strong> The length comes from the source, so a <code>HEAD</code>

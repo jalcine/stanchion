@@ -42,10 +42,10 @@
     <h1 id="language-bindings">Language bindings</h1>
 <p>Using stanchion from Python, Ruby and Kotlin today, with Swift generated but not yet
 run and a JavaScript binding still planned.</p>
-<p>The Rust API’s <code>Registry&lt;C: LuaClass&gt;</code> is generic over a contract <code>#[lua_class]</code> derives
-from a trait at compile time. No foreign language can supply one, so the bindings take
-the same path <a href="remote.html">out-of-process hosting</a> already takes: plugins load as
-<code>DynClass</code> — any table with a constructor — and methods resolve by name at call time.</p>
+<p>A <code>#[lua_class]</code> trait derives a typed contract at compile time. No foreign
+language can supply one, so the bindings take the same path
+<a href="remote.html">out-of-process hosting</a> already takes: plugins load dynamically —
+any table with a constructor — and methods resolve by name at call time.</p>
 <p><code>stanchion-ffi</code> is the seam every binding sits on. It carries no binding dependencies
 of its own, so nothing <code>pyo3</code> or <code>uniffi</code> finds convenient can leak into the shape the
 others see.</p>

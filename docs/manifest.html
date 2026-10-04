@@ -152,13 +152,25 @@ arrives as the <code>config</code> argument to <code>new(config, deps)</code>:</
 end
 </code></pre>
 <h3 id="budget"><code>[budget]</code></h3>
-<p>An optional per-plugin instruction cap, enforced at each call boundary for runtimes
-that support it (WASM, the Lua sandbox):</p>
+<p>An optional per-plugin ceiling a plugin declares for itself. It may only ever <em>lower</em>
+what the host allows, never raise it:</p>
 <pre><code class="language-toml">[budget]
 max_instructions = 5_000_000
+memory_bytes = 33_554_432       # optional
 </code></pre>
-<p>Like the rest of the manifest, the <code>[budget]</code> table rejects unknown keys, so
-<code>max_instructions</code> is the only field it accepts.</p>
+<table><thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>max_instructions</code></td><td>integer</td><td><em>required within <code>[budget]</code></em></td><td>Cap on VM instructions per call.</td></tr>
+<tr><td><code>memory_bytes</code></td><td>integer</td><td>host’s ceiling</td><td>Cap on the plugin’s memory.</td></tr>
+</tbody></table>
+<p>Like the rest of the manifest, the <code>[budget]</code> table rejects unknown keys.</p>
+<p><strong>Which backends act on it.</strong> <code>stanchion-wasm</code> narrows both of its ceilings by this
+table at load: <code>max_instructions</code> becomes the wasmtime fuel cap and <code>memory_bytes</code> the
+linear-memory cap. <strong>The Lua backend currently ignores <code>[budget]</code> entirely</strong> — its
+ceilings come from the host’s <code>Sandbox</code> alone. A Lua plugin declaring a budget parses
+and gets no effect from it. The reason is that a Lua budget belongs to a <em>state</em>, and
+under per-group or shared isolation one state is shared by several plugins, so which
+manifest governs it is an open question rather than a settled one. See
+<a href="isolation.html">isolation</a>.</p>
 <h2 id="discovery-and-validation">Discovery and validation</h2>
 <p><code>discover</code> reads every <code>&lt;root&gt;/*/plugin.toml</code> in sorted order, so load order is
 reproducible regardless of how the filesystem hands back directory entries. A

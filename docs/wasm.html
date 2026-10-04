@@ -102,8 +102,9 @@ plug into — implement it and register the backend with <a href="https://docs.r
 resource limits (<a href="https://docs.rs/stanchion-wasm/latest/stanchion_wasm/struct.WasmLimits.html"><code>WasmLimits</code></a>): a per-call fuel ceiling, so an infinite loop traps
 instead of hanging the calling thread, and a linear-memory ceiling enforced by a
 store limiter. The limits are the host’s — registered on the backend with
-<a href="https://docs.rs/stanchion-wasm/latest/stanchion_wasm/struct.WasmBackend.html#method.with_limits"><code>WasmBackend::with_limits</code></a> — and a plugin manifest’s <code>budget.max_instructions</code> may
-only <em>lower</em> the fuel ceiling, never raise it. <code>WasmBackend::new()</code> uses secure
+<a href="https://docs.rs/stanchion-wasm/latest/stanchion_wasm/struct.WasmBackend.html#method.with_limits"><code>WasmBackend::with_limits</code></a> — and a plugin manifest’s <code>[budget]</code> may only <em>lower</em>
+them, never raise them: <code>max_instructions</code> narrows the fuel ceiling and
+<code>memory_bytes</code> the linear-memory one. <code>WasmBackend::new()</code> uses secure
 defaults (1e9 fuel, 64 MiB). Plugins cannot reach the host filesystem unless WASI
 capabilities are explicitly granted through the capability system.</p>
 

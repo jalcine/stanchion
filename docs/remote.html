@@ -93,10 +93,10 @@ only. Envelopes are owned rather than borrowed, since a message read off a pipe
 outlives the buffer it arrived in.</p>
 <p>Calls are <strong>dynamically typed</strong>, and that is forced rather than chosen: a host binary
 is compiled before anyone writes a plugin, so it cannot know a <code>#[lua_class]</code> trait.
-Plugins load as <code>DynClass</code> — any table with a constructor — and methods resolve by name
+Plugins load dynamically — any table with a constructor — and methods resolve by name
 at call time. Arguments and results cross as JSON, converted at the Lua boundary by
-<code>mlua</code>’s serde support. In-process hosting keeps the typed contract; use it when you
-can.</p>
+the backend. Direct in-process use of <code>stanchion-lua</code> keeps the typed contract; use
+it when you can.</p>
 <h2 id="calling-back-into-your-application">Calling back into your application</h2>
 <p>The channel is bidirectional. A capability listed under <code>callbacks</code> becomes a Lua
 function that forwards to the process that launched the host:</p>
@@ -185,7 +185,7 @@ rather than a silent omission.</p>
 <p><code>RemoteRegistry</code> mirrors the in-process registry, minus the typing:</p>
 <table><thead><tr><th>Method</th><th>Returns</th></tr></thead><tbody>
 <tr><td><code>load(root)</code></td><td><code>LoadResult { loaded, failures }</code></td></tr>
-<tr><td><code>list()</code></td><td><code>Vec&lt;PluginInfo&gt;</code> — name, version, granted capabilities, signer</td></tr>
+<tr><td><code>list()</code></td><td><code>Vec&lt;PluginInfo&gt;</code> — name, version, granted capabilities, signer, runtime</td></tr>
 <tr><td><code>audit(root)</code></td><td><code>Vec&lt;AuditEntry&gt;</code> — requests and signer, nothing executed</td></tr>
 <tr><td><code>call(plugin, method, args)</code></td><td>any <code>DeserializeOwned</code></td></tr>
 <tr><td><code>dispatch(method, args)</code></td><td><code>Vec&lt;Outcome&gt;</code> — one per plugin</td></tr>

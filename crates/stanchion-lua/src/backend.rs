@@ -19,9 +19,9 @@ use std::sync::{Arc, Mutex};
 
 use mlua::{Lua, LuaSerdeExt, MultiValue, ObjectLike, Table, Value as LuaValue};
 use stanchion_abi::{
-    CapabilityCall, Grant, HostSetup, Manifest, PluginBackend,
-    PluginInstance, PluginType, ResourceLimits, Result as AbiResult, Runtime, Value,
-    Error as AbiError, GroupOutcome, LoadContext, LoadItem, Reloaded, RuntimeError,
+    CapabilityCall, Error as AbiError, Grant, GroupOutcome, HostSetup, LoadContext, LoadItem,
+    Manifest, PluginBackend, PluginInstance, PluginType, Reloaded, ResourceLimits,
+    Result as AbiResult, Runtime, RuntimeError, Value,
 };
 use stanchion_abi::{rocks::RockPaths, signature::DirectoryDigest};
 
@@ -229,13 +229,12 @@ impl PluginInstance for LuaInstance {
     fn call(&self, method: &str, args: &[Value]) -> AbiResult<Value> {
         // A panicking plugin is reported like a failing one rather than
         // taking the caller's stack with it.
-        stanchion_abi::panics::guard(|| self.call_guarded(method, args))
-            .map_err(|panicked| {
-                AbiError::Runtime(RuntimeError {
-                    runtime_name: "lua".to_string(),
-                    error: panicked.to_string(),
-                })
-            })?
+        stanchion_abi::panics::guard(|| self.call_guarded(method, args)).map_err(|panicked| {
+            AbiError::Runtime(RuntimeError {
+                runtime_name: "lua".to_string(),
+                error: panicked.to_string(),
+            })
+        })?
     }
 
     fn runtime(&self) -> &str {
@@ -251,9 +250,7 @@ impl PluginInstance for LuaInstance {
         &self,
         method: &str,
         args: &[Value],
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = AbiResult<Value>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AbiResult<Value>> + Send + '_>> {
         let method = method.to_string();
         let args = args.to_vec();
         Box::pin(async move { self.call_async_inner(&method, &args).await })
@@ -363,7 +360,11 @@ impl LuaBackend {
     }
 
     /// Creates the state for one isolation unit, binding ambient values.
-    fn create_state(&self, setup: &HostSetup, rock_paths: Option<&RockPaths>) -> mlua::Result<SharedState> {
+    fn create_state(
+        &self,
+        setup: &HostSetup,
+        rock_paths: Option<&RockPaths>,
+    ) -> mlua::Result<SharedState> {
         // Every mode carries its own `Sandbox`, so the policy the caller chose is
         // the policy the state gets. The shared state is created once and reused;
         // ambient values are bound at creation below.
@@ -400,7 +401,13 @@ impl LuaBackend {
     ) -> mlua::Result<Arc<SharedState>> {
         // A state recorded by an earlier load (or reload) wins: reload must
         // reuse the state dependents already hold proxies into.
-        if let Some(state) = self.states.lock().as_ref().ok().and_then(|pool| pool.get(name).cloned()) {
+        if let Some(state) = self
+            .states
+            .lock()
+            .as_ref()
+            .ok()
+            .and_then(|pool| pool.get(name).cloned())
+        {
             return Ok(state);
         }
         let key = match self.mode {
@@ -441,7 +448,10 @@ impl LuaBackend {
         dependencies: HashMap<String, Table>,
     ) -> std::result::Result<(LuaInstance, Vec<String>), String> {
         let manifest = item.manifest;
-        let lua = state.lua.lock().map_err(|_| "the Lua state is poisoned".to_string())?;
+        let lua = state
+            .lua
+            .lock()
+            .map_err(|_| "the Lua state is poisoned".to_string())?;
 
         let environment = mlua_err(plugin_environment(&lua))?;
         let granted = self.grant_capabilities(&lua, &environment, manifest, &item.signer, ctx)?;
@@ -508,8 +518,12 @@ impl LuaBackend {
         // The decision itself lives in `stanchion-abi`, so this backend and
         // `Registry::evaluate_policy` cannot answer it differently. All that is left
         // here is the Lua-specific half: turning each approval into a callable.
-        let approved =
-            stanchion_abi::approve_capabilities(manifest, &signer.to_string(), ctx.setup, ctx.policy)?;
+        let approved = stanchion_abi::approve_capabilities(
+            manifest,
+            &signer.to_string(),
+            ctx.setup,
+            ctx.policy,
+        )?;
 
         let mut granted = Vec::with_capacity(approved.len());
         for approval in approved {
@@ -560,6 +574,9 @@ fn bind_provider(
             grant: granted.clone(),
             args: converted,
         };
+        // Nothing from an earlier call may be waiting: a provider that stashes
+        // functions for its table must start from an empty queue of its own.
+        convert::clear_functions();
         let answer = provider.invoke(&call).map_err(mlua::Error::RuntimeError)?;
         convert::abi_to_lua(&answer, lua)
     })?;
@@ -787,12 +804,11 @@ impl PluginBackend for LuaBackend {
         manifest: &Manifest,
         dir: &std::path::Path,
     ) -> AbiResult<Box<dyn PluginInstance>> {
-        let bytes = std::fs::read(manifest.entry_path()).map_err(|e| {
-            stanchion_abi::Error::Plugin {
+        let bytes =
+            std::fs::read(manifest.entry_path()).map_err(|e| stanchion_abi::Error::Plugin {
                 plugin: manifest.name.clone(),
                 reason: format!("reading entry '{}': {e}", manifest.entry),
-            }
-        })?;
+            })?;
         self.load_bytes(manifest, dir, &bytes)
     }
 
@@ -957,15 +973,24 @@ impl Runtime for LuaBackend {
         // Repoint the stable proxy at the new surface so every dependent
         // sees the reload without being rebuilt. A plugin that published
         // exports and now does not is a failure, not a silent unpublish.
-        let lua = state.lua.lock().map_err(|_| fail("the Lua state is poisoned".to_string()))?;
+        let lua = state
+            .lua
+            .lock()
+            .map_err(|_| fail("the Lua state is poisoned".to_string()))?;
         let exports = read_exports(&lua, &instance.handle).map_err(fail)?;
-        let mut surfaces = self.surfaces.lock().map_err(|_| fail("the Lua state is poisoned".to_string()))?;
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| fail("the Lua state is poisoned".to_string()))?;
         match (surfaces.get(name), exports) {
             (Some((_, metatable)), Some(table)) => {
-                metatable.set("__index", table).map_err(|e| fail(e.to_string()))?;
+                metatable
+                    .set("__index", table)
+                    .map_err(|e| fail(e.to_string()))?;
             }
             (None, Some(table)) => {
-                let (proxy, metatable) = make_proxy(&lua, &table).map_err(|e| fail(e.to_string()))?;
+                let (proxy, metatable) =
+                    make_proxy(&lua, &table).map_err(|e| fail(e.to_string()))?;
                 surfaces.insert(name.clone(), (proxy, metatable));
             }
             (Some(_), None) => {
@@ -1018,9 +1043,7 @@ impl LuaBackend {
             reason,
         };
 
-        if per_plugin
-            && let Some((dependency, _)) = manifest.dependencies.first_key_value()
-        {
+        if per_plugin && let Some((dependency, _)) = manifest.dependencies.first_key_value() {
             return fail(format!(
                 "depends on `{dependency}`, but per-plugin isolation gives each plugin its own state and values cannot cross states"
             ));
@@ -1036,7 +1059,8 @@ impl LuaBackend {
         }
 
         let group = components.get(&manifest.name).copied().unwrap_or(0);
-        let state = match self.state_for(&manifest.name, group, group_states, ctx.setup, rock_paths) {
+        let state = match self.state_for(&manifest.name, group, group_states, ctx.setup, rock_paths)
+        {
             Ok(state) => state,
             Err(e) => return fail(format!("creating a plugin state: {e}")),
         };
@@ -1106,7 +1130,10 @@ impl LuaBackend {
 }
 
 /// Reads a plugin's `exports`: a table, or a function returning one.
-fn read_exports(_lua: &Lua, handle: &crate::LuaHandle) -> std::result::Result<Option<Table>, String> {
+fn read_exports(
+    _lua: &Lua,
+    handle: &crate::LuaHandle,
+) -> std::result::Result<Option<Table>, String> {
     let value: LuaValue = handle.get(EXPORTS_KEY).map_err(|e| e.to_string())?;
     match value {
         LuaValue::Nil => Ok(None),

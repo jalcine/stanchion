@@ -5,7 +5,7 @@
 //! to [`Runtime`](stanchion_abi::Runtime) methods and never convert directly.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use mlua::{Lua, LuaString, Table, Value as LuaValue};
 use stanchion_abi::Value;
@@ -17,24 +17,33 @@ thread_local! {
     /// itself; the real `mlua::Function` waits here for the backend to bind
     /// it into the plugin's environment. Scoped to one bind: [`take_function`]
     /// removes it, so a stale function can never leak into another plugin.
-    static FUNCTION_CACHE: RefCell<Option<LuaValue>> = const { RefCell::new(None) };
+    static FUNCTION_CACHE: RefCell<VecDeque<LuaValue>> = const { RefCell::new(VecDeque::new()) };
 }
 
 /// Stashes a function for [`take_function`], reporting it as [`Value::Function`].
 pub fn stash_function(function: LuaValue) -> Value {
     FUNCTION_CACHE.with(|cache| {
-        *cache.borrow_mut() = Some(function);
+        cache.borrow_mut().push_back(function);
     });
     Value::Function
 }
 
-/// Takes the function [`stash_function`] left, or errors when none is waiting.
+/// Takes the next function [`stash_function`] left, or errors when none is waiting.
 pub fn take_function() -> mlua::Result<LuaValue> {
     FUNCTION_CACHE.with(|cache| {
-        cache.borrow_mut().take().ok_or_else(|| {
-            mlua::Error::RuntimeError("cached function not found".to_string())
-        })
+        cache
+            .borrow_mut()
+            .pop_front()
+            .ok_or_else(|| mlua::Error::RuntimeError("cached function not found".to_string()))
     })
+}
+
+/// Drops anything a previous conversion stashed but never bound.
+///
+/// Called before a provider runs, so a conversion that fails midway cannot leave
+/// a function for the next call — and the next plugin — to pick up.
+pub fn clear_functions() {
+    FUNCTION_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
 /// Converts a [`stanchion_abi::Value`] into the state `lua`.
@@ -75,7 +84,7 @@ pub fn lua_to_abi(lua: &Lua, val: &LuaValue) -> Value {
         LuaValue::Integer(v) => Value::Int(*v),
         LuaValue::Number(v) => Value::Float(*v),
         LuaValue::String(s) => Value::Str(lua_string_to_string(s.clone())),
-            LuaValue::Table(t) => lua_table_to_value(lua, t),
+        LuaValue::Table(t) => lua_table_to_value(lua, t),
         LuaValue::Function(f) => {
             stash_function(LuaValue::Function(f.clone()));
             Value::Function
@@ -109,7 +118,16 @@ fn lua_table_to_value(lua: &Lua, lua_table: &Table) -> Value {
     let mut seq: Vec<(i64, Value)> = Vec::new();
     let mut map = BTreeMap::new();
     let mut only_integers = true;
-    for (k, v) in lua_table.pairs::<mlua::Value, mlua::Value>().flatten() {
+    // Conversion order is observable: a table's functions leave through a FIFO
+    // (`FUNCTION_CACHE`), so they are stashed in exactly the order `abi_to_lua`
+    // takes them back — list positions ascending, then map keys in `BTreeMap`
+    // order. `pairs` order is arbitrary, so the entries are sorted first.
+    let mut entries: Vec<(mlua::Value, mlua::Value)> = lua_table
+        .pairs::<mlua::Value, mlua::Value>()
+        .flatten()
+        .collect();
+    entries.sort_by(|(left, _), (right, _)| key_order(left).cmp(&key_order(right)));
+    for (k, v) in entries {
         let converted = lua_to_abi(lua, &v);
         match k {
             LuaValue::Integer(index) if index >= 1 => seq.push((index, converted)),
@@ -135,9 +153,7 @@ fn lua_table_to_value(lua: &Lua, lua_table: &Table) -> Value {
             // conversion and the increment cannot realistically overflow, but the
             // workspace denies unchecked arithmetic rather than relying on that:
             // a `usize` that does not fit an `i64` simply never matches a Lua key.
-            let expected = i64::try_from(position)
-                .ok()
-                .and_then(|p| p.checked_add(1));
+            let expected = i64::try_from(position).ok().and_then(|p| p.checked_add(1));
             if dense && Some(index) == expected {
                 values.push(value);
             } else {
@@ -158,6 +174,17 @@ fn lua_table_to_value(lua: &Lua, lua_table: &Table) -> Value {
         }
     }
     Value::Map(map)
+}
+
+/// Sort key mirroring the order [`abi_to_lua`] walks a converted value: list
+/// positions first and ascending, then string keys, then everything else (which
+/// the map contract drops).
+fn key_order(key: &mlua::Value) -> (u8, i64, String) {
+    match key {
+        LuaValue::Integer(index) if *index >= 1 => (0, *index, String::new()),
+        LuaValue::String(s) => (1, 0, lua_string_to_string(s.clone())),
+        _ => (2, 0, String::new()),
+    }
 }
 
 #[cfg(test)]
@@ -183,7 +210,10 @@ mod tests {
     /// the one case where a round-trip changes a value's *type*.
     #[test]
     fn an_empty_list_round_trips_as_a_list() -> Fallible<()> {
-        assert_eq!(round_trip(&Value::List(Vec::new()))?, Value::List(Vec::new()));
+        assert_eq!(
+            round_trip(&Value::List(Vec::new()))?,
+            Value::List(Vec::new())
+        );
         Ok(())
     }
 
@@ -230,6 +260,50 @@ mod tests {
             }
             other => return Err(format!("expected a map, got {other:?}").into()),
         }
+        Ok(())
+    }
+
+    /// A module capability is a table, and a table carries more than one
+    /// function (`base64` needs `encode` and `decode`). They cross through a
+    /// queue, so every one must arrive, under the key it was stashed with.
+    #[test]
+    fn a_table_carries_more_than_one_function() -> Fallible<()> {
+        let lua = Lua::new();
+        let module = lua.create_table()?;
+        module.set(
+            "encode",
+            lua.create_function(|_, value: String| Ok(format!("e:{value}")))?,
+        )?;
+        module.set(
+            "decode",
+            lua.create_function(|_, value: String| Ok(format!("d:{value}")))?,
+        )?;
+        module.set("version", 1)?;
+
+        let crossed = abi_to_lua(&lua_to_abi(&lua, &LuaValue::Table(module)), &lua)?;
+        let LuaValue::Table(round_tripped) = crossed else {
+            return Err("expected a table".into());
+        };
+        let encode: mlua::Function = round_tripped.get("encode")?;
+        let decode: mlua::Function = round_tripped.get("decode")?;
+
+        assert_eq!(encode.call::<String>("x")?, "e:x");
+        assert_eq!(decode.call::<String>("y")?, "d:y");
+        assert_eq!(round_tripped.get::<i64>("version")?, 1);
+        Ok(())
+    }
+
+    /// Whatever a failed conversion left behind must not be handed to the next
+    /// caller: the queue is cleared before a provider runs.
+    #[test]
+    fn clearing_drops_a_stale_function() -> Fallible<()> {
+        let lua = Lua::new();
+        let function = lua.create_function(|_, value: String| Ok(value))?;
+        stash_function(LuaValue::Function(function));
+
+        clear_functions();
+
+        assert!(take_function().is_err());
         Ok(())
     }
 }
